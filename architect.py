@@ -1,9 +1,9 @@
-"""architect.py – Single Source of Truth fuer den AI Solution Architect.
+"""architect.py – Single Source of Truth for the AI Solution Architect.
 
-Dieses Modul enthaelt die gesamte Fachlogik: Gemini-Modell, RAG/Chroma-Wissensbasis
-und SQLite-Gedaechtnis. Sowohl app.py (Streamlit-UI) als auch agent.ipynb
-(Terminal-Demo) importieren ausschliesslich von hier – Aenderungen gibt es nur noch
-an dieser einen Stelle.
+This module contains all of the domain logic: the Gemini model, the RAG/Chroma
+knowledge base, and the SQLite memory. Both app.py (Streamlit UI) and agent.ipynb
+(terminal demo) import exclusively from here – changes only need to be made in this
+one place.
 """
 import os
 import sqlite3
@@ -16,73 +16,73 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 
 # ──────────────────────────────────────────────
-# KONFIGURATION
+# CONFIGURATION
 # ──────────────────────────────────────────────
 MODEL_NAME = "gemini-2.5-flash"
 CHROMA_DIR = "./chroma_db"
 DB_PATH = "architect.db"
 
 ARCHITECTURE_KEYWORDS = [
-    "architektur", "pattern", "microservice", "monolith",
-    "event", "skalier", "design", "struktur", "system",
+    "architecture", "pattern", "microservice", "monolith",
+    "event", "scal", "design", "structure", "system",
 ]
 
-SYSTEM_PROMPT = """Du bist ein weltklasse AI Solution Architect, entwickelt für die hochkarätige IT-Architektur-Beratung im Rahmen des BCG Platinion Use Cases. Deine Aufgabe ist es, vage Business-Anforderungen in präzise, skalierbare und produktionsreife Systemarchitekturen zu transformieren.
+SYSTEM_PROMPT = """You are a world-class AI Solution Architect, designed for high-caliber IT architecture consulting within the BCG Platinion use case. Your task is to transform vague business requirements into precise, scalable, and production-ready system architectures.
 
-Du folgst einem strikten Zwei-Phasen-Ansatz:
+You follow a strict two-phase approach:
 
-PHASE 1: CONTEXT CAPTURE & ANFORDERUNGSKLÄRUNG
-Bevor du irgendeine Technologie empfiehlst oder ein Diagramm/Blueprint zeichnest, musst du zuerst alle Rahmenbedingungen lückenlos absichern. Wenn der Nutzer eine vage Idee äußert, frage gezielt nach den folgenden 5 Kernkriterien, falls sie noch nicht genannt wurden:
-1. Cloud-Provider-Präferenz (AWS, Azure, GCP, On-Premise oder Hybrid)
-2. Budget-Rahmen (Low, Medium, High oder konkrete Beträge)
-3. Skalierungsanforderungen (Erwartete Nutzerzahlen, Concurrent Requests, Datenvolumen, Peak-Events)
-4. Compliance- & Sicherheitsanforderungen (DSGVO, PCI-DSS, Verschlüsselung, Datenhaltung in EU)
-5. Bestehende Systemlandschaft (Brownfield-Integration vs. Greenfield-Aufbau)
+PHASE 1: CONTEXT CAPTURE & REQUIREMENTS CLARIFICATION
+Before you recommend any technology or draw a diagram/blueprint, you must first fully secure all boundary conditions. When the user expresses a vague idea, ask specifically about the following 5 core criteria if they have not yet been mentioned:
+1. Cloud provider preference (AWS, Azure, GCP, On-Premise, or Hybrid)
+2. Budget range (Low, Medium, High, or concrete figures)
+3. Scaling requirements (expected user numbers, concurrent requests, data volume, peak events)
+4. Compliance & security requirements (GDPR, PCI-DSS, encryption, EU data residency)
+5. Existing system landscape (Brownfield integration vs. Greenfield build)
 
-Sobald diese Parameter klar oder durch plausible Annahmen definiert sind, erstelle als ersten Output einen "Context Record" (einen eingefrorenen Snapshot aller Bedingungen und offenen Fragen).
+As soon as these parameters are clear or defined by plausible assumptions, create a "Context Record" as your first output (a frozen snapshot of all conditions and open questions).
 
-PHASE 2: ARCHITEKTUR-DESIGN & ABGABE-ARTEFAKTE
-Erst nach der Kontextklärung generierst du die finale Architektur. Nutze dafür die Ergebnisse aus der RAG-Meldung (search_patterns). Dein Output MUSS zwingend folgende Struktur in sauberem Markdown aufweisen:
+PHASE 2: ARCHITECTURE DESIGN & DELIVERABLE ARTIFACTS
+Only after context clarification do you generate the final architecture. Use the results from the RAG message (search_patterns) for this. Your output MUST strictly follow this structure in clean Markdown:
 
 ### 1. Context Record
-- Zusammenfassung aller validierten Constraints, Nutzergruppen und Integrationsanforderungen.
+- Summary of all validated constraints, user groups, and integration requirements.
 
 ### 2. Architecture Blueprint
-Du musst zwei klar getrennte Sichten bereitstellen:
-- **Stakeholder View:** Eine verständliche Beschreibung in klarer Business-Sprache. Was macht das System? Wie fließen die Daten geschäftlich?
-- **Technical View:** Eine tiefgehende technische Spezifikation für Software-Ingenieure. Welche Services werden genutzt? Wie sieht das Datenmodell, die Modulverantwortlichkeit und die Integrationsstruktur aus?
+You must provide two clearly separated views:
+- **Stakeholder View:** An understandable description in clear business language. What does the system do? How do the data flow from a business perspective?
+- **Technical View:** An in-depth technical specification for software engineers. Which services are used? What do the data model, module responsibilities, and integration structure look like?
 
 ### 3. Component Description
-- Detaillierte Auflistung und Begründung jeder einzelnen ausgewählten Komponente oder Pipeline-Stufe.
+- Detailed listing and justification of each individual selected component or pipeline stage.
 
 ### 4. Architecture Decision Records (ADRs)
-Erstelle für jede signifikante Design-Entscheidung (z.B. Microservices statt Monolith, eine spezifische NoSQL-Datenbank, etc.) ein kurzes ADR im folgenden Format:
-- **Titel:** ADR-[Nummer]: [Entscheidung]
-- **Kontext:** Welche technische Herausforderung lag vor?
-- **Betrachtete Optionen:** Welche Alternativen gab es?
-- **Gewählte Option:** Was wird implementiert und warum?
-- **Trade-Offs:** Welche Nachteile oder Kompromisse (z.B. Latenz vs. Konsistenz, Kosten vs. Autonomie) werden bewusst akzeptiert?
+Create a short ADR for every significant design decision (e.g., microservices instead of monolith, a specific NoSQL database, etc.) in the following format:
+- **Title:** ADR-[number]: [decision]
+- **Context:** What technical challenge existed?
+- **Considered options:** What alternatives were there?
+- **Chosen option:** What will be implemented and why?
+- **Trade-offs:** Which disadvantages or compromises (e.g., latency vs. consistency, cost vs. autonomy) are consciously accepted?
 
-STILRICHTLINIEN:
-- Antworte immer auf Deutsch. Sei präzise, strukturiert und nutze professionelle Berater-Formulierungen.
-- Nutze Markdown-Tabellen und Listen für Vergleiche und Komponenten-Übersichten.
-- Untermaure deine Empfehlungen mit harten Fakten aus den abrufenen RAG-Dokumenten und gib die entsprechenden Quellen/Seiten an, wenn du sie aus dem Kontext liest.
+STYLE GUIDELINES:
+- Always answer in English. Be precise, structured, and use professional consultant phrasing.
+- Use Markdown tables and lists for comparisons and component overviews.
+- Back up your recommendations with hard facts from the retrieved RAG documents and cite the corresponding sources/pages when you read them from the context.
 """
 
 
 # ──────────────────────────────────────────────
-# API-KEY (intern)
+# API KEY (internal)
 # ──────────────────────────────────────────────
 def _load_api_key() -> str:
     load_dotenv()
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        raise ValueError("GEMINI_API_KEY nicht in .env gefunden!")
+        raise ValueError("GEMINI_API_KEY not found in .env!")
     return api_key
 
 
 # ──────────────────────────────────────────────
-# GEMINI-MODELL (Singleton – einmal pro Prozess)
+# GEMINI MODEL (singleton – once per process)
 # ──────────────────────────────────────────────
 _model = None
 
@@ -99,7 +99,7 @@ def get_model():
 
 
 # ──────────────────────────────────────────────
-# RAG: EMBEDDINGS + CHROMA-VEKTORDATENBANK (Singleton)
+# RAG: EMBEDDINGS + CHROMA VECTOR STORE (singleton)
 # ──────────────────────────────────────────────
 _vectorstore = None
 
@@ -117,33 +117,33 @@ def get_vectorstore():
 
 
 def search_patterns(query: str, vectorstore=None) -> str:
-    """Durchsucht die Chroma-Vektordatenbank nach passenden Architektur-Dokumenten
-    und liefert die Inhalte der Top-3-Treffer als zusammenhaengenden String."""
+    """Searches the Chroma vector store for matching architecture documents
+    and returns the contents of the top-3 hits as a contiguous string."""
     vs = vectorstore if vectorstore is not None else get_vectorstore()
     results = vs.similarity_search(query, k=3)
     if not results:
-        return "Keine relevanten Informationen in der Wissensbasis gefunden."
+        return "No relevant information found in the knowledge base."
 
     combined = []
     for i, doc in enumerate(results, 1):
-        source = doc.metadata.get("source", "unbekannt")
+        source = doc.metadata.get("source", "unknown")
         page = doc.metadata.get("page", "?")
         combined.append(
-            f"[Treffer {i} | Quelle: {source} | Seite: {page}]\n{doc.page_content}"
+            f"[Hit {i} | Source: {source} | Page: {page}]\n{doc.page_content}"
         )
     return "\n\n---\n\n".join(combined)
 
 
 def build_enriched_input(user_input: str, vectorstore=None) -> str:
-    """Haengt bei Architektur-relevanten Fragen den RAG-Kontext an."""
+    """Appends the RAG context to architecture-related questions."""
     if any(kw in user_input.lower() for kw in ARCHITECTURE_KEYWORDS):
         context = search_patterns(user_input, vectorstore)
-        return f"{user_input}\n\n[Pattern-Suche fuer '{user_input}']:\n{context}"
+        return f"{user_input}\n\n[Pattern search for '{user_input}']:\n{context}"
     return user_input
 
 
 # ──────────────────────────────────────────────
-# SQLITE-GEDAECHTNIS
+# SQLITE MEMORY
 # ──────────────────────────────────────────────
 def get_db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -183,11 +183,11 @@ def get_all_messages(conn) -> list:
 
 
 # ──────────────────────────────────────────────
-# VOLLSTAENDIGER NACHRICHTEN-FLUSS (fuer Terminal-Demo)
+# FULL MESSAGE FLOW (for terminal demo)
 # ──────────────────────────────────────────────
 def send_message(conn, model, user_input: str):
-    """Speichert die Frage, reichert sie per RAG an, fragt Gemini an, speichert die
-    Antwort und gibt (answer, input_tokens, output_tokens) zurueck."""
+    """Saves the question, enriches it via RAG, queries Gemini, saves the
+    response, and returns (answer, input_tokens, output_tokens)."""
     save_message(conn, "user", user_input)
     chat = model.start_chat(history=load_history(conn))
     enriched = build_enriched_input(user_input)

@@ -1,58 +1,58 @@
-# Setup-Report & RAG-Erklärung
+# Setup Report & RAG Explanation
 
-## Teil 1 – Struggles beim Setup (Kurzreport)
+## Part 1 – Setup Struggles (Short Report)
 
-**1. Falsches Embedding-Modell (404 Not Found)**
-Das ursprünglich vorgesehene Modell `text-embedding-004` war für den verwendeten API-Key gar nicht freigeschaltet. Lösung: Über `ListModels` die tatsächlich verfügbaren Modelle abfragen → Umstieg auf `gemini-embedding-001` bzw. später `gemini-embedding-2`.
+**1. Wrong embedding model (404 Not Found)**
+The originally intended model `text-embedding-004` was not even enabled for the API key in use. Solution: query the actually available models via `ListModels` → switch to `gemini-embedding-001` and later `gemini-embedding-2`.
 
-**2. Free-Tier-Quota des API-Keys (429 Resource Exhausted)**
-Der Key läuft im Free-Tier mit einem kontingentierten, stark umkämpften Limit (zunächst 100 Anfragen/Min, später 1000/Tag pro Modell). Ein einzelner Bulk-Aufbau scheiterte sofort an `429`. Lösung: chargenweises Einfügen mit automatischem Retry + Backoff statt eines einzigen `from_documents`-Aufrufs.
+**2. Free-tier quota of the API key (429 Resource Exhausted)**
+The key runs in the free tier with a metered, highly contended limit (initially 100 requests/min, later 1000/day per model). A single bulk build failed immediately with `429`. Solution: batch insertion with automatic retry + backoff instead of a single `from_documents` call.
 
-**3. Duplikate in der Vektordatenbank (642 statt 321 Vektoren)**
-`Rag_Setup.ipynb` war nicht idempotent – jeder erneute Lauf hat die Chunks zusätzlich eingefügt. Lösung: vor dem Einfügen `delete_collection()` aufrufen.
+**3. Duplicates in the vector store (642 instead of 321 vectors)**
+`Rag_Setup.ipynb` was not idempotent – every additional run inserted the chunks again. Solution: call `delete_collection()` before inserting.
 
-**4. Windows-Dateisperre**
-Der erste Idempotenz-Ansatz (`shutil.rmtree`) scheiterte an `PermissionError`, weil Chroma die Indexdatei `data_level0.bin` exklusiv sperrt. Lösung: Löschung über die Chroma-API (`delete_collection()`) statt über das Dateisystem.
+**4. Windows file lock**
+The first idempotency approach (`shutil.rmtree`) failed with `PermissionError` because Chroma exclusively locks the index file `data_level0.bin`. Solution: deletion via the Chroma API (`delete_collection()`) instead of via the file system.
 
-**5. Transiente Netzwerkfehler (502 Bad Gateway / DNS-Ausfälle)**
-Die Umgebung zeigte zeitweise instabiles Netzwerk. Lösung: Retry-Logik auf alle transienten Fehler erweitert (429, 5xx, DNS/Timeout).
+**5. Transient network errors (502 Bad Gateway / DNS outages)**
+The environment showed unstable networking at times. Solution: extend the retry logic to all transient errors (429, 5xx, DNS/timeout).
 
-**6. Doppelte Codepflege (Notebook vs. App)**
-Logik existierte parallel in `agent.ipynb` und `app.py`. Lösung: Auslagerung in ein gemeinsames Modul `architect.py` (Single Source of Truth) – Änderungen nur noch an einer Stelle.
+**6. Duplicate code maintenance (notebook vs. app)**
+Logic existed in parallel in `agent.ipynb` and `app.py`. Solution: extraction into a shared module `architect.py` (Single Source of Truth) – changes only in one place.
 
-**7. Erschöpfung des Tageskontingents durch Tests**
-Die vielen Rebuilds haben `gemini-embedding-001` für den Tag aufgebraucht (1000/Tag). Lösung: Wechsel auf `gemini-embedding-2` (separates Kontingent, gleiche Vektor-Dimension) – konsistent in Build- und Query-Richtung.
+**7. Daily quota exhaustion from tests**
+The many rebuilds had used up `gemini-embedding-001` for the day (1000/day). Solution: switch to `gemini-embedding-2` (separate quota, same vector dimension) – consistent across build and query directions.
 
-**8. Veraltete / Deprecation-Warnungen**
-`google.generativeai` und `langchain-community` sind deprecated; `langchain-chroma` war nicht installiert. Rein kosmetisch, keine Funktionsbeeinträchtigung.
+**8. Outdated / deprecation warnings**
+`google.generativeai` and `langchain-community` are deprecated; `langchain-chroma` was not installed. Purely cosmetic, no functional impact.
 
 ---
 
-## Teil 2 – RAG einfach erklärt (für jemanden mit Coding-Basics)
+## Part 2 – RAG explained simply (for someone with coding basics)
 
-### Die Grundidee in einem Satz
-RAG (Retrieval-Augmented Generation) ist eine „Open-Book-Prüfung" für ein Sprachmodell – statt nur aus dem Gedächtnis zu antworten, darf es vorher in einem eigenen Wissensspeicher nachlesen.
+### The core idea in one sentence
+RAG (Retrieval-Augmented Generation) is an "open-book exam" for a language model – instead of answering only from memory, it may first look something up in its own knowledge store.
 
-### Warum braucht man das?
-Ein normales LLM (wie Gemini) weiß viel, aber nicht deine firmenspezifischen Dokumente – und es kann nicht up-to-date sein. RAG holt genau die passenden Stellen aus deinen PDFs ins Modell, bevor es antwortet.
+### Why do you need it?
+A normal LLM (like Gemini) knows a lot, but not your company-specific documents – and it cannot be up to date. RAG pulls exactly the relevant passages from your PDFs into the model before it answers.
 
-### Der Ablauf – wie eine Pipeline mit 5 Stufen
+### The flow – like a pipeline with 5 stages
 
 ```
-PDFs ──► 1. Zerkleinern ──► 2. Übersetzen ──► 3. Speichern
+PDFs ──► 1. Shredding ──► 2. Translating ──► 3. Storing
                                                     │
-              5. Antworten ◄── 4. Suchen ◄──────────┘
+              5. Answering ◄── 4. Searching ◄───────┘
 ```
 
-1. **Zerkleinern (Chunking):** Ein langes PDF wird in kleine, handliche Stücke (~1000 Zeichen) geschnitten – wie ein Buch in Absätze.
-2. **Übersetzen (Embedding):** Jedes Stück wird zu einem Vektor = einer Liste von Zahlen, die den Inhalt/Bedeutung erfasst. Ähnliche Texte bekommen ähnliche Zahlen – quasi GPS-Koordinaten im Bedeutungsraum.
-3. **Speichern (Vektordatenbank / Chroma):** Alle Vektoren landen in einer Datenbank, die besonders schnell „ähnlichste Stücke finden" kann.
-4. **Suchen (Retrieval):** Bei einer Frage wird die Frage selbst zu einem Vektor übersetzt – und die DB liefert die 3 ähnlichsten Textstücke zurück.
-5. **Antworten (Generation):** Diese Stücke werden zusammen mit der Frage an Gemini geschickt: „Beantworte das auf Basis dieser Quellen." Das Modell formuliert die Antwort und kann die Quelle angeben.
+1. **Shredding (chunking):** A long PDF is cut into small, handy pieces (~1000 characters) – like a book into paragraphs.
+2. **Translating (embedding):** Each piece becomes a vector = a list of numbers that captures the content/meaning. Similar texts get similar numbers – practically GPS coordinates in meaning space.
+3. **Storing (vector store / Chroma):** All vectors end up in a database that is particularly fast at "finding the most similar pieces."
+4. **Searching (retrieval):** For a question, the question itself is translated into a vector – and the DB returns the 3 most similar text pieces.
+5. **Answering (generation):** These pieces are sent to Gemini together with the question: "Answer this based on these sources." The model formulates the answer and can cite the source.
 
-### Die Bibliotheks-Metapher
-Stell dir vor, du fragst einen Bibliothekar (Vektordatenbank): „Was ist gut an Microservices?" Er sucht die relevantesten Buchseiten heraus und gibt sie einem Experten (LLM). Der liest sie durch und erklärt es dir in eigenen Worten – mit Quellenangabe. Genau das macht `search_patterns()` + Gemini in unserem Code.
+### The library metaphor
+Imagine asking a librarian (vector store): "What is good about microservices?" He picks out the most relevant book pages and hands them to an expert (LLM). The expert reads them through and explains it to you in his own words – with source citations. That is exactly what `search_patterns()` + Gemini do in our code.
 
-### Konkret in unserem Projekt
-- Wissensbasis: 2 AWS-Architektur-PDFs → 321 Chunks → Chroma-DB (`./chroma_db`)
-- Stellt der Nutzer eine Architektur-Frage, holt `search_patterns()` die Top-3-Passagen, und der Agent antwortet damit fundiert statt aus dem Bauch heraus.
+### Concretely in our project
+- Knowledge base: 2 AWS architecture PDFs → 321 chunks → Chroma DB (`./chroma_db`)
+- When the user asks an architecture question, `search_patterns()` fetches the top-3 passages, and the agent answers in a well-founded way instead of from the top of its head.
