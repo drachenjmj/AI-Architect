@@ -1,0 +1,14 @@
+# AI-Architect — direct runtime dependencies (current repo).
+# Edit this file when adding/removing a top-level package, then recompile the lock:
+#   uv pip compile requirements.in --python-version 3.12 -o requirements.txt
+# (or:  pip install pip-tools && pip-compile --python-version 3.12 requirements.in)
+
+streamlit              # web UI (app.py)
+pandas                 # conversation table in the sidebar (app.py)
+python-dotenv          # loads GEMINI_API_KEY from .env (architect.py)
+google-generativeai    # Gemini chat model (architect.py)
+langchain-community    # Chroma vectorstore + PyPDFLoader (architect.py, Rag_Setup.ipynb)
+langchain-google-genai # Gemini embeddings for RAG (architect.py, Rag_Setup.ipynb)
+langchain-text-splitters # chunking PDFs (Rag_Setup.ipynb)
+chromadb               # vector store backend (./chroma_db)
+pypdf                  # PDF parsing for PyPDFLoader (Rag_Setup.ipynb)
