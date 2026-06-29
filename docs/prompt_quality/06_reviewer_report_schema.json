@@ -1,0 +1,105 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Reviewer Report",
+  "description": "Structured output of the Reviewer node. Combines deterministic check results with the Reviewer's judgment.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "overall_status",
+    "score_total",
+    "max_score",
+    "rubric_scores",
+    "flaw_detected",
+    "issues",
+    "requires_refinement",
+    "refinement_instruction"
+  ],
+  "properties": {
+    "overall_status": {
+      "type": "string",
+      "enum": ["pass", "pass_with_minor_issues", "fail"]
+    },
+    "score_total": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 16
+    },
+    "max_score": {
+      "type": "integer",
+      "const": 16
+    },
+    "rubric_scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "all_artifacts_present",
+        "constraint_coverage",
+        "repo_grounding",
+        "flaw_detection",
+        "traceability",
+        "adr_quality",
+        "best_practice_grounding",
+        "refinement_readiness"
+      ],
+      "properties": {
+        "all_artifacts_present": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "constraint_coverage": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "repo_grounding": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "flaw_detection": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "traceability": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "adr_quality": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "best_practice_grounding": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "refinement_readiness": { "type": "integer", "minimum": 0, "maximum": 2 }
+      }
+    },
+    "flaw_detected": {
+      "type": "boolean",
+      "description": "Whether the ground-truth architectural flaw for use-case #1 was correctly identified."
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "severity",
+          "category",
+          "finding",
+          "evidence",
+          "suggested_fix",
+          "requires_refinement"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "severity": { "type": "string", "enum": ["low", "medium", "high"] },
+          "category": {
+            "type": "string",
+            "enum": [
+              "completeness",
+              "constraint",
+              "grounding",
+              "traceability",
+              "adr",
+              "repo_alignment",
+              "safety"
+            ]
+          },
+          "finding": { "type": "string" },
+          "evidence": { "type": "string" },
+          "suggested_fix": { "type": "string" },
+          "requires_refinement": { "type": "boolean" }
+        }
+      }
+    },
+    "requires_refinement": {
+      "type": "boolean",
+      "description": "True when score_total is below the pass threshold or any high-severity issue exists."
+    },
+    "refinement_instruction": {
+      "type": "string",
+      "description": "Concrete instruction routed back to the Architect/Writer node. Empty string when no refinement is needed."
+    }
+  }
+}
+
