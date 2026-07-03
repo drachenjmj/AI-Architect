@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RAG Chunk Schema",
+  "description": "Data contracts for the AI Solution Architect RAG layer. Rule-based, no LLM evaluation.",
+  "definitions": {
+    "Chunk": {
+      "type": "object",
+      "description": "A single ingested text chunk from the knowledge base.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable unique identifier for the chunk."
+        },
+        "content": {
+          "type": "string",
+          "description": "The chunk text."
+        },
+        "source": {
+          "type": "string",
+          "description": "Origin file path or document title."
+        },
+        "page": {
+          "type": "integer",
+          "description": "Source page number (0/1-based per ingestion convention)."
+        },
+        "chunk_size": {
+          "type": "integer",
+          "description": "Chunk length in characters.",
+          "default": 1000
+        },
+        "overlap": {
+          "type": "integer",
+          "description": "Character overlap between adjacent chunks.",
+          "default": 200
+        },
+        "box": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3,
+          "description": "Semantic bucket (1-3). Assigned during ingestion based on the source directory."
+        },
+        "ingested_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Optional. ISO timestamp of ingestion."
+        }
+      },
+      "required": ["id", "content", "source", "page", "chunk_size", "box"]
+    },
+    "RetrievalResponse": {
+      "type": "array",
+      "description": "Filtered list of retrieved chunks returned by search_patterns(). Ordered best (lowest distance) first.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "chunk": {
+            "$ref": "#/definitions/Chunk"
+          },
+          "distance": {
+            "type": "number",
+            "description": "Chroma distance metric. Lower = better match. Chunks with distance > DISTANCE_THRESHOLD are discarded."
+          }
+        },
+        "required": ["chunk", "distance"]
+      }
+    }
+  }
+}

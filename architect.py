@@ -7,12 +7,15 @@ one place.
 """
 import os
 import sqlite3
+import time
 from datetime import datetime
 
 from dotenv import load_dotenv
 import google.generativeai as genai
 from langchain_community.vectorstores import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
+from rag_logger import RagLogger
 
 
 # ──────────────────────────────────────────────
@@ -21,6 +24,10 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 MODEL_NAME = "gemini-2.5-flash"
 CHROMA_DIR = "./chroma_db"
 DB_PATH = "architect.db"
+
+# None = inactive. Chroma returns a DISTANCE (lower = better); set to a float
+# once a value has been derived from rag_log.jsonl to drop weak matches.
+DISTANCE_THRESHOLD = None
 
 ARCHITECTURE_KEYWORDS = [
     "architecture", "pattern", "microservice", "monolith",
@@ -116,21 +123,71 @@ def get_vectorstore():
     return _vectorstore
 
 
+_rag_logger = RagLogger()
+
+
 def search_patterns(query: str, vectorstore=None) -> str:
     """Searches the Chroma vector store for matching architecture documents
-    and returns the contents of the top-3 hits as a contiguous string."""
+    and returns the contents of the top-3 hits as a contiguous string.
+
+    Uses similarity_search_with_score so the Chroma DISTANCE (lower = better)
+    is available for rule-based quality control: chunks whose distance exceeds
+    DISTANCE_THRESHOLD are discarded. Every call is logged to rag_log.jsonl.
+    """
     vs = vectorstore if vectorstore is not None else get_vectorstore()
-    results = vs.similarity_search(query, k=3)
+
+    start = time.perf_counter()
+    results = vs.similarity_search_with_score(query, k=3)
+    duration_ms = (time.perf_counter() - start) * 1000
+
     if not results:
+        _rag_logger.log_query(
+            query=query,
+            duration_ms=duration_ms,
+            chunks_returned=0,
+            best_distance=None,
+            source_files=[],
+            status="no_results",
+        )
+        return "No relevant information found in the knowledge base."
+
+    best_distance = results[0][1]
+
+    if DISTANCE_THRESHOLD is not None:
+        filtered = [(doc, dist) for doc, dist in results if dist <= DISTANCE_THRESHOLD]
+    else:
+        filtered = list(results)
+
+    if not filtered:
+        source_files = sorted({doc.metadata.get("source", "unknown") for doc, _ in results})
+        _rag_logger.log_query(
+            query=query,
+            duration_ms=duration_ms,
+            chunks_returned=0,
+            best_distance=best_distance,
+            source_files=source_files,
+            status="below_threshold",
+        )
         return "No relevant information found in the knowledge base."
 
     combined = []
-    for i, doc in enumerate(results, 1):
+    source_files = []
+    for i, (doc, dist) in enumerate(filtered, 1):
         source = doc.metadata.get("source", "unknown")
         page = doc.metadata.get("page", "?")
+        source_files.append(source)
         combined.append(
             f"[Hit {i} | Source: {source} | Page: {page}]\n{doc.page_content}"
         )
+
+    _rag_logger.log_query(
+        query=query,
+        duration_ms=duration_ms,
+        chunks_returned=len(filtered),
+        best_distance=filtered[0][1],
+        source_files=sorted(set(source_files)),
+        status="success",
+    )
     return "\n\n---\n\n".join(combined)
 
 
