@@ -126,18 +126,18 @@ def get_vectorstore():
 _rag_logger = RagLogger()
 
 
-def search_patterns(query: str, vectorstore=None) -> str:
-    """Searches the Chroma vector store for matching architecture documents
-    and returns the contents of the top-3 hits as a contiguous string.
+def retrieve_chunks(query: str, k: int = 3) -> list[dict]:
+    """Retrieve up to k matching chunks from the Chroma vector store.
 
-    Uses similarity_search_with_score so the Chroma DISTANCE (lower = better)
-    is available for rule-based quality control: chunks whose distance exceeds
-    DISTANCE_THRESHOLD are discarded. Every call is logged to rag_log.jsonl.
+    Returns a list of dicts [{content, source, page, box, distance}], sorted by
+    distance ascending (lower = better). Chunks whose distance exceeds
+    DISTANCE_THRESHOLD are discarded. Every call is logged via RagLogger.
+    Returns [] when nothing matches or all matches fall below the threshold.
     """
-    vs = vectorstore if vectorstore is not None else get_vectorstore()
+    vs = get_vectorstore()
 
     start = time.perf_counter()
-    results = vs.similarity_search_with_score(query, k=3)
+    results = vs.similarity_search_with_score(query, k=k)
     duration_ms = (time.perf_counter() - start) * 1000
 
     if not results:
@@ -149,7 +149,7 @@ def search_patterns(query: str, vectorstore=None) -> str:
             source_files=[],
             status="no_results",
         )
-        return "No relevant information found in the knowledge base."
+        return []
 
     best_distance = results[0][1]
 
@@ -168,31 +168,59 @@ def search_patterns(query: str, vectorstore=None) -> str:
             source_files=source_files,
             status="below_threshold",
         )
-        return "No relevant information found in the knowledge base."
+        return []
 
-    combined = []
+    chunks = []
     source_files = []
-    for i, (doc, dist) in enumerate(filtered, 1):
+    for doc, dist in filtered:
         source = doc.metadata.get("source", "unknown")
-        page = doc.metadata.get("page", "?")
+        chunks.append({
+            "content": doc.page_content,
+            "source": source,
+            "page": doc.metadata.get("page", 0),
+            "box": doc.metadata.get("box", 1),
+            "distance": dist,
+        })
         source_files.append(source)
-        combined.append(
-            f"[Hit {i} | Source: {source} | Page: {page}]\n{doc.page_content}"
-        )
 
     _rag_logger.log_query(
         query=query,
         duration_ms=duration_ms,
-        chunks_returned=len(filtered),
-        best_distance=filtered[0][1],
+        chunks_returned=len(chunks),
+        best_distance=chunks[0]["distance"],
         source_files=sorted(set(source_files)),
         status="success",
     )
+    return chunks
+
+
+def search_patterns(query: str, vectorstore=None) -> str:
+    """Searches the Chroma vector store for matching architecture documents
+    and returns the contents of the top-3 hits as a contiguous string.
+
+    Delegates retrieval (similarity_search_with_score, DISTANCE_THRESHOLD
+    filtering, RagLogger logging) to retrieve_chunks(). The *vectorstore*
+    parameter is deprecated, ignored — retained for signature stability with
+    existing callers.
+    """
+    chunks = retrieve_chunks(query, k=3)
+    if not chunks:
+        return "No relevant information found in the knowledge base."
+
+    combined = []
+    for i, c in enumerate(chunks, 1):
+        combined.append(
+            f"[Hit {i} | Source: {c['source']} | Page: {c['page']}]\n{c['content']}"
+        )
     return "\n\n---\n\n".join(combined)
 
 
 def build_enriched_input(user_input: str, vectorstore=None) -> str:
-    """Appends the RAG context to architecture-related questions."""
+    """Appends the RAG context to architecture-related questions.
+
+    The *vectorstore* parameter is deprecated, ignored — retained for signature
+    stability with existing callers.
+    """
     if any(kw in user_input.lower() for kw in ARCHITECTURE_KEYWORDS):
         context = search_patterns(user_input, vectorstore)
         return f"{user_input}\n\n[Pattern search for '{user_input}']:\n{context}"
