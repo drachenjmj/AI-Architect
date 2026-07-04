@@ -35,8 +35,7 @@ if "output_tokens" not in st.session_state:
 # ──────────────────────────────────────────────
 # PAGE LAYOUT
 # ──────────────────────────────────────────────
-st.title("🏗️ AI Architect Agent")
-st.caption("BCG Platinion x UoC – Theme 4")
+st.title("🏗️IT Solution Architect")
 
 # ──────────────────────────────────────────────
 # 2) SIDEBAR
