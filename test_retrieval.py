@@ -38,7 +38,7 @@ def main(argv=None) -> int:
     print(header)
     print("-" * len(header))
     for i, q in enumerate(QUERIES, 1):
-        chunks = retrieve_chunks(q, k=args.k)
+        chunks, _origin = retrieve_chunks(q, k=args.k)
         dists = [c["distance"] for c in chunks]
         if dists:
             print(f"{i:>2}  {min(dists):>7.4f} {max(dists):>7.4f} {mean(dists):>7.4f}  {len(dists):>2}  {q}")
