@@ -39,12 +39,12 @@ from pipeline.state import ArchitectState, Stage
 # truth for routing. A stage absent here (DONE, FAILED, or anything unwired)
 # routes to END, so the graph always terminates.
 STAGE_TO_NODE: dict[Stage, str] = {
-    Stage.CREATED:     "clarifier",
-    Stage.CLARIFYING:  "researcher",
-    Stage.RESEARCHING: "architect",
-    Stage.DESIGNING:   "reviewer",
+    Stage.CREATED:        "clarifier",
+    Stage.CLARIFYING:     "researcher",
+    Stage.AWAITING_INPUT: END,   # clarifier needs the human → pause (see _route)
+    Stage.RESEARCHING:    "architect",
+    Stage.DESIGNING:      "reviewer",
     # TODO(W3): Stage.REFINING -> "architect"   # reviewer-triggered refine loop
-    # TODO(clarifier): Stage.AWAITING_INPUT -> END  # pause for the human, then resume
 }
 
 _NODES = {
@@ -60,12 +60,26 @@ _PATH_MAP[END] = END
 
 
 def _route(state: ArchitectState) -> str:
-    """Deterministic router: pick the next node from the current stage.
+    """Deterministic router for the edges AFTER each node.
 
     Terminal or unwired stages -> END. This is the old `ROUTES.get(...) or fail`
-    logic, expressed as a LangGraph conditional-edge function.
+    logic, expressed as a LangGraph conditional-edge function. Here
+    `AWAITING_INPUT -> END` — reaching it mid-run means "pause for the human."
     """
     return STAGE_TO_NODE.get(state.stage, END)
+
+
+def _entry_route(state: ArchitectState) -> str:
+    """Deterministic router for the START edge ONLY (graph entry / resume).
+
+    `AWAITING_INPUT` is directional: reaching it mid-run means pause (`_route`
+    sends it to END), but ENTERING the graph already in `AWAITING_INPUT` means
+    the user has just supplied answers and we must RE-RUN the clarifier to
+    re-judge. Everything else defers to the normal table.
+    """
+    if state.stage is Stage.AWAITING_INPUT:
+        return "clarifier"
+    return _route(state)
 
 
 def _build_graph():
@@ -73,8 +87,8 @@ def _build_graph():
     g = StateGraph(ArchitectState)
     for name, fn in _NODES.items():
         g.add_node(name, fn)
-    # Entry + after every node: route on the (freshly updated) stage.
-    g.add_conditional_edges(START, _route, _PATH_MAP)
+    # Entry uses _entry_route (handles resume); after every node uses _route.
+    g.add_conditional_edges(START, _entry_route, _PATH_MAP)
     for name in _NODES:
         g.add_conditional_edges(name, _route, _PATH_MAP)
     return g.compile()

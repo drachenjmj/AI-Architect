@@ -21,6 +21,7 @@ process instead of one model object per (model, system_prompt).
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from dotenv import load_dotenv
 from google import genai
@@ -72,26 +73,37 @@ def llm_call(
     *,
     system: str = "",
     model: str = DEFAULT_MODEL,
-) -> str:
-    """Send one prompt to the named model; return the text reply.
+    response_schema: type | None = None,
+) -> Any:
+    """Send one prompt to the named model; return the reply.
 
     Side effect: adds this call's token usage into `state` (input/output).
-    Raises LLMError on failure — the agent's base.run() turns that into a
+    Raises LLMError on failure — the agent's node wrapper turns that into a
     clean FAILED step instead of crashing the pipeline.
 
     `system` is passed PER CALL so each agent's prompt lives with the agent,
     not scattered in a registry.
+
+    `response_schema` (optional): a Pydantic model class. When given, the model
+    is asked for JSON constrained to that schema and this returns a VALIDATED
+    instance of the class (via the SDK's `resp.parsed`) — no manual parsing.
+    When omitted, behaviour is unchanged and a plain `str` is returned, so every
+    existing caller keeps working.
     """
     if model not in MODELS:
         raise LLMError(f"Unknown model '{model}'. Known: {list(MODELS)}")
     client = _get_client()
+    config = types.GenerateContentConfig(
+        system_instruction=system or None,
+    )
+    if response_schema is not None:
+        config.response_mime_type = "application/json"
+        config.response_schema = response_schema
     try:
         resp = client.models.generate_content(
             model=MODELS[model],
             contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system or None,
-            ),
+            config=config,
         )
     except Exception as e:
         raise LLMError(f"{model} call failed: {e}") from e
@@ -102,6 +114,11 @@ def llm_call(
         state.input_tokens += getattr(usage, "prompt_token_count", 0) or 0
         state.output_tokens += getattr(usage, "candidates_token_count", 0) or 0
 
+    if response_schema is not None:
+        parsed = getattr(resp, "parsed", None)
+        if parsed is None:  # model returned something unparseable to the schema
+            raise LLMError(f"{model} returned no schema-valid JSON for {response_schema.__name__}")
+        return parsed
     return resp.text
 
 

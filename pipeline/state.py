@@ -118,6 +118,7 @@ class Stage(str, Enum):
 
     CREATED = "created"
     CLARIFYING = "clarifying"
+    AWAITING_INPUT = "awaiting_input"  # clarifier needs the human; graph pauses here
     RESEARCHING = "researching"
     DESIGNING = "designing"
     REVIEWING = "reviewing"
@@ -134,6 +135,46 @@ class StepLog(BaseModel):
     stage_out: Stage
     note: str = ""
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+# ── Clarifier output (Kati owns) ─────────────────────────────────────────
+# The lean, machine-readable object the Clarifier LLM produces and the gate
+# reads. It is NOT the final ContextRecord (that is Maheen's frozen schema,
+# written only once clarification is complete). Keeping them separate is the
+# "LLM judges / code routes" split: the LLM fills this in, deterministic code
+# decides what to do with `missing_critical`.
+class ClarifyingQuestion(BaseModel):
+    """One question to put to the user when something critical is missing."""
+
+    question: str = Field(..., description="The question shown to the user.")
+    why_needed: str = Field("", description="Why this changes the design — for the user and for traceability.")
+
+
+class ContextField(BaseModel):
+    """One grounded fact, as an explicit key/value pair.
+
+    We use a LIST of these instead of a dict[str, str] because Gemini's
+    Developer-API structured-output mode rejects open-ended maps (a dict becomes
+    JSON-Schema `additionalProperties`, unsupported there). A list of fixed-key
+    objects is a closed schema and is also more self-documenting.
+    """
+
+    key: str = Field(..., description="Name of the fact, e.g. 'cloud'.")
+    value: str = Field(..., description="Its value, e.g. 'AWS'.")
+
+
+class ClarificationResult(BaseModel):
+    """The Clarifier's structured judgment of the raw prompt (+ any answers).
+
+    `missing_critical` is THE signal the gate routes on: non-empty means an
+    architecture-critical fact is still unknown, so the run must pause and ask.
+    Empty means we can lock the ContextRecord and advance.
+    """
+
+    captured_context: list[ContextField] = Field(default_factory=list, description="Facts grounded in the prompt.")
+    assumptions: list[str] = Field(default_factory=list, description="Low-stakes fills, labelled so a human can veto them.")
+    questions: list[ClarifyingQuestion] = Field(default_factory=list, description="Questions to ask when critical info is missing.")
+    missing_critical: list[str] = Field(default_factory=list, description="Architecture-critical gaps. Non-empty ⇒ pause and ask.")
 
 
 # ══════════════════════════════════════════════════════════════════════════
