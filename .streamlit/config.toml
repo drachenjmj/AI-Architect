@@ -1,0 +1,11 @@
+# Streamlit theme — BCG brand palette.
+# Streamlit reads this file automatically on `streamlit run ui.py`;
+# every widget (buttons, focus rings, spinner, forms) picks it up. No code needed.
+# Colors: BCG signature green #29BA74, dark "BCG green" #147B58, text #333333.
+
+[theme]
+primaryColor = "#29BA74"             # buttons, focus rings, spinner
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#EFF6F2" # sidebar + form fields, faint green tint
+textColor = "#333333"
+font = "sans serif"
