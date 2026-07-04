@@ -6,7 +6,9 @@ identically on every machine. Two files guarantee this:
 - `.python-version` → Python **3.12** (the version the lock was resolved for)
 - `requirements.txt` → fully pinned, cross-resolved dependency lock
 
-You need a **Gemini API key** (shared by the team) before the app will run.
+You need a **Gemini API key** before the app will run. Each developer uses their
+**own** key (independent free-tier quotas) — get one free at
+[Google AI Studio](https://aistudio.google.com/apikey).
 
 ---
 
@@ -37,16 +39,18 @@ pip install -r requirements.txt
 
 **4. Add the API key**
 
-Copy `.env.example` to `.env` and paste the shared key:
+Copy `.env.example` to `.env` and paste your own key:
 ```bash
 cp .env.example .env        # Windows: copy .env.example .env
 ```
-Then edit `.env` so it reads `GEMINI_API_KEY=<the key>`.
+Then edit `.env` so it reads `GEMINI_API_KEY=<your key>`.
+(`.env` is gitignored — never commit it.)
 
 **5. Run**
 ```bash
-streamlit run app.py
+python -m pipeline.run      # run the pipeline end to end
 ```
+(The old single-agent prototype is still runnable with `streamlit run app.py`.)
 
 ---
 
@@ -57,7 +61,7 @@ version and the venv in one step:
 ```bash
 uv venv --python 3.12
 uv pip install -r requirements.txt
-uv run streamlit run app.py
+uv run python -m pipeline.run
 ```
 
 ---
