@@ -37,14 +37,16 @@ from pydantic import BaseModel, Field
 # 1. INPUT LAYER  (owned by Kati)
 # ══════════════════════════════════════════════════════════════════════════
 class InitialRequest(BaseModel):
-    """The raw request, in natural language, exactly as accepted from the user."""
-    
+    """The raw request, in natural language, exactly as accepted from the user.
+
+    ONLY user-supplied input lives here. Anything interpreted from the prompt
+    (use case, constraints, repo reference) is DERIVED downstream by the
+    Clarifier and written into the ContextRecord — never back into here. This
+    keeps `raw_prompt` an immutable ground truth and keeps all interpretation
+    (LLM work) out of the input layer.
+    """
+
     raw_prompt: str = Field(..., description="Verbatim user message, exactly as entered. Ground truth for the run — never edited or overwritten.")
-    use_case: str = Field("", description="Business use case (e.g. the bugged repo's purpose).")
-    constraints: str = Field(
-        "", description="Cloud / budget / scalability / compliance, in free text."
-    )
-    repo_ref: str = Field("", description="URL or path of the repo under review (use-case #1).")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -70,12 +72,14 @@ class ContextRecord(BaseModel):
     # TODO(Maheen): real Context Record schema.
     summary: str = ""
 
+
 class Feature(BaseModel):
     """One functional requirement, with a concrete scenario (p.9 feature-first)."""
     # TODO(Maheen): confirm final schema.
     id: str = ""          # stable handle, e.g. "F1" — components trace back to this
     name: str = ""        # short label of what the system must do
     scenario: str = ""    # concrete expected-behavior scenario (testable)
+
 
 class Blueprint(BaseModel):
     """Architecture Blueprint — stakeholder view + technical view."""
@@ -176,26 +180,13 @@ class ArchitectState(BaseModel):
         self.retry_counts[agent] = self.retry_counts.get(agent, 0) + 1
         return self.retry_counts[agent]
 
-def new_run(
-    raw_prompt: str,
-    use_case: str = "",
-    constraints: str = "",
-    repo_ref: str = "",
-) -> ArchitectState:
+def new_run(raw_prompt: str) -> ArchitectState:
     """Factory: build a fresh state at the start of a run.
 
-    `raw_prompt` is required (the verbatim user message = ground truth).
-    The parsed fields are optional — they may be empty until the Clarifier
-    extracts them from raw_prompt.
+    `raw_prompt` (the verbatim user message = ground truth) is the only input.
+    Everything else is derived downstream by the agents.
     """
-    return ArchitectState(
-        initial_request=InitialRequest(
-            raw_prompt=raw_prompt,
-            use_case=use_case,
-            constraints=constraints,
-            repo_ref=repo_ref,
-        )
-    )
+    return ArchitectState(initial_request=InitialRequest(raw_prompt=raw_prompt))
 
 # ── quick self-test: `python -m pipeline.state` ──────────────────────────
 if __name__ == "__main__":
@@ -204,9 +195,6 @@ if __name__ == "__main__":
                    "days. It's on AWS, budget is medium, must stay GDPR-compliant, "
                    "and needs to handle about 50k users at peak. Repo: "
                    "https://github.com/example/bugged-shop",
-        use_case="A monolithic e-commerce app that needs to scale for peak sales.",
-        constraints="AWS, medium budget, GDPR, 50k concurrent users at peak.",
-        repo_ref="https://github.com/example/bugged-shop",
     )
     s.log_step("clarifier", Stage.CLARIFYING, "asked 2 clarifying questions")
     s.log_step("researcher", Stage.RESEARCHING, "retrieved 3 KB chunks")

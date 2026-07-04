@@ -12,17 +12,15 @@ from __future__ import annotations
 from pipeline.state import new_run
 from pipeline.orchestrator import run_pipeline
 
-EXAMPLE_PROMPT = "Fix our monolithic online shop so it can scale for seasonal peak sales."
-EXAMPLE_CONSTRAINTS = "AWS, medium budget, GDPR, ~50k concurrent users at peak."
-EXAMPLE_REPO = "https://github.com/example/bugged-shop"
+EXAMPLE_PROMPT = (
+    "Fix our monolithic online shop so it can scale for seasonal peak sales. "
+    "It's on AWS, budget is medium, must stay GDPR-compliant, and needs to handle "
+    "~50k concurrent users at peak. Repo: https://github.com/example/bugged-shop"
+)
 
 
 def main() -> None:
-    state = new_run(
-        raw_prompt=EXAMPLE_PROMPT,
-        constraints=EXAMPLE_CONSTRAINTS,
-        repo_ref=EXAMPLE_REPO,
-    )
+    state = new_run(raw_prompt=EXAMPLE_PROMPT)
     run_pipeline(state)
 
     print(f"\nFinal stage: {state.stage.value}")
