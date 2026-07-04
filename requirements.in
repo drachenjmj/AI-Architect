@@ -13,3 +13,4 @@ langchain-google-genai # Gemini embeddings for RAG (architect.py, Rag_Setup.ipyn
 langchain-text-splitters # chunking PDFs (Rag_Setup.ipynb)
 chromadb               # vector store backend (./chroma_db)
 pypdf                  # PDF parsing for PyPDFLoader (Rag_Setup.ipynb)
+langgraph              # stateful multi-agent orchestration (pipeline/orchestrator.py)

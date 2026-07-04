@@ -1,14 +1,19 @@
-"""agents/ — the four pipeline agents (stubs for now, real behaviour later)."""
-from pipeline.agents.base import Agent
-from pipeline.agents.clarifier import ClarifierStub
-from pipeline.agents.researcher import ResearcherStub
-from pipeline.agents.architect import ArchitectStub
-from pipeline.agents.reviewer import ReviewerStub
+"""agents/ — the four pipeline agent NODES (stubs for now, real behaviour later).
+
+Under LangGraph an agent is a plain node function `(state) -> dict-of-updates`
+(see base.py). `base` exposes the shared helpers every node uses.
+"""
+from pipeline.agents.base import make_step, node
+from pipeline.agents.clarifier import clarifier_node
+from pipeline.agents.researcher import researcher_node
+from pipeline.agents.architect import architect_node
+from pipeline.agents.reviewer import reviewer_node
 
 __all__ = [
-    "Agent",
-    "ClarifierStub",
-    "ResearcherStub",
-    "ArchitectStub",
-    "ReviewerStub",
+    "make_step",
+    "node",
+    "clarifier_node",
+    "researcher_node",
+    "architect_node",
+    "reviewer_node",
 ]

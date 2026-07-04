@@ -26,9 +26,10 @@ from THIS file, tightening a placeholder later does not change the pipeline wiri
 """
 from __future__ import annotations
 
+import operator
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Annotated, Optional
 
 from pydantic import BaseModel, Field
 
@@ -160,12 +161,17 @@ class ArchitectState(BaseModel):
 
     # --- 4. Control / orchestration meta (Kati owns fully) ----------------
     stage: Stage = Stage.CREATED
-    history: list[StepLog] = Field(default_factory=list)
+    # Annotated with operator.add so LangGraph MERGES (appends) each node's
+    # returned step onto the running trace instead of overwriting it. This is
+    # the "reducer" — nodes return {"history": [one_step]} and it accumulates.
+    history: Annotated[list[StepLog], operator.add] = Field(default_factory=list)
     retry_counts: dict[str, int] = Field(default_factory=dict)
     refine_iterations: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
-    errors: list[str] = Field(default_factory=list)
+    # Reducer (append) so a failure in any node adds to — never clobbers —
+    # errors already recorded upstream. See `history` above.
+    errors: Annotated[list[str], operator.add] = Field(default_factory=list)
 
     # --- helpers ----------------------------------------------------------
     def log_step(self, agent: str, stage_out: Stage, note: str = "") -> None:

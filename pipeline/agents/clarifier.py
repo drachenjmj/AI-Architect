@@ -1,23 +1,36 @@
 """clarifier.py — Clarifier agent (Kati). STUB: dummy data only, no LLM yet.
 
-Real behaviour (Week 2): generate clarifying questions from the prompt, then
-write the answers into a frozen Context Record before design begins.
+Real behaviour (Week 2): read raw_prompt, extract a draft understanding, decide
+what is architecture-critically missing, and either PAUSE for the user
+(awaiting input) or lock a frozen Context Record before design begins.
+
+For now this is a faithful port of the old stub to the LangGraph node form:
+same dummy writes, same target stage — no behaviour change.
 """
 from __future__ import annotations
 
-from pipeline.agents.base import Agent
+from pipeline.agents.base import make_step, node
 from pipeline.state import ArchitectState, ContextRecord, Stage
 
 
-class ClarifierStub(Agent):
-    name = "clarifier"
-    target_stage = Stage.CLARIFYING
-
-    def _act(self, state: ArchitectState) -> str:
-        state.clarifying_questions = [
-            "What is the expected peak concurrency?",
-            "Which cloud provider is preferred?",
-        ]
-        state.clarification_answers = {q: "[stub answer]" for q in state.clarifying_questions}
-        state.context_record = ContextRecord(summary="[stub] context frozen from prompt + answers")
-        return f"asked {len(state.clarifying_questions)} questions, wrote stub Context Record"
+@node("clarifier")
+def clarifier_node(state: ArchitectState) -> dict:
+    questions = [
+        "What is the expected peak concurrency?",
+        "Which cloud provider is preferred?",
+    ]
+    answers = {q: "[stub answer]" for q in questions}
+    context_record = ContextRecord(summary="[stub] context frozen from prompt + answers")
+    step = make_step(
+        "clarifier",
+        state.stage,
+        Stage.CLARIFYING,
+        f"asked {len(questions)} questions, wrote stub Context Record",
+    )
+    return {
+        "clarifying_questions": questions,
+        "clarification_answers": answers,
+        "context_record": context_record,
+        "stage": Stage.CLARIFYING,
+        "history": [step],
+    }
