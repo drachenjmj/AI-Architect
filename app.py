@@ -15,7 +15,7 @@ from architect import (
 # ──────────────────────────────────────────────
 # PAGE CONFIG (must be the first Streamlit command)
 # ──────────────────────────────────────────────
-st.set_page_config(page_title="AI Architect", page_icon="🏗️", layout="wide")
+st.set_page_config(page_title="IT Solution Architect", page_icon="🏗️", layout="wide")
 
 # ──────────────────────────────────────────────
 # 1) SETUP – logic comes from architect.py
@@ -90,7 +90,7 @@ with st.sidebar:
     all_rows = get_all_messages(conn)
     conn.close()
     if all_rows:
-        md_lines = [f"# AI Architect – Chat Export ({datetime.now().strftime('%Y-%m-%d %H:%M')})\n"]
+        md_lines = [f"# IT Solution Architect – Chat Export ({datetime.now().strftime('%Y-%m-%d %H:%M')})\n"]
         for _, role, content, ts in all_rows:
             label = "**User**" if role == "user" else "**Architect**"
             md_lines.append(f"### {label} _({ts[:19]})_\n\n{content}\n")
