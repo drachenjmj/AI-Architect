@@ -151,6 +151,10 @@ class ReviewResult(BaseModel):
     score_total: int = Field(0, ge=0, le=16)
     max_score: int = 16
     rubric_scores: RubricScores = Field(default_factory=RubricScores)
+    # NB: rates the DESIGN, not the Reviewer — true when the submitted design
+    # itself identifies the ground-truth flaw and fixes it structurally; false
+    # when the design misses or merely patches it. So on a flawed design a
+    # correctly-working Reviewer reports flaw_detected=False.
     flaw_detected: bool = False
     issues: list[ReviewIssue] = Field(default_factory=list)
     requires_refinement: bool = True

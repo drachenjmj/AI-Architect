@@ -67,8 +67,10 @@ Judge flaw detection and rationale quality. Flag concrete issues. Do not rewrite
   rubric_scores.all_artifacts_present, .constraint_coverage and .traceability.
 - Judge ONLY what code cannot:
   1. flaw_detection: is the ground-truth flaw in <ground_truth_flaw> correctly
-     identified in the design and given a STRUCTURAL fix (not a patch)? Set
-     flaw_detected accordingly.
+     identified in the design and given a STRUCTURAL fix (not a patch)?
+     flaw_detected rates the DESIGN: set it true only when the design itself
+     addresses the flaw structurally; set it false when the design misses the
+     flaw or merely patches it (even though you, the Reviewer, spotted that).
   2. adr_quality (soundness): is each ADR's rationale sound and grounded in the
      researcher findings or stated assumptions?
   3. repo_grounding: is the design consistent with the actual repo context, not generic?

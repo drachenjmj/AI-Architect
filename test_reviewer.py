@@ -204,6 +204,8 @@ def test_reviewer_flags_flawed_design_and_synthesises_instruction():
     rev.llm_call = _llm_flaw_missed
     out = rev.reviewer_node(_stub_design_state())
     report = out["review"]
+    # flaw_detected rates the DESIGN: False here means the design failed to
+    # address the flaw — i.e. the Reviewer caught it. See state.ReviewResult.
     assert report.flaw_detected is False
     assert report.overall_status == "fail"
     assert report.requires_refinement is True
