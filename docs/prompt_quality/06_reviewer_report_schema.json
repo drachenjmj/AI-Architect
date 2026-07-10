@@ -54,7 +54,7 @@
     },
     "flaw_detected": {
       "type": "boolean",
-      "description": "Whether the ground-truth architectural flaw for use-case #1 was correctly identified."
+      "description": "Rates the DESIGN, not the Reviewer: true when the submitted design itself identifies the ground-truth architectural flaw (use-case #1) and gives it a structural fix; false when the design misses the flaw or merely patches it. A Reviewer that correctly catches a flawed design therefore reports flaw_detected=false."
     },
     "issues": {
       "type": "array",

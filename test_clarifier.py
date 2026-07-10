@@ -10,8 +10,9 @@ Run either way:
 """
 from __future__ import annotations
 
-from pipeline.state import new_run, Stage, ClarificationResult, ClarifyingQuestion, ContextField
+from pipeline.state import new_run, Stage, ClarificationResult, ClarifyingQuestion, ContextField, ReviewResult
 from pipeline.agents import clarifier as clar
+from pipeline.agents import reviewer as rev
 from pipeline import orchestrator
 
 PROMPT = "Build me a system to sell sneakers online."
@@ -65,13 +66,17 @@ def test_advances_and_locks_context_when_complete():
 
 
 def test_full_pause_then_resume():
-    """First pass pauses; after answers are supplied, resume runs to DONE.
+    """First pass pauses; after answers are supplied, resume runs to the end.
 
     Exercises the orchestrator's entry-router (resume re-enters the clarifier).
+    The real Reviewer (mocked LLM) correctly fails the architect STUB's
+    placeholder design, so the run now ends in REFINING, not DONE — the refine
+    loop itself is wired in W3.
     """
     def _stateful(state, prompt, *, system="", model="", response_schema=None):
         return _complete(state, prompt) if state.clarification_answers else _missing(state, prompt)
     clar.llm_call = _stateful
+    rev.llm_call = lambda state, prompt, **kw: ReviewResult()  # canned neutral judgment
 
     s = new_run(PROMPT)
     s = orchestrator.run_pipeline(s)
@@ -81,7 +86,8 @@ def test_full_pause_then_resume():
 
     s.clarification_answers = {q: "some answer" for q in s.clarifying_questions}
     s = orchestrator.run_pipeline(s)
-    assert s.stage is Stage.DONE
+    assert s.stage is Stage.REFINING  # reviewer rightly rejects the stub design
+    assert s.review is not None and s.review.requires_refinement
     assert s.context_record is not None
     agents_run = [h.agent for h in s.history]
     assert "researcher" in agents_run and "reviewer" in agents_run

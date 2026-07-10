@@ -29,7 +29,7 @@ from __future__ import annotations
 import operator
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -103,11 +103,62 @@ class ComponentDescription(BaseModel):
     description: str = ""
 
 
+class RubricScores(BaseModel):
+    """The eight rubric items from docs/prompt_quality/05_eval_rubric_v1.md, 0-2 each.
+
+    Ownership per item (who actually decides the number in the final report):
+      [code]   all_artifacts_present, constraint_coverage, traceability — computed
+               deterministically in pipeline/review_checks.py; the reviewer's merge
+               step overwrites whatever the LLM returned for them.
+      [LLM]    repo_grounding, flaw_detection, best_practice_grounding,
+               refinement_readiness — qualitative judgment only.
+      [hybrid] adr_quality — min(code presence score, LLM soundness score).
+    """
+
+    all_artifacts_present: int = Field(0, ge=0, le=2)
+    constraint_coverage: int = Field(0, ge=0, le=2)
+    repo_grounding: int = Field(0, ge=0, le=2)
+    flaw_detection: int = Field(0, ge=0, le=2)
+    traceability: int = Field(0, ge=0, le=2)
+    adr_quality: int = Field(0, ge=0, le=2)
+    best_practice_grounding: int = Field(0, ge=0, le=2)
+    refinement_readiness: int = Field(0, ge=0, le=2)
+
+
+class ReviewIssue(BaseModel):
+    """One concrete problem found in the design (by code or by the LLM)."""
+
+    id: str = ""
+    severity: Literal["low", "medium", "high"] = "low"
+    category: Literal[
+        "completeness", "constraint", "grounding", "traceability",
+        "adr", "repo_alignment", "safety",
+    ] = "completeness"
+    finding: str = ""
+    evidence: str = ""
+    suggested_fix: str = ""
+    requires_refinement: bool = False
+
+
 class ReviewResult(BaseModel):
-    """Reviewer's verdict on the current design."""
-    # TODO(Waqar): align with docs/prompt_quality/06_reviewer_report_schema.json
-    passed: bool = False
-    issues: list[str] = Field(default_factory=list)
+    """Reviewer's verdict — frozen mirror of docs/prompt_quality/06_reviewer_report_schema.json.
+
+    Field-for-field identical to the JSON schema (test_reviewer.py asserts this),
+    so the same object serves as Gemini's response_schema AND as the state field.
+    """
+
+    overall_status: Literal["pass", "pass_with_minor_issues", "fail"] = "fail"
+    score_total: int = Field(0, ge=0, le=16)
+    max_score: int = 16
+    rubric_scores: RubricScores = Field(default_factory=RubricScores)
+    # NB: rates the DESIGN, not the Reviewer — true when the submitted design
+    # itself identifies the ground-truth flaw and fixes it structurally; false
+    # when the design misses or merely patches it. So on a flawed design a
+    # correctly-working Reviewer reports flaw_detected=False.
+    flaw_detected: bool = False
+    issues: list[ReviewIssue] = Field(default_factory=list)
+    requires_refinement: bool = True
+    refinement_instruction: str = ""
 
 
 # ══════════════════════════════════════════════════════════════════════════
