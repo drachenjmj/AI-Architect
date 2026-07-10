@@ -1,6 +1,6 @@
 """review_checks.py — the Reviewer's DETERMINISTIC layer (Waqar). Plain Python, no LLM.
 
-Everything code can decide about a design is decided HERE, once, and handed to
+everything code can decide about a design is decided HERE, once, and handed to
 the LLM as *input* (see docs/prompt_quality/04_reviewer_agent_prompt.md: "Trust
 the deterministic results ... Do not re-litigate them"). The LLM never
 recomputes these. Covered rubric items (05_eval_rubric_v1.md):
