@@ -1,4 +1,4 @@
-"""demo_reviewer.py — run the REAL Reviewer against use-case #1.
+"""Demo_reviewer.py — run the REAL Reviewer against use-case #1.
 
     python -m pipeline.demo_reviewer
 
