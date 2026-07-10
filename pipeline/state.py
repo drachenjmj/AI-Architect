@@ -14,7 +14,7 @@ The model is split into four layers, top to bottom:
   1. INPUT           — what the user gives us (owned by Kati).
   2. ARTIFACTS       — the things the agents produce. These are PLACEHOLDERS for
                        contracts other people own (Maheen's schemas, Kush's KB
-                       chunk, Malte's repo representation). Marked  # TODO(owner).
+                       chunk, Malte's repo representation). Marked  # TODO(owner
   3. WORKING FIELDS  — intermediate results agents pass to each other.
   4. CONTROL / META  — orchestration bookkeeping (owned entirely by Kati):
                        status, routing, trace history, retries, token usage.
