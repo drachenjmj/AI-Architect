@@ -1,0 +1,49 @@
+{
+  "context_record_id": "CR-001",
+  "project_name": "E-commerce Recommendation System",
+  "business_goal": "Increase online sales through personalized product recommendations",
+  "problem_statement": "Customers do not easily discover relevant products, which reduces conversion and average order value.",
+  "users": [
+    "Online customers",
+    "Marketing team",
+    "Product managers"
+  ],
+  "functional_requirements": [
+    {
+      "requirement_id": "REQ-001",
+      "description": "Recommend products based on customer behavior"
+    },
+    {
+      "requirement_id": "REQ-002",
+      "description": "Track customer clicks, purchases, and wishlists"
+    },
+    {
+      "requirement_id": "REQ-003",
+      "description": "Show recommendations on the website"
+    }
+  ],
+  "non_functional_requirements": [
+    {
+      "requirement_id": "NFR-001",
+      "description": "System should support 100,000 users"
+    },
+    {
+      "requirement_id": "NFR-002",
+      "description": "System should be GDPR compliant"
+    }
+  ],
+  "cloud_provider": "Azure",
+  "budget": "Medium",
+  "compliance_requirements": [
+    "GDPR"
+  ],
+  "existing_systems": [
+    "E-commerce website",
+    "Product database",
+    "Customer database"
+  ],
+  "open_questions": [
+    "Should recommendations be real-time or batch-based?",
+    "What is the expected latency target?"
+  ]
+}
