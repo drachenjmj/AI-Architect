@@ -1,14 +1,20 @@
-"""architect.py — Architect/Writer agent (Maheen). STUB: dummy data only, no LLM yet.
+"""architect.py — Architect/Writer agent (Maheen).
 
-Real behaviour (two-phase): derive features FIRST, then design the architecture
-from them — filling Blueprint, ADRs and Component Descriptions, each traceable
-back to a feature.
+Two-phase architecture design:
 
-LangGraph node form — faithful port of the old stub (same dummy writes).
+1. Derive testable features from the frozen Context Record.
+2. Design the architecture from those features, retrieved knowledge,
+   repository context, and any Reviewer refinement instruction.
+
+The node returns structured Pydantic artifacts through ArchitectState.
 """
+
 from __future__ import annotations
 
+from pydantic import BaseModel, Field
+
 from pipeline.agents.base import make_step, node
+from pipeline.llm import llm_call
 from pipeline.state import (
     ADR,
     ArchitectState,
@@ -19,30 +25,190 @@ from pipeline.state import (
 )
 
 
+ARCHITECT_MODEL = "flash"
+
+
+class FeatureDesign(BaseModel):
+    """Structured output from phase 1 of the Architect Agent."""
+
+    features: list[Feature] = Field(
+        default_factory=list,
+        description="Testable features derived from the Context Record.",
+    )
+
+
+class ArchitectureDesign(BaseModel):
+    """Structured output from phase 2 of the Architect Agent."""
+
+    blueprint: Blueprint
+    adrs: list[ADR] = Field(default_factory=list)
+    components: list[ComponentDescription] = Field(default_factory=list)
+
+
+FEATURE_SYSTEM_PROMPT = """
+You are the feature-design phase of an AI solution architect.
+
+Derive concrete, testable system features from the supplied Context Record.
+
+Rules:
+- Do not design technical components yet.
+- Every feature must have a stable ID in the format FEAT-001, FEAT-002, etc.
+- Every feature must trace to one or more requirement IDs.
+- Use priority values only from: must, should, could.
+- Each feature needs a concrete scenario and observable acceptance criteria.
+- Do not invent requirements that are unsupported by the context.
+- Return only the structured output requested by the response schema.
+""".strip()
+
+
+ARCHITECTURE_SYSTEM_PROMPT = """
+You are the architecture-design phase of an AI solution architect.
+
+Design a justified architecture from:
+- the frozen Context Record,
+- the features derived in phase 1,
+- the repository representation,
+- retrieved architecture knowledge,
+- and any Reviewer refinement instruction.
+
+Rules:
+- Detect and address the architectural flaw described by the context or repository.
+- The Blueprint must contain both stakeholder and technical views.
+- Every component must reference at least one related feature ID.
+- Every component must reference at least one related ADR ID where a major
+  technical choice justifies it.
+- ADR titles must follow the exact format: ADR-<number>: <decision>.
+- Every ADR must reference the affected feature IDs and component names.
+- Use retrieved knowledge as supporting evidence, but do not copy it blindly.
+- Address cloud, budget, scalability, compliance, and migration constraints
+  whenever they are present.
+- Clearly label assumptions and open risks.
+- Return only the structured output requested by the response schema.
+""".strip()
+
+
+def _build_feature_prompt(state: ArchitectState) -> str:
+    if state.context_record is None:
+        raise ValueError("Architect requires a Context Record before feature design.")
+
+    return f"""
+<context_record>
+{state.context_record.model_dump_json(indent=2)}
+</context_record>
+
+Derive the complete feature set before any architecture is designed.
+""".strip()
+
+
+def _build_architecture_prompt(
+    state: ArchitectState,
+    features: list[Feature],
+) -> str:
+    context_json = (
+        state.context_record.model_dump_json(indent=2)
+        if state.context_record is not None
+        else "null"
+    )
+
+    repository_json = (
+        state.repo_representation.model_dump_json(indent=2)
+        if state.repo_representation is not None
+        else "null"
+    )
+
+    knowledge_json = (
+        "[\n"
+        + ",\n".join(
+            chunk.model_dump_json(indent=2)
+            for chunk in state.retrieved_knowledge
+        )
+        + "\n]"
+        if state.retrieved_knowledge
+        else "[]"
+    )
+
+    features_json = (
+        "[\n"
+        + ",\n".join(feature.model_dump_json(indent=2) for feature in features)
+        + "\n]"
+    )
+
+    refinement_instruction = ""
+    if state.review is not None and state.review.requires_refinement:
+        refinement_instruction = state.review.refinement_instruction
+
+    return f"""
+<context_record>
+{context_json}
+</context_record>
+
+<repository_representation>
+{repository_json}
+</repository_representation>
+
+<retrieved_knowledge>
+{knowledge_json}
+</retrieved_knowledge>
+
+<derived_features>
+{features_json}
+</derived_features>
+
+<refinement_instruction>
+{refinement_instruction or "None — create the initial architecture design."}
+</refinement_instruction>
+
+Create the structured Architecture Blueprint, ADRs, and Component Descriptions.
+""".strip()
+
+
 @node("architect")
 def architect_node(state: ArchitectState) -> dict:
-    # Phase 1: features first
-    features = [
-        Feature(id="F1", name="Handle peak load", scenario="Stays responsive at 50k concurrent users.")
-    ]
-    # Phase 2: design derived from the features
-    blueprint = Blueprint(
-        stakeholder_view="[stub] Business view of the system.",
-        technical_view="[stub] Services, data model, integration.",
+    """Run feature derivation first, then architecture design."""
+
+    # Phase 1 — feature-first design
+    feature_result: FeatureDesign = llm_call(
+        state,
+        _build_feature_prompt(state),
+        system=FEATURE_SYSTEM_PROMPT,
+        model=ARCHITECT_MODEL,
+        response_schema=FeatureDesign,
     )
-    adrs = [ADR(title="ADR-1: split monolith into services", decision="[stub] decision text")]
-    components = [ComponentDescription(name="OrderService", description="[stub] owns orders (traces to F1).")]
+
+    if not feature_result.features:
+        raise ValueError("Architect produced no features.")
+
+    # Phase 2 — architecture derived from those features
+    design_result: ArchitectureDesign = llm_call(
+        state,
+        _build_architecture_prompt(state, feature_result.features),
+        system=ARCHITECTURE_SYSTEM_PROMPT,
+        model=ARCHITECT_MODEL,
+        response_schema=ArchitectureDesign,
+    )
+
+    if not design_result.adrs:
+        raise ValueError("Architect produced no ADRs.")
+
+    if not design_result.components:
+        raise ValueError("Architect produced no Component Descriptions.")
+
     step = make_step(
         "architect",
         state.stage,
         Stage.DESIGNING,
-        f"derived {len(features)} feature(s), drafted blueprint + {len(adrs)} ADR + {len(components)} component",
+        (
+            f"derived {len(feature_result.features)} feature(s); "
+            f"generated blueprint, {len(design_result.adrs)} ADR(s), "
+            f"and {len(design_result.components)} component(s)"
+        ),
     )
+
     return {
-        "features": features,
-        "blueprint": blueprint,
-        "adrs": adrs,
-        "components": components,
+        "features": feature_result.features,
+        "blueprint": design_result.blueprint,
+        "adrs": design_result.adrs,
+        "components": design_result.components,
         "stage": Stage.DESIGNING,
         "history": [step],
     }

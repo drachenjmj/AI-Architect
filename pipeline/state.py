@@ -129,30 +129,204 @@ class ContextRecord(BaseModel):
 class Feature(BaseModel):
     """One functional requirement, with a concrete scenario (p.9 feature-first)."""
     # TODO(Maheen): confirm final schema.
-    id: str = ""          # stable handle, e.g. "F1" — components trace back to this
-    name: str = ""        # short label of what the system must do
-    scenario: str = ""    # concrete expected-behavior scenario (testable)
+    id: str = Field(
+        ...,
+        description="Stable feature identifier, for example FEAT-001.",
+    )
+    name: str = Field(
+        ...,
+        description="Short name describing the required system capability.",
+    )
+    description: str = Field(
+        default="",
+        description="Detailed explanation of what the feature must achieve.",
+    )
+    scenario: str = Field(
+        ...,
+        description="Concrete and testable expected-behaviour scenario.",
+    )
+    related_requirement_ids: list[str] = Field(
+        default_factory=list,
+        description="Context Record requirement identifiers that justify this feature.",
+    )
+    priority: Literal["must", "should", "could"] = Field(
+        default="must",
+        description="Business priority using a simplified MoSCoW classification.",
+    )
+    acceptance_criteria: list[str] = Field(
+        default_factory=list,
+        description="Observable conditions that indicate successful implementation.",
+    )
 
 
 class Blueprint(BaseModel):
     """Architecture Blueprint — stakeholder view + technical view."""
     # TODO(Maheen): real Blueprint schema (two views).
-    stakeholder_view: str = ""
-    technical_view: str = ""
+
+    blueprint_id: str = Field(
+        default="BP-001",
+        description="Stable identifier for the architecture blueprint.",
+    )
+    project_name: str = Field(
+        default="",
+        description="Name of the project described by this blueprint.",
+    )
+    selected_pattern: str = Field(
+        default="",
+        description="Primary architecture pattern selected for the solution.",
+    )
+    rationale: str = Field(
+        default="",
+        description="Why the selected architecture pattern fits the project context.",
+    )
+    stakeholder_view: str = Field(
+        ...,
+        description="Business-facing explanation of actors, value flow, and expected outcomes.",
+    )
+    technical_view: str = Field(
+        ...,
+        description="Technical architecture view describing services, data flow, and integrations.",
+    )
+    components: list[str] = Field(
+        default_factory=list,
+        description="Names of the main components included in the architecture.",
+    )
+    data_flows: list[str] = Field(
+        default_factory=list,
+        description="Important data or event flows between architecture components.",
+    )
+    addressed_feature_ids: list[str] = Field(
+        default_factory=list,
+        description="Feature identifiers supported by the overall blueprint.",
+    )
+    constraints_addressed: list[str] = Field(
+        default_factory=list,
+        description="Cloud, budget, scalability, compliance, and migration constraints addressed.",
+    )
+    assumptions: list[str] = Field(
+        default_factory=list,
+        description="Architecture assumptions used while producing the blueprint.",
+    )
+    open_risks: list[str] = Field(
+        default_factory=list,
+        description="Known architectural risks that still require attention.",
+    )
+    version: str = Field(
+        default="1.0",
+        description="Version of the blueprint.",
+    )
 
 
 class ADR(BaseModel):
     """One Architecture Decision Record."""
     # TODO(Maheen): real ADR schema (title, context, options, decision, trade-offs).
-    title: str = ""
-    decision: str = ""
+
+    id: str = Field(
+        default="ADR-001",
+        description="Stable ADR identifier.",
+    )
+    title: str = Field(
+        ...,
+        description="ADR title in the format 'ADR-<number>: <decision>'.",
+    )
+    status: Literal["proposed", "accepted", "rejected", "superseded"] = Field(
+        default="accepted",
+        description="Current status of the architecture decision.",
+    )
+    context: str = Field(
+        default="",
+        description="Problem, constraint, or architectural situation requiring a decision.",
+    )
+    decision: str = Field(
+        ...,
+        description="The selected architecture decision.",
+    )
+    rationale: str = Field(
+        default="",
+        description="Why this decision was selected.",
+    )
+    alternatives_considered: list[str] = Field(
+        default_factory=list,
+        description="Other options evaluated before making the decision.",
+    )
+    positive_consequences: list[str] = Field(
+        default_factory=list,
+        description="Expected benefits of the decision.",
+    )
+    negative_consequences: list[str] = Field(
+        default_factory=list,
+        description="Expected disadvantages, costs, or risks.",
+    )
+    related_feature_ids: list[str] = Field(
+        default_factory=list,
+        description="Features supported or affected by this decision.",
+    )
+    related_component_names: list[str] = Field(
+        default_factory=list,
+        description="Components governed or justified by this decision.",
+    )
+    source_references: list[str] = Field(
+        default_factory=list,
+        description="Knowledge-base or repository sources supporting the decision.",
+    )
 
 
 class ComponentDescription(BaseModel):
     """One component's justified description."""
     # TODO(Maheen): real Component Description schema.
-    name: str = ""
-    description: str = ""
+
+    id: str = Field(
+        default="COMP-001",
+        description="Stable component identifier.",
+    )
+    name: str = Field(
+        ...,
+        description="Unique name of the architecture component.",
+    )
+    component_type: str = Field(
+        default="service",
+        description="Type of component, for example service, database, queue, API, or UI.",
+    )
+    purpose: str = Field(
+        default="",
+        description="Why the component exists and what responsibility it owns.",
+    )
+    description: str = Field(
+        ...,
+        description="Detailed explanation of the component and its role.",
+    )
+    inputs: list[str] = Field(
+        default_factory=list,
+        description="Data, events, or requests consumed by the component.",
+    )
+    outputs: list[str] = Field(
+        default_factory=list,
+        description="Data, events, or responses produced by the component.",
+    )
+    dependencies: list[str] = Field(
+        default_factory=list,
+        description="Other components or external systems this component depends on.",
+    )
+    related_feature_ids: list[str] = Field(
+        default_factory=list,
+        description="Features implemented or supported by this component.",
+    )
+    related_adr_ids: list[str] = Field(
+        default_factory=list,
+        description="Architecture decisions that justify this component.",
+    )
+    technology_choices: list[str] = Field(
+        default_factory=list,
+        description="Suggested technologies, platforms, or implementation options.",
+    )
+    security_considerations: list[str] = Field(
+        default_factory=list,
+        description="Security, privacy, and compliance considerations.",
+    )
+    scalability_considerations: list[str] = Field(
+        default_factory=list,
+        description="Scaling, availability, and performance considerations.",
+    )
 
 
 class RubricScores(BaseModel):
