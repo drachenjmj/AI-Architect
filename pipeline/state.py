@@ -71,7 +71,59 @@ class KBChunk(BaseModel):
 class ContextRecord(BaseModel):
     """Frozen snapshot of all constraints + clarification answers before design."""
     # TODO(Maheen): real Context Record schema.
-    summary: str = ""
+    
+    project_name: str = Field(
+        default="",
+        description="Short name identifying the architecture project.",
+    )
+    business_goal: str = Field(
+        default="",
+        description="Business outcome the proposed architecture must support.",
+    )
+    problem_statement: str = Field(
+        default="",
+        description="Current problem, limitation, or architectural flaw to address.",
+    )
+    users: list[str] = Field(
+        default_factory=list,
+        description="Users, stakeholders, or user groups affected by the system.",
+    )
+    functional_requirements: list[str] = Field(
+        default_factory=list,
+        description="Capabilities and behaviours the system must provide.",
+    )
+    non_functional_requirements: list[str] = Field(
+        default_factory=list,
+        description="Quality requirements such as scalability, availability, and performance.",
+    )
+    cloud_provider: str = Field(
+        default="",
+        description="Required or preferred cloud provider, if specified.",
+    )
+    budget: str = Field(
+        default="",
+        description="Available budget level or relevant cost constraint.",
+    )
+    compliance_requirements: list[str] = Field(
+        default_factory=list,
+        description="Legal, regulatory, security, or policy requirements.",
+    )
+    existing_systems: list[str] = Field(
+        default_factory=list,
+        description="Existing applications, services, data stores, or integrations.",
+    )
+    assumptions: list[str] = Field(
+        default_factory=list,
+        description="Explicit assumptions accepted during clarification.",
+    )
+    open_questions: list[str] = Field(
+        default_factory=list,
+        description="Unresolved questions that may affect later architecture decisions.",
+    )
+    summary: str = Field(
+        default="",
+        description="Human-readable summary retained for backward compatibility.",
+    )
 
 
 class Feature(BaseModel):
