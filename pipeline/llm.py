@@ -35,8 +35,8 @@ from pipeline.state import ArchitectState
 # changes if we swap the underlying model. To add Claude/GPT later, this
 # maps to (provider, model_id) and llm_call dispatches on provider.
 MODELS: dict[str, str] = {
-    "flash-lite": "gemini-2.5-flash-lite",  # cheapest / fastest — default
-    "flash":      "gemini-2.5-flash",       # stronger — for harder tasks
+    "flash-lite": "gemini-3.1-flash-lite",  # cheapest / fastest — default
+    "flash":      "gemini-3.5-flash",       # stronger — for harder tasks
 }
 DEFAULT_MODEL = "flash-lite"
 # NB: gemini-2.5-pro is deliberately NOT here — it has a zero free-tier quota

@@ -29,6 +29,7 @@ from langgraph.graph import END, START, StateGraph
 from pipeline.agents import (
     architect_node,
     clarifier_node,
+    repo_ingestor_node,
     researcher_node,
     reviewer_node,
 )
@@ -39,8 +40,9 @@ from pipeline.state import ArchitectState, Stage
 # truth for routing. A stage absent here (DONE, FAILED, or anything unwired)
 # routes to END, so the graph always terminates.
 STAGE_TO_NODE: dict[Stage, str] = {
-    Stage.CREATED:        "clarifier",
-    Stage.CLARIFYING:     "researcher",
+    Stage.CREATED:        "repo_ingestor",  # read the repo FIRST (or skip: greenfield)
+    Stage.INGESTING:      "clarifier",      # so the clarifier can ground its questions in it
+    Stage.CLARIFYING:     "researcher",     # context locked → research
     Stage.AWAITING_INPUT: END,   # clarifier needs the human → pause (see _route)
     Stage.RESEARCHING:    "architect",
     Stage.DESIGNING:      "reviewer",
@@ -49,6 +51,7 @@ STAGE_TO_NODE: dict[Stage, str] = {
 
 _NODES = {
     "clarifier": clarifier_node,
+    "repo_ingestor": repo_ingestor_node,
     "researcher": researcher_node,
     "architect": architect_node,
     "reviewer": reviewer_node,

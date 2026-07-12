@@ -40,14 +40,19 @@ from pydantic import BaseModel, Field
 class InitialRequest(BaseModel):
     """The raw request, in natural language, exactly as accepted from the user.
 
-    ONLY user-supplied input lives here. Anything interpreted from the prompt
-    (use case, constraints, repo reference) is DERIVED downstream by the
-    Clarifier and written into the ContextRecord — never back into here. This
-    keeps `raw_prompt` an immutable ground truth and keeps all interpretation
-    (LLM work) out of the input layer.
+    ONLY user-supplied input lives here — both fields come straight from the
+    user, nothing is interpreted. Everything DERIVED from them (use case,
+    constraints, the repo analysis) is produced downstream and written
+    elsewhere, never back into here, so this stays immutable ground truth.
+
+    `repo_url` is an EXPLICIT field. Empty = a greenfield project with no
+    existing code. The repo_ingestor still falls back to scanning the
+    prompt/answers when this is empty, so pasting a URL into the prompt keeps
+    working.
     """
 
     raw_prompt: str = Field(..., description="Verbatim user message, exactly as entered. Ground truth for the run — never edited or overwritten.")
+    repo_url: str = Field("", description="Existing codebase to re-architect, from the UI's URL field. Empty = greenfield.")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -55,10 +60,92 @@ class InitialRequest(BaseModel):
 # ══════════════════════════════════════════════════════════════════════════
 # Each class below is a stand-in. The owner replaces the body with the real, validated schema.
 
+# ── Repo representation (Malte owns) ──────────────────────────────────────
+# Repository Representation is intended to systematically provide information on the
+# codebase in a "as token-cheap as *possible* and as extensive as *necessary*
+# Two-layer contract:
+#   structure — built DETERMINISTICALLY from a "git clone --depth 1" (shallow clone)
+#               operation;
+#               plain code in pipeline/repo_analysis.py produces it.
+#   behavior  — the ONLY LLM-written layer (overview + partition summaries).
+# LLM-facing render artifacts (file tree, repo map, mermaid) are stored as
+# ready-to-inject TEXT; things code must post-process (dependency edges,
+# tech stack) are stored STRUCTURED. Written ONCE by the repo_ingestor node;
+# lazy (meaning only done if the user asks for in-depth information about certain
+# artifacts) drill-downs go to `ArchitectState.repo_deep_dives` instead (reducer),
+# so this artifact never needs rewriting.
+
+class RepoMeta(BaseModel):
+    """Provenance: what was cloned, at which commit, and where it lives locally."""
+
+    url: str = ""
+    commit_sha: str = Field("", description="Exact commit analysed — makes the analysis reproducible.")
+    clone_path: str = Field("", description="Local shallow-clone dir; the Architect reads files from here on drill-downs.")
+    ingested_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class TechStack(BaseModel):
+    """What the system is built with — parsed from manifests, not guessed from code."""
+
+    languages: dict[str, int] = Field(default_factory=dict, description="Language -> lines of code.")
+    frameworks: list[str] = Field(default_factory=list, description="Recognised frameworks, e.g. ['FastAPI', 'React'].")
+    dependencies: list[str] = Field(default_factory=list, description="Direct dependencies from manifest files.")
+    external_services: list[str] = Field(default_factory=list, description="DBs/queues/etc. found in docker-compose/Dockerfile.")
+
+
+class DependencyEdge(BaseModel):
+    """One intra-repo import: file `source` imports from file `target`."""
+
+    source: str
+    target: str
+
+
+class RepoStructure(BaseModel):
+    """The static view. Everything here is derived by plain code — never by an LLM."""
+
+    file_tree: str = Field("", description="Rendered directory tree with LOC annotations (LLM-facing text).")
+    repo_map: str = Field("", description="aider-style map: most-imported files first, signatures only.")
+    dependency_edges: list[DependencyEdge] = Field(default_factory=list)
+    architecture_diagram: str = Field("", description="Mermaid source, rendered FROM dependency_edges (coarse, top-level view).")
+    tech_stack: TechStack = Field(default_factory=TechStack)
+    integration_interface: str = Field("", description="Condensed OpenAPI/Swagger surface. Empty = none found (drill down on demand).")
+
+
+class PartitionSummary(BaseModel):
+    """One partition of the repo, along whatever structure the repo itself has."""
+
+    name: str = Field("", description="Partition label, e.g. 'shop/api' or 'Frontend'.")
+    paths: list[str] = Field(default_factory=list, description="Repo-relative dirs/files covered — the drill-down anchor.")
+    role: str = Field("", description="Role within the whole system (1-2 sentences).")
+    functionality: str = Field("", description="What it functionally does, in plain language.")
+
+
+class RepoBehavior(BaseModel):
+    """The functional view — the only LLM-written layer (used as response_schema)."""
+
+    overview: str = Field("", description="Short summary of what the whole repo does.")
+    partitions: list[PartitionSummary] = Field(default_factory=list, description="At most ~5, along the repo's own structure.")
+
+
 class RepoRepresentation(BaseModel):
-    """What the agent actually receives when it 'reads' the repo."""
-    # TODO(Malte): real repo representation (README, file tree, selected files).
-    summary: str = ""
+    """What the agent actually receives when it 'reads' the repo. Write-once (repo_ingestor)."""
+
+    meta: RepoMeta = Field(default_factory=RepoMeta)
+    structure: RepoStructure = Field(default_factory=RepoStructure)
+    behavior: RepoBehavior = Field(default_factory=RepoBehavior)
+
+
+class DeepDive(BaseModel):
+    """One cached drill-down: a deeper look at a file/dir, written by the Architect.
+
+    Lives OUTSIDE RepoRepresentation (as `ArchitectState.repo_deep_dives`, an
+    append-only reducer field) so drilling never rewrites the write-once artifact.
+    """
+
+    target: str = Field(..., description="Repo-relative file or directory path — the clear reference.")
+    question: str = Field("", description="What triggered the drill-down.")
+    insight: str = Field("", description="The derived insight, cached so it is never re-derived.")
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class KBChunk(BaseModel):
@@ -398,6 +485,7 @@ class Stage(str, Enum):
     CREATED = "created"
     CLARIFYING = "clarifying"
     AWAITING_INPUT = "awaiting_input"  # clarifier needs the human; graph pauses here
+    INGESTING = "ingesting"            # repo_ingestor ran (or skipped: greenfield)
     RESEARCHING = "researching"
     DESIGNING = "designing"
     REVIEWING = "reviewing"
@@ -478,6 +566,10 @@ class ArchitectState(BaseModel):
     clarification_answers: dict[str, str] = Field(default_factory=dict)
     retrieved_knowledge: list[KBChunk] = Field(default_factory=list)
     features: list[Feature] = Field(default_factory=list)
+    # Drill-down cache (Malte): the Architect appends one DeepDive whenever it
+    # takes a deeper look at part of the repo, so an insight is derived at most
+    # once per run. Reducer (append) — same pattern as `history` below.
+    repo_deep_dives: Annotated[list[DeepDive], operator.add] = Field(default_factory=list)
 
     # --- 4. Control / orchestration meta (Kati owns fully) ----------------
     stage: Stage = Stage.CREATED
@@ -506,13 +598,16 @@ class ArchitectState(BaseModel):
         self.retry_counts[agent] = self.retry_counts.get(agent, 0) + 1
         return self.retry_counts[agent]
 
-def new_run(raw_prompt: str) -> ArchitectState:
+def new_run(raw_prompt: str, repo_url: str = "") -> ArchitectState:
     """Factory: build a fresh state at the start of a run.
 
-    `raw_prompt` (the verbatim user message = ground truth) is the only input.
-    Everything else is derived downstream by the agents.
+    `raw_prompt` (the verbatim user message = ground truth) and the optional
+    `repo_url` (the existing codebase, empty for greenfield) are the only
+    inputs. Everything else is derived downstream by the agents.
     """
-    return ArchitectState(initial_request=InitialRequest(raw_prompt=raw_prompt))
+    return ArchitectState(
+        initial_request=InitialRequest(raw_prompt=raw_prompt, repo_url=repo_url)
+    )
 
 # ── quick self-test: `python -m pipeline.state` ──────────────────────────
 if __name__ == "__main__":

@@ -68,20 +68,58 @@ Split every gap into exactly one of two kinds:
 Also fill `captured_context` with the facts you DID ground in the request
 (key -> value), e.g. "domain" -> "e-commerce", "cloud" -> "AWS".
 
+When a REPO ANALYSIS block is present, treat it as ground truth about the
+EXISTING system (this is a brownfield run). Any architecture-critical fact it
+already settles — the current stack, frameworks, external services, the overall
+structure — is KNOWN: record it in `captured_context` and do NOT put it in
+`missing_critical` or ask about it. Only ask about critical facts the analysis
+does not settle (e.g. target scale, budget, compliance, cloud preference).
+
 Be conservative: it is better to ask one more critical question than to guess a
 fact that reshapes the architecture. But do not pad `missing_critical` with
 low-stakes items — that wastes the user's time.
 """
 
 
+def _format_repo_context(state: ArchitectState) -> str:
+    """Condensed repo analysis for the Clarifier, or "" on a greenfield run.
+
+    Malte's repo_ingestor runs BEFORE the clarifier (see orchestrator table), so
+    on a brownfield run `repo_representation` is already populated. Feeding a
+    compact digest of it here is what lets the clarifier ground its questions in
+    the actual codebase and skip asking about facts the repo already shows.
+    """
+    rep = state.repo_representation
+    if rep is None:
+        return ""
+    ts = rep.structure.tech_stack
+    lines = [f"REPO ANALYSIS (existing system at {rep.meta.url or 'unknown'}):"]
+    if rep.behavior.overview:
+        lines.append(f"Overview: {rep.behavior.overview}")
+    if ts.languages or ts.frameworks or ts.external_services:
+        lines.append(
+            f"Tech: languages={list(ts.languages)}, frameworks={ts.frameworks}, "
+            f"external services={ts.external_services or 'none detected'}"
+        )
+    if rep.behavior.partitions:
+        lines.append(
+            "Partitions: " + "; ".join(f"{p.name} ({p.role})" for p in rep.behavior.partitions)
+        )
+    return "\n".join(lines)
+
+
 def _build_prompt(state: ArchitectState) -> str:
-    """Assemble the user-turn content: the raw request plus any answers so far.
+    """Assemble the user-turn content: the raw request, repo analysis, answers.
 
     On the first pass there are no answers. On a resume pass, the previously
     asked questions and the user's answers are included so the LLM re-judges
-    WITH the new information (that is what lets `missing_critical` shrink).
+    WITH the new information (that is what lets `missing_critical` shrink). The
+    repo digest (brownfield only) is injected so questions are repo-grounded.
     """
     parts = [f"USER REQUEST:\n{state.initial_request.raw_prompt}"]
+    repo = _format_repo_context(state)
+    if repo:
+        parts.append(repo)
     if state.clarification_answers:
         qa = "\n".join(f"Q: {q}\nA: {a}" for q, a in state.clarification_answers.items())
         parts.append(f"CLARIFYING Q&A SO FAR:\n{qa}")

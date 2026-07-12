@@ -32,6 +32,7 @@ from __future__ import annotations
 import streamlit as st
 
 from pipeline.orchestrator import run_pipeline
+from pipeline.repo_analysis import is_repo_url
 from pipeline.state import ArchitectState, Stage, new_run
 
 # ── page setup ────────────────────────────────────────────────────────────
@@ -40,6 +41,7 @@ st.set_page_config(page_title="AI Architect", page_icon="🏛️", layout="wide"
 # The stages shown in the sidebar checklist, in pipeline order.
 # AWAITING_INPUT is not listed: it is a pause WITHIN clarifying, not a step.
 _CHECKLIST: list[tuple[Stage, str]] = [
+    (Stage.INGESTING, "Ingest repo"),
     (Stage.CLARIFYING, "Clarify"),
     (Stage.RESEARCHING, "Research"),
     (Stage.DESIGNING, "Design"),
@@ -109,10 +111,42 @@ with st.sidebar:
 if state is None:
     st.markdown("#### Describe the system you need architected")
     st.caption(
-        "Include what you know: domain, existing code, scale, cloud, "
-        "compliance, budget. The Clarifier will ask about anything critical "
-        "that is missing."
+        "Include what you know: domain, scale, cloud, compliance, budget. "
+        "Point us at the existing codebase — the Clarifier grounds its questions "
+        "in it and only asks about what the repo cannot answer."
     )
+    # Structured intake: st.form batches both fields so nothing fires until the
+    # user clicks Start (a half-filled form never starts a run). The URL gets
+    # its own hard-validated box — the repo is first-class input, not something
+    # to bury in the prompt text.
+    with st.form("intake"):
+        prompt = st.text_area(
+            "System description",
+            height=160,
+            placeholder=(
+                "e.g. Our monolithic online shop crashes on peak sale days. "
+                "On AWS, medium budget, must stay GDPR-compliant, ~50k peak users."
+            ),
+        )
+        repo_url = st.text_input(
+            "GitHub repository URL (optional)",
+            placeholder="https://github.com/org/repo",
+        )
+        st.caption("Leave empty for a greenfield project (no existing code).")
+        submitted = st.form_submit_button("Start")
+    if submitted:
+        clean_url = repo_url.strip()
+        if not prompt.strip():
+            st.warning("Please describe the system you need architected.")
+        elif clean_url and not is_repo_url(clean_url):
+            # HARD validation: a non-empty URL must be a well-formed repo URL.
+            st.error(
+                "That does not look like a repository URL. Use the form "
+                "`https://github.com/org/repo` (GitHub, GitLab or Bitbucket), "
+                "or leave the field empty for a greenfield project."
+            )
+        else:
+            _run(new_run(prompt.strip(), clean_url))
 else:
     # 1. The original request — the ground truth of the run.
     with st.chat_message("user"):
@@ -167,9 +201,3 @@ else:
             st.error("Run failed.")
             for err in state.errors:
                 st.code(err)
-
-# ── EVENT 1: first submit (chat box only shown before a run exists) ──────
-if state is None:
-    prompt = st.chat_input("e.g. We need a webshop for sneakers, ~50k peak users…")
-    if prompt:
-        _run(new_run(prompt))
