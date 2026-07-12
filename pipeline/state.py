@@ -63,9 +63,11 @@ class RepoRepresentation(BaseModel):
 
 class KBChunk(BaseModel):
     """One knowledge-base entry returned by a retrieval call."""
-    # TODO(Kush): real KB chunk format (content + source + metadata).
     content: str = ""
     source: str = ""
+    page: int = 0
+    box: int = 1          # 1=patterns, 2=domain, 3=web fallback
+    distance: float | None = None   # Chroma distance, lower = better; None for web results
 
 
 class ContextRecord(BaseModel):
