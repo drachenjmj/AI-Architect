@@ -22,7 +22,7 @@ from rag_logger import RagLogger
 # ──────────────────────────────────────────────
 # CONFIGURATION
 # ──────────────────────────────────────────────
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = "gemini-3.1-flash-lite"
 CHROMA_DIR = "./chroma_db"
 DB_PATH = "architect.db"
 
