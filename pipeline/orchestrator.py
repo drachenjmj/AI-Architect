@@ -40,10 +40,10 @@ from pipeline.state import ArchitectState, Stage
 # truth for routing. A stage absent here (DONE, FAILED, or anything unwired)
 # routes to END, so the graph always terminates.
 STAGE_TO_NODE: dict[Stage, str] = {
-    Stage.CREATED:        "clarifier",
-    Stage.CLARIFYING:     "repo_ingestor",  # context locked → read the repo (or skip: greenfield)
+    Stage.CREATED:        "repo_ingestor",  # read the repo FIRST (or skip: greenfield)
+    Stage.INGESTING:      "clarifier",      # so the clarifier can ground its questions in it
+    Stage.CLARIFYING:     "researcher",     # context locked → research
     Stage.AWAITING_INPUT: END,   # clarifier needs the human → pause (see _route)
-    Stage.INGESTING:      "researcher",
     Stage.RESEARCHING:    "architect",
     Stage.DESIGNING:      "reviewer",
     # TODO(W3): Stage.REFINING -> "architect"   # reviewer-triggered refine loop

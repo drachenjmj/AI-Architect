@@ -40,14 +40,19 @@ from pydantic import BaseModel, Field
 class InitialRequest(BaseModel):
     """The raw request, in natural language, exactly as accepted from the user.
 
-    ONLY user-supplied input lives here. Anything interpreted from the prompt
-    (use case, constraints, repo reference) is DERIVED downstream by the
-    Clarifier and written into the ContextRecord — never back into here. This
-    keeps `raw_prompt` an immutable ground truth and keeps all interpretation
-    (LLM work) out of the input layer.
+    ONLY user-supplied input lives here — both fields come straight from the
+    user, nothing is interpreted. Everything DERIVED from them (use case,
+    constraints, the repo analysis) is produced downstream and written
+    elsewhere, never back into here, so this stays immutable ground truth.
+
+    `repo_url` is an EXPLICIT field. Empty = a greenfield project with no
+    existing code. The repo_ingestor still falls back to scanning the
+    prompt/answers when this is empty, so pasting a URL into the prompt keeps
+    working.
     """
 
     raw_prompt: str = Field(..., description="Verbatim user message, exactly as entered. Ground truth for the run — never edited or overwritten.")
+    repo_url: str = Field("", description="Existing codebase to re-architect, from the UI's URL field. Empty = greenfield.")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -365,13 +370,16 @@ class ArchitectState(BaseModel):
         self.retry_counts[agent] = self.retry_counts.get(agent, 0) + 1
         return self.retry_counts[agent]
 
-def new_run(raw_prompt: str) -> ArchitectState:
+def new_run(raw_prompt: str, repo_url: str = "") -> ArchitectState:
     """Factory: build a fresh state at the start of a run.
 
-    `raw_prompt` (the verbatim user message = ground truth) is the only input.
-    Everything else is derived downstream by the agents.
+    `raw_prompt` (the verbatim user message = ground truth) and the optional
+    `repo_url` (the existing codebase, empty for greenfield) are the only
+    inputs. Everything else is derived downstream by the agents.
     """
-    return ArchitectState(initial_request=InitialRequest(raw_prompt=raw_prompt))
+    return ArchitectState(
+        initial_request=InitialRequest(raw_prompt=raw_prompt, repo_url=repo_url)
+    )
 
 # ── quick self-test: `python -m pipeline.state` ──────────────────────────
 if __name__ == "__main__":
