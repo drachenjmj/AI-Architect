@@ -41,6 +41,7 @@ st.set_page_config(page_title="AI Architect", page_icon="🏛️", layout="wide"
 # AWAITING_INPUT is not listed: it is a pause WITHIN clarifying, not a step.
 _CHECKLIST: list[tuple[Stage, str]] = [
     (Stage.CLARIFYING, "Clarify"),
+    (Stage.INGESTING, "Ingest repo"),
     (Stage.RESEARCHING, "Research"),
     (Stage.DESIGNING, "Design"),
     (Stage.REVIEWING, "Review"),
