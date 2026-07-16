@@ -14,10 +14,8 @@ Needs GEMINI_API_KEY in .env (one real Gemini call per scenario). Two runs:
      flaw. The Reviewer should pass it. Together A and B show the verdict is
      driven by the design's substance, not by formatting.
 
-Why the artifacts are seeded here instead of taken from the pipeline: the
-architect node is still the Week-1 stub ("[stub]" placeholders), which fails
-review trivially and exercises neither rubric judgment. Once Maheen's real
-architect lands, this file shrinks to `run_pipeline(new_run(UC1_PROMPT))`.
+These crafted scenarios remain a manual Reviewer smoke demo. The reusable,
+labeled agreement runner lives in eval/harness.py.
 """
 from __future__ import annotations
 
@@ -81,25 +79,34 @@ def seeded_flaw_state() -> ArchitectState:
                        "instance to a larger size before each seasonal peak and schedule nightly "
                        "restarts to clear memory. Sessions remain in process memory. Order data "
                        "stays in the existing PostgreSQL with disk encryption for GDPR "
-                       "compliance. This scaling approach stays within the medium budget because "
-                       "no code changes are needed for the expected concurrent peak load.",
+                        "compliance. This scaling approach stays within the medium budget because "
+                        "no code changes are needed for the expected concurrent peak load.",
+        components=["Shop Monolith", "Order Module"],
+        addressed_feature_ids=["F1", "F2"],
+        constraints_addressed=["AWS", "medium budget", "peak load", "GDPR", "monolith"],
     )
     s.adrs = [
-        ADR(title="ADR-1: Vertically scale the Shop Monolith for peak load",
+        ADR(id="ADR-001", title="ADR-1: Vertically scale the Shop Monolith for peak load",
             decision="Keep the existing monolith and move the Shop Monolith to a larger EC2 "
-                     "instance class before sale events; cheapest option within the medium "
-                     "budget and no migration risk."),
-        ADR(title="ADR-2: Nightly restarts of the Order Module",
+                      "instance class before sale events; cheapest option within the medium "
+                      "budget and no migration risk.",
+            related_feature_ids=["F1"],
+            related_component_names=["Shop Monolith"]),
+        ADR(id="ADR-002", title="ADR-2: Nightly restarts of the Order Module",
             decision="Schedule nightly restarts of the Shop Monolith so the Order Module's "
-                     "memory leaks under load never accumulate; GDPR unaffected."),
+                      "memory leaks under load never accumulate; GDPR unaffected.",
+            related_feature_ids=["F2"],
+            related_component_names=["Order Module"]),
     ]
     s.components = [
-        ComponentDescription(name="Shop Monolith",
-                             description="The whole existing shop as one deployable on a large EC2 "
-                                         "instance; handles browsing, checkout and orders (traces to F1)."),
-        ComponentDescription(name="Order Module",
-                             description="Order handling inside the monolith; stores GDPR-encrypted "
-                                         "order data in PostgreSQL (traces to F1, F2)."),
+        ComponentDescription(id="COMP-001", name="Shop Monolith",
+                              description="The whole existing shop as one deployable on a large EC2 "
+                                          "instance; handles browsing, checkout and orders (traces to F1).",
+                              related_feature_ids=["F1"], related_adr_ids=["ADR-001"]),
+        ComponentDescription(id="COMP-002", name="Order Module",
+                              description="Order handling inside the monolith; stores GDPR-encrypted "
+                                          "order data in PostgreSQL (traces to F1, F2).",
+                              related_feature_ids=["F2"], related_adr_ids=["ADR-002"]),
     ]
     return s
 
@@ -117,35 +124,47 @@ def sound_design_state() -> ArchitectState:
                        "and an OrderWorker consuming the queue asynchronously so peak bursts are "
                        "buffered instead of crashing the system. Order data lives in RDS "
                        "PostgreSQL (eu-central-1) encrypted at rest for GDPR. Autoscaling with "
-                       "spot capacity keeps cost within the medium budget; the rest of the "
-                       "existing monolith is migrated incrementally (strangler pattern).",
+                        "spot capacity keeps cost within the medium budget; the rest of the "
+                        "existing monolith is migrated incrementally (strangler pattern).",
+        components=["WebTier", "CheckoutService", "OrderWorker"],
+        addressed_feature_ids=["F1", "F2"],
+        constraints_addressed=["AWS", "medium budget", "peak load", "GDPR", "monolith migration"],
     )
     s.adrs = [
-        ADR(title="ADR-1: Extract CheckoutService behind an SQS queue",
+        ADR(id="ADR-001", title="ADR-1: Extract CheckoutService behind an SQS queue",
             decision="Split checkout out of the existing monolith and buffer orders through SQS "
-                     "so ~50k concurrent peak users cannot saturate order processing "
-                     "(retrieved: async queue decoupling, architecture_patterns.md). Trade-off: "
-                     "eventual consistency for order confirmation, accepted for availability."),
-        ADR(title="ADR-2: Stateless WebTier with externalized sessions",
+                      "so ~50k concurrent peak users cannot saturate order processing "
+                      "(retrieved: async queue decoupling, architecture_patterns.md). Trade-off: "
+                      "eventual consistency for order confirmation, accepted for availability.",
+            related_feature_ids=["F1"],
+            related_component_names=["CheckoutService"]),
+        ADR(id="ADR-002", title="ADR-2: Stateless WebTier with externalized sessions",
             decision="Run the WebTier stateless on ECS with sessions in ElastiCache so it "
-                     "scales horizontally during peak load (retrieved: stateless web tier, "
-                     "microservices-on-aws.pdf). Trade-off: added infrastructure cost, kept "
-                     "within the medium budget via autoscaling down off-peak."),
-        ADR(title="ADR-3: OrderWorker with EU data residency for GDPR",
+                      "scales horizontally during peak load (retrieved: stateless web tier, "
+                      "microservices-on-aws.pdf). Trade-off: added infrastructure cost, kept "
+                      "within the medium budget via autoscaling down off-peak.",
+            related_feature_ids=["F1"],
+            related_component_names=["WebTier"]),
+        ADR(id="ADR-003", title="ADR-3: OrderWorker with EU data residency for GDPR",
             decision="Process queued orders in a dedicated OrderWorker writing to RDS in "
-                     "eu-central-1 with encryption at rest, satisfying GDPR compliance and "
-                     "right-to-erasure. Trade-off: single-region latency, accepted."),
+                      "eu-central-1 with encryption at rest, satisfying GDPR compliance and "
+                      "right-to-erasure. Trade-off: single-region latency, accepted.",
+            related_feature_ids=["F2"],
+            related_component_names=["OrderWorker"]),
     ]
     s.components = [
-        ComponentDescription(name="WebTier",
-                             description="Stateless storefront on ECS autoscaling behind an ALB; absorbs "
-                                         "peak browsing load (traces to F1)."),
-        ComponentDescription(name="CheckoutService",
-                             description="Accepts checkouts and publishes orders to the SQS queue; keeps "
-                                         "checkout responsive at peak (traces to F1)."),
-        ComponentDescription(name="OrderWorker",
-                             description="Consumes the queue asynchronously and persists GDPR-encrypted "
-                                         "order data in the EU (traces to F1, F2)."),
+        ComponentDescription(id="COMP-001", name="WebTier",
+                              description="Stateless storefront on ECS autoscaling behind an ALB; absorbs "
+                                          "peak browsing load (traces to F1).",
+                              related_feature_ids=["F1"], related_adr_ids=["ADR-002"]),
+        ComponentDescription(id="COMP-002", name="CheckoutService",
+                              description="Accepts checkouts and publishes orders to the SQS queue; keeps "
+                                          "checkout responsive at peak (traces to F1).",
+                              related_feature_ids=["F1"], related_adr_ids=["ADR-001"]),
+        ComponentDescription(id="COMP-003", name="OrderWorker",
+                              description="Consumes the queue asynchronously and persists GDPR-encrypted "
+                                          "order data in the EU (traces to F1, F2).",
+                              related_feature_ids=["F2"], related_adr_ids=["ADR-003"]),
     ]
     return s
 

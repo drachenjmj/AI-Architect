@@ -1,15 +1,13 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Reviewer Report",
-  "description": "Structured output of the Reviewer node. Combines deterministic check results with the Reviewer's judgment.",
+  "description": "Rubric v2 report assembled in code from deterministic scores and binary LLM judgments.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "overall_status",
-    "score_total",
-    "max_score",
     "rubric_scores",
-    "flaw_detected",
+    "judgment_reasons",
     "issues",
     "requires_refinement",
     "refinement_instruction"
@@ -17,16 +15,7 @@
   "properties": {
     "overall_status": {
       "type": "string",
-      "enum": ["pass", "pass_with_minor_issues", "fail"]
-    },
-    "score_total": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 16
-    },
-    "max_score": {
-      "type": "integer",
-      "const": 16
+      "enum": ["pass", "fail"]
     },
     "rubric_scores": {
       "type": "object",
@@ -34,27 +23,43 @@
       "required": [
         "all_artifacts_present",
         "constraint_coverage",
+        "traceability",
+        "adr_presence",
         "repo_grounding",
         "flaw_detection",
-        "traceability",
-        "adr_quality",
+        "adr_soundness",
         "best_practice_grounding",
         "refinement_readiness"
       ],
       "properties": {
         "all_artifacts_present": { "type": "integer", "minimum": 0, "maximum": 2 },
         "constraint_coverage": { "type": "integer", "minimum": 0, "maximum": 2 },
-        "repo_grounding": { "type": "integer", "minimum": 0, "maximum": 2 },
-        "flaw_detection": { "type": "integer", "minimum": 0, "maximum": 2 },
         "traceability": { "type": "integer", "minimum": 0, "maximum": 2 },
-        "adr_quality": { "type": "integer", "minimum": 0, "maximum": 2 },
-        "best_practice_grounding": { "type": "integer", "minimum": 0, "maximum": 2 },
-        "refinement_readiness": { "type": "integer", "minimum": 0, "maximum": 2 }
+        "adr_presence": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "repo_grounding": { "type": "boolean" },
+        "flaw_detection": { "type": "boolean" },
+        "adr_soundness": { "type": "boolean" },
+        "best_practice_grounding": { "type": "boolean" },
+        "refinement_readiness": { "type": "boolean" }
       }
     },
-    "flaw_detected": {
-      "type": "boolean",
-      "description": "Rates the DESIGN, not the Reviewer: true when the submitted design itself identifies the ground-truth architectural flaw (use-case #1) and gives it a structural fix; false when the design misses the flaw or merely patches it. A Reviewer that correctly catches a flawed design therefore reports flaw_detected=false."
+    "judgment_reasons": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo_grounding",
+        "flaw_detection",
+        "adr_soundness",
+        "best_practice_grounding",
+        "refinement_readiness"
+      ],
+      "properties": {
+        "repo_grounding": { "type": "string" },
+        "flaw_detection": { "type": "string" },
+        "adr_soundness": { "type": "string" },
+        "best_practice_grounding": { "type": "string" },
+        "refinement_readiness": { "type": "string" }
+      }
     },
     "issues": {
       "type": "array",
@@ -94,12 +99,11 @@
     },
     "requires_refinement": {
       "type": "boolean",
-      "description": "True when score_total is below the pass threshold or any high-severity issue exists."
+      "description": "True unless every code item is full, every judged item passes, and no high-severity issue exists."
     },
     "refinement_instruction": {
       "type": "string",
-      "description": "Concrete instruction routed back to the Architect/Writer node. Empty string when no refinement is needed."
+      "description": "Code-assembled instruction from the highest-priority failed checks; empty on pass."
     }
   }
 }
-
