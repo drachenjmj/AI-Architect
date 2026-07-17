@@ -586,6 +586,11 @@ class ArchitectState(BaseModel):
     history: Annotated[list[StepLog], operator.add] = Field(default_factory=list)
     retry_counts: dict[str, int] = Field(default_factory=dict)
     refine_iterations: int = 0
+    # Set True by the refine gate when the reviewer→refine loop stops on a cap
+    # (max iterations or token budget) rather than on a clean reviewer pass.
+    # An honest "finished best-effort, not perfect" signal for the UI/report;
+    # the run still ends as DONE (not FAILED). Single writer: the refine gate.
+    stopped_on_cap: bool = False
     input_tokens: int = 0
     output_tokens: int = 0
     # Reducer (append) so a failure in any node adds to — never clobbers —

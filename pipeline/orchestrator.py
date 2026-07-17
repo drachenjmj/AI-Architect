@@ -33,6 +33,7 @@ from pipeline.agents import (
     researcher_node,
     reviewer_node,
 )
+from pipeline.refine_gate import refine_gate_node
 from pipeline.state import ArchitectState, Stage
 
 # ── DETERMINISM MAP ───────────────────────────────────────────────────────
@@ -46,7 +47,7 @@ STAGE_TO_NODE: dict[Stage, str] = {
     Stage.AWAITING_INPUT: END,   # clarifier needs the human → pause (see _route)
     Stage.RESEARCHING:    "architect",
     Stage.DESIGNING:      "reviewer",
-    # TODO(W3): Stage.REFINING -> "architect"   # reviewer-triggered refine loop
+    Stage.REFINING:       "refine_gate",  # reviewer failed → cost-cap gate decides loop-vs-stop
 }
 
 _NODES = {
@@ -55,6 +56,7 @@ _NODES = {
     "researcher": researcher_node,
     "architect": architect_node,
     "reviewer": reviewer_node,
+    "refine_gate": refine_gate_node,
 }
 
 # Path map for the conditional edges: every value _route can return.
@@ -85,15 +87,33 @@ def _entry_route(state: ArchitectState) -> str:
     return _route(state)
 
 
+def _gate_route(state: ArchitectState) -> str:
+    """Deterministic router for the edge AFTER the refine gate ONLY.
+
+    The gate has already made the cost-cap decision and recorded it in
+    `stopped_on_cap`: True ⇒ stop the loop (→ END, the run is DONE); False ⇒
+    afford one more pass (→ architect, which redesigns from the reviewer's
+    instruction). This is why `REFINING` is directional — the same stage routes
+    to the gate after the reviewer but to the architect after the gate.
+    """
+    return END if state.stopped_on_cap else "architect"
+
+
 def _build_graph():
     """Assemble and compile the StateGraph. One graph, reused across runs."""
     g = StateGraph(ArchitectState)
     for name, fn in _NODES.items():
         g.add_node(name, fn)
-    # Entry uses _entry_route (handles resume); after every node uses _route.
+    # Entry uses _entry_route (handles resume); after every node uses _route,
+    # EXCEPT the refine gate, whose outgoing edge uses _gate_route (loop-vs-stop
+    # on the cost cap — see _gate_route). Reusing _route there would self-loop,
+    # since REFINING maps back to the gate.
     g.add_conditional_edges(START, _entry_route, _PATH_MAP)
     for name in _NODES:
-        g.add_conditional_edges(name, _route, _PATH_MAP)
+        if name == "refine_gate":
+            g.add_conditional_edges(name, _gate_route, {"architect": "architect", END: END})
+        else:
+            g.add_conditional_edges(name, _route, _PATH_MAP)
     return g.compile()
 
 
