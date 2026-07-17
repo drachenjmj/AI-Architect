@@ -20,6 +20,42 @@ the agents. This keeps the system auditable and deterministic wherever it can be
 - **Architect** — derives features and writes the Blueprint, ADRs, and Components.
 - **Reviewer** — checks quality and can send work back for refinement.
 
+## Reviewer quality gate
+
+Reviewer rubric v2 separates checks by who can evaluate them reliably:
+
+- Python checks artifact completeness, constraint coverage, structured
+  traceability, and ADR presence.
+- One LLM call answers five atomic yes/no questions covering repository
+  grounding, flaw detection, ADR soundness, best-practice grounding, and
+  refinement readiness.
+- Python assembles the issues and owns the final pass/fail verdict. A design
+  passes only when every deterministic check is full, every qualitative
+  judgment passes, and no high-severity issue remains.
+
+See the [Reviewer prompt](docs/prompt_quality/04_reviewer_agent_prompt.md),
+[report schema](docs/prompt_quality/06_reviewer_report_schema.json), and
+[evaluation rubric v2](docs/prompt_quality/07_eval_rubric_v2.md) for the full
+contract.
+
+## Evaluation
+
+The development-only [evaluation harness](eval/README.md) sends two labeled
+use-case #1 designs through the production Reviewer: a seeded-flaw design that
+must fail and a sound design that must pass. It reports agreement, true-positive
+and true-negative rates, the confusion matrix, and every disagreement. The
+`eval/` package is not an agent and is never imported by the production
+pipeline.
+
+```bash
+python -m pytest -q          # offline suite; LLM calls are mocked
+python -m eval.harness       # real Reviewer call; requires GEMINI_API_KEY
+```
+
+Current status: rubric v2 and the labeled harness are implemented and covered
+by offline tests. Applying the rubric to a real end-to-end pipeline output for
+use-case #1 remains the Week 3 evaluation exit gate.
+
 ## Layout
 
 ```
@@ -27,8 +63,10 @@ pipeline/
   state.py         shared ArchitectState — the contract every agent uses
   orchestrator.py  deterministic router (stage -> agent)
   llm.py           single door for all LLM calls (see LLM_MODULE.md)
+  review_checks.py deterministic Reviewer checks
   run.py           entry point / end-to-end trace
   agents/          base class + one file per agent
+eval/              development-only labeled evaluation harness
 architect.py       single-agent prototype (reference for prompt + RAG wiring)
 Rag Database/      knowledge base assets
 ```
