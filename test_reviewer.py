@@ -1,4 +1,4 @@
-"""test_reviewer.py — offline unit tests for the Reviewer (Waqar).
+"""test_reviewer.py — offline unit tests for the Reviewer
 
 No API key or network needed: the LLM is mocked by replacing `llm_call` with a
 function returning a canned `ReviewResult`. This isolates what we own — the
