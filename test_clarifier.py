@@ -14,7 +14,6 @@ from pipeline.state import (
     ClarificationResult,
     ClarifyingQuestion,
     ContextField,
-    ReviewResult,
     Stage,
     new_run,
 )
@@ -230,6 +229,21 @@ def test_advances_and_locks_context_when_complete():
 def test_full_pause_then_resume():
     """First pass pauses; after answers, the offline pipeline resumes."""
 
+    import architect as legacy_architect
+
+    legacy_architect.retrieve_chunks = lambda query, k=3: (
+        [
+            {
+                "content": "Use asynchronous processing for peak traffic.",
+                "source": "offline-test-kb",
+                "page": 1,
+                "box": 1,
+                "distance": 0.1,
+            }
+        ],
+        "offline-test",
+    )
+
     def _stateful(
         state,
         prompt,
@@ -244,7 +258,7 @@ def test_full_pause_then_resume():
 
     clar.llm_call = _stateful
     arch.llm_call = _architect_response
-    rev.llm_call = lambda state, prompt, **kwargs: ReviewResult()
+    rev.llm_call = lambda state, prompt, **kwargs: rev.LLMJudgments()
 
     state = new_run(PROMPT)
     state = orchestrator.run_pipeline(state)

@@ -90,10 +90,19 @@ class DeterministicChecks(BaseModel):
     features_without_component: list[str] = Field(default_factory=list)
     components_without_feature: list[str] = Field(default_factory=list)
     components_without_adr: list[str] = Field(default_factory=list)
+    blueprint_missing_feature_ids: list[str] = Field(default_factory=list)
+    invalid_blueprint_feature_ids: list[str] = Field(default_factory=list)
+    invalid_component_feature_ids: dict[str, list[str]] = Field(default_factory=dict)
+    invalid_component_adr_ids: dict[str, list[str]] = Field(default_factory=dict)
+    invalid_adr_feature_ids: dict[str, list[str]] = Field(default_factory=dict)
+    invalid_adr_component_names: dict[str, list[str]] = Field(default_factory=dict)
+    adrs_without_feature: list[str] = Field(default_factory=list)
+    adrs_without_component: list[str] = Field(default_factory=list)
 
     malformed_adr_titles: list[str] = Field(default_factory=list)
     duplicate_adr_numbers: list[int] = Field(default_factory=list)
 
+    constraints_applicable: dict[str, bool] = Field(default_factory=dict)
     constraints_covered: dict[str, bool] = Field(default_factory=dict)
 
     score_all_artifacts_present: int = Field(0, ge=0, le=2)
@@ -118,13 +127,8 @@ def _non_empty(values: list[str]) -> list[str]:
     ]
 
 
-def _design_text(state: ArchitectState) -> str:
-    """Combine all relevant architecture content for constraint scanning.
-
-    The original implementation only scanned two Blueprint fields plus the
-    basic ADR and Component descriptions. The frozen schemas now contain more
-    structured content, so those fields are included as well.
-    """
+def _context_text(state: ArchitectState) -> str:
+    """Render the locked Context Record only, to identify applicable constraints."""
 
     parts: list[str] = []
 
@@ -146,6 +150,19 @@ def _design_text(state: ArchitectState) -> str:
         parts.extend(context.existing_systems)
         parts.extend(context.assumptions)
 
+    return "\n".join(_non_empty(parts)).lower()
+
+
+def _design_text(state: ArchitectState) -> str:
+    """Render generated design evidence for constraint coverage.
+
+    The Context Record states the requirements. It is deliberately excluded
+    here because repeating a constraint in the input does not prove that the
+    generated design addresses it.
+    """
+
+    parts: list[str] = []
+
     if state.blueprint is not None:
         blueprint = state.blueprint
         parts.extend(
@@ -162,19 +179,6 @@ def _design_text(state: ArchitectState) -> str:
         parts.extend(blueprint.constraints_addressed)
         parts.extend(blueprint.assumptions)
         parts.extend(blueprint.open_risks)
-
-    for feature in state.features:
-        parts.extend(
-            [
-                feature.id,
-                feature.name,
-                feature.description,
-                feature.scenario,
-                feature.priority,
-            ]
-        )
-        parts.extend(feature.related_requirement_ids)
-        parts.extend(feature.acceptance_criteria)
 
     for adr in state.adrs:
         parts.extend(
@@ -313,7 +317,12 @@ def _adr_text(adr) -> str:
     ).lower()
 
 
-def _component_supports_feature(component, feature_id: str) -> bool:
+def _component_supports_feature(
+    component,
+    feature_id: str,
+    *,
+    allow_prose_fallback: bool,
+) -> bool:
     """Return whether a component traces to the feature.
 
     Structured references are preferred. Prose fallback is retained only for
@@ -329,12 +338,14 @@ def _component_supports_feature(component, feature_id: str) -> bool:
     if explicit_ids:
         return feature_id in explicit_ids
 
-    return feature_id.lower() in _component_text(component)
+    return allow_prose_fallback and feature_id.lower() in _component_text(component)
 
 
 def _component_has_valid_feature(
     component,
     valid_feature_ids: set[str],
+    *,
+    allow_prose_fallback: bool,
 ) -> bool:
     """Check that a component references at least one existing feature."""
 
@@ -347,8 +358,10 @@ def _component_has_valid_feature(
     if explicit_ids:
         return bool(explicit_ids & valid_feature_ids)
 
-    legacy_text = _component_text(component)
+    if not allow_prose_fallback:
+        return False
 
+    legacy_text = _component_text(component)
     return any(
         feature_id.lower() in legacy_text
         for feature_id in valid_feature_ids
@@ -359,6 +372,8 @@ def _component_has_valid_adr(
     component,
     state: ArchitectState,
     valid_adr_ids: set[str],
+    *,
+    allow_prose_fallback: bool,
 ) -> bool:
     """Check that a component is justified by an ADR.
 
@@ -378,8 +393,10 @@ def _component_has_valid_adr(
     if explicit_ids:
         return bool(explicit_ids & valid_adr_ids)
 
-    component_name = component.name.strip().lower()
+    if not allow_prose_fallback:
+        return False
 
+    component_name = component.name.strip().lower()
     if not component_name:
         return False
 
@@ -391,7 +408,9 @@ def _component_has_valid_adr(
 
 def _check_traceability(
     state: ArchitectState,
-) -> tuple[list[str], list[str], list[str]]:
+    *,
+    allow_prose_fallback: bool,
+) -> dict[str, object]:
     """Check Feature → Component → ADR traceability.
 
     New designs are checked through explicit schema fields. Legacy prose-based
@@ -410,12 +429,31 @@ def _check_traceability(
         for adr in state.adrs
         if adr.id.strip()
     }
+    component_names = {
+        component.name.strip()
+        for component in state.components
+        if component.name.strip()
+    }
+
+    blueprint_feature_ids = {
+        value.strip()
+        for value in (
+            state.blueprint.addressed_feature_ids
+            if state.blueprint is not None
+            else []
+        )
+        if value.strip()
+    }
 
     features_without_component = sorted(
         feature_id
         for feature_id in feature_ids
         if not any(
-            _component_supports_feature(component, feature_id)
+            _component_supports_feature(
+                component,
+                feature_id,
+                allow_prose_fallback=allow_prose_fallback,
+            )
             for component in state.components
         )
     )
@@ -426,6 +464,7 @@ def _check_traceability(
         if not _component_has_valid_feature(
             component,
             feature_ids,
+            allow_prose_fallback=allow_prose_fallback,
         )
     )
 
@@ -436,14 +475,108 @@ def _check_traceability(
             component,
             state,
             adr_ids,
+            allow_prose_fallback=allow_prose_fallback,
         )
     )
 
-    return (
-        features_without_component,
-        components_without_feature,
-        components_without_adr,
+    invalid_component_feature_ids = {
+        component.name: sorted(
+            {
+                value.strip()
+                for value in component.related_feature_ids
+                if value.strip()
+            }
+            - feature_ids
+        )
+        for component in state.components
+    }
+    invalid_component_feature_ids = {
+        name: values
+        for name, values in invalid_component_feature_ids.items()
+        if values
+    }
+
+    invalid_component_adr_ids = {
+        component.name: sorted(
+            {
+                value.strip()
+                for value in component.related_adr_ids
+                if value.strip()
+            }
+            - adr_ids
+        )
+        for component in state.components
+    }
+    invalid_component_adr_ids = {
+        name: values
+        for name, values in invalid_component_adr_ids.items()
+        if values
+    }
+
+    invalid_adr_feature_ids = {
+        adr.id: sorted(
+            {
+                value.strip()
+                for value in adr.related_feature_ids
+                if value.strip()
+            }
+            - feature_ids
+        )
+        for adr in state.adrs
+    }
+    invalid_adr_feature_ids = {
+        adr_id: values
+        for adr_id, values in invalid_adr_feature_ids.items()
+        if values
+    }
+
+    invalid_adr_component_names = {
+        adr.id: sorted(
+            {
+                value.strip()
+                for value in adr.related_component_names
+                if value.strip()
+            }
+            - component_names
+        )
+        for adr in state.adrs
+    }
+    invalid_adr_component_names = {
+        adr_id: values
+        for adr_id, values in invalid_adr_component_names.items()
+        if values
+    }
+
+    blueprint_missing_feature_ids = sorted(feature_ids - blueprint_feature_ids)
+    if allow_prose_fallback and not blueprint_feature_ids:
+        blueprint_missing_feature_ids = []
+
+    adrs_without_feature = sorted(
+        adr.id
+        for adr in state.adrs
+        if not _non_empty(adr.related_feature_ids)
+        and not allow_prose_fallback
     )
+    adrs_without_component = sorted(
+        adr.id
+        for adr in state.adrs
+        if not _non_empty(adr.related_component_names)
+        and not allow_prose_fallback
+    )
+
+    return {
+        "features_without_component": features_without_component,
+        "components_without_feature": components_without_feature,
+        "components_without_adr": components_without_adr,
+        "blueprint_missing_feature_ids": blueprint_missing_feature_ids,
+        "invalid_blueprint_feature_ids": sorted(blueprint_feature_ids - feature_ids),
+        "invalid_component_feature_ids": invalid_component_feature_ids,
+        "invalid_component_adr_ids": invalid_component_adr_ids,
+        "invalid_adr_feature_ids": invalid_adr_feature_ids,
+        "invalid_adr_component_names": invalid_adr_component_names,
+        "adrs_without_feature": adrs_without_feature,
+        "adrs_without_component": adrs_without_component,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -487,18 +620,27 @@ def _check_adrs(
 
 def _check_constraints(
     state: ArchitectState,
-) -> dict[str, bool]:
-    """Check whether each architecture constraint group is addressed."""
+) -> tuple[dict[str, bool], dict[str, bool]]:
+    """Identify stated constraints and check only design artifacts for evidence."""
 
-    text = _design_text(state)
+    context_text = _context_text(state)
+    design_text = _design_text(state)
 
-    return {
+    applicable = {
         group: any(
-            keyword in text
+            keyword in context_text
             for keyword in keywords
         )
         for group, keywords in CONSTRAINT_KEYWORDS.items()
     }
+    covered = {
+        group: any(
+            keyword in design_text
+            for keyword in keywords
+        )
+        for group, keywords in CONSTRAINT_KEYWORDS.items()
+    }
+    return applicable, covered
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -507,19 +649,23 @@ def _check_constraints(
 
 def run_deterministic_checks(
     state: ArchitectState,
+    *,
+    allow_prose_fallback: bool = False,
 ) -> DeterministicChecks:
     """Run all code-checkable rubric items and create ReviewIssues."""
 
     present, missing = _check_artifacts(state)
 
-    (
-        features_without_component,
-        components_without_feature,
-        components_without_adr,
-    ) = _check_traceability(state)
+    traceability = _check_traceability(
+        state,
+        allow_prose_fallback=allow_prose_fallback,
+    )
+    features_without_component = traceability["features_without_component"]
+    components_without_feature = traceability["components_without_feature"]
+    components_without_adr = traceability["components_without_adr"]
 
     malformed_adrs, duplicate_numbers = _check_adrs(state)
-    constraints_covered = _check_constraints(state)
+    constraints_applicable, constraints_covered = _check_constraints(state)
 
     # ── Artifact completeness score ──────────────────────────────────────
     if not all(present.values()):
@@ -530,22 +676,32 @@ def run_deterministic_checks(
         score_artifacts = 2
 
     # ── Constraint coverage score ────────────────────────────────────────
-    number_covered = sum(constraints_covered.values())
+    applicable_groups = [
+        group
+        for group, is_applicable in constraints_applicable.items()
+        if is_applicable
+    ]
+    number_covered = sum(
+        constraints_covered[group]
+        for group in applicable_groups
+    )
 
-    if number_covered == len(constraints_covered):
+    if not applicable_groups or number_covered == len(applicable_groups):
         score_constraints = 2
-    elif number_covered >= 3:
+    elif number_covered:
         score_constraints = 1
     else:
         score_constraints = 0
 
     # ── Traceability score ───────────────────────────────────────────────
-    if not state.features or not state.components:
+    traceability_failures = [
+        value
+        for value in traceability.values()
+        if value
+    ]
+    if not state.features or not state.components or not state.adrs:
         score_traceability = 0
-    elif (
-        not features_without_component
-        and not components_without_feature
-    ):
+    elif not traceability_failures:
         score_traceability = 2
     elif (
         len(features_without_component) < len(state.features)
@@ -624,8 +780,8 @@ def run_deterministic_checks(
 
     uncovered = [
         group
-        for group, covered in constraints_covered.items()
-        if not covered
+        for group, is_applicable in constraints_applicable.items()
+        if is_applicable and not constraints_covered[group]
     ]
 
     if uncovered:
@@ -700,6 +856,28 @@ def run_deterministic_checks(
             ),
         )
 
+    structured_traceability_errors = {
+        key: value
+        for key, value in traceability.items()
+        if key not in {
+            "features_without_component",
+            "components_without_feature",
+            "components_without_adr",
+        }
+        and value
+    }
+    if structured_traceability_errors:
+        add_issue(
+            "high",
+            "traceability",
+            "Structured traceability links are missing or reference unknown artifacts.",
+            str(structured_traceability_errors),
+            (
+                "Populate every Blueprint, Component, and ADR traceability field "
+                "with identifiers or component names that resolve exactly."
+            ),
+        )
+
     if malformed_adrs:
         add_issue(
             "medium",
@@ -733,8 +911,17 @@ def run_deterministic_checks(
         features_without_component=features_without_component,
         components_without_feature=components_without_feature,
         components_without_adr=components_without_adr,
+        blueprint_missing_feature_ids=traceability["blueprint_missing_feature_ids"],
+        invalid_blueprint_feature_ids=traceability["invalid_blueprint_feature_ids"],
+        invalid_component_feature_ids=traceability["invalid_component_feature_ids"],
+        invalid_component_adr_ids=traceability["invalid_component_adr_ids"],
+        invalid_adr_feature_ids=traceability["invalid_adr_feature_ids"],
+        invalid_adr_component_names=traceability["invalid_adr_component_names"],
+        adrs_without_feature=traceability["adrs_without_feature"],
+        adrs_without_component=traceability["adrs_without_component"],
         malformed_adr_titles=malformed_adrs,
         duplicate_adr_numbers=duplicate_numbers,
+        constraints_applicable=constraints_applicable,
         constraints_covered=constraints_covered,
         score_all_artifacts_present=score_artifacts,
         score_constraint_coverage=score_constraints,
