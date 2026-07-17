@@ -114,3 +114,17 @@ def run_pipeline(state: ArchitectState, max_steps: int = 20) -> ArchitectState:
         state.errors.append(f"max_steps ({max_steps}) reached before DONE")
         state.log_step("orchestrator", Stage.FAILED, "step cap reached")
         return state
+
+
+def stream_pipeline(state: ArchitectState, max_steps: int = 20):
+    """Yield live state snapshots as the graph runs (wraps ``GRAPH.stream``).
+
+    Companion to :func:`run_pipeline` for callers that want to surface progress
+    (e.g. the UI). Each yielded value is the FULL accumulated state after a node
+    finishes (``stream_mode="values"``), so ``history[-1]`` is the just-completed
+    step and its ``note`` can be shown live. ``max_steps`` mirrors the same
+    recursion-limit guardrail as :func:`run_pipeline`.
+    """
+    return GRAPH.stream(
+        state, config={"recursion_limit": max_steps}, stream_mode="values"
+    )

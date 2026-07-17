@@ -58,11 +58,49 @@ _ORDER[Stage.FAILED] = -1
 
 
 def _run(state: ArchitectState) -> None:
-    """REACT half: drive the pipeline, store the returned state, redraw.
+    """REACT half: drive the pipeline with live step status, then redraw.
 
-    run_pipeline RETURNS a new validated state (LangGraph copies), so we must
-    reassign it — mutating the old object would not be enough.
+    Prefer streaming so ``st.status`` can show the CURRENT step (clone, research,
+    design…). Fall back to the proven ``run_pipeline()`` + spinner if streaming
+    is unavailable or raises — the UI must never crash on a progress nicety.
     """
+    try:
+        from pipeline.orchestrator import stream_pipeline
+    except Exception:  # stream helper not present -> proven path
+        stream_pipeline = None
+
+    if stream_pipeline is not None:
+        try:
+            final = None
+            with st.status("Pipeline running…", expanded=True) as status:
+                for chunk in stream_pipeline(state):
+                    final = chunk
+                    hist = (
+                        chunk.get("history")
+                        if isinstance(chunk, dict)
+                        else getattr(chunk, "history", None)
+                    )
+                    if hist:
+                        last = hist[-1]
+                        note = getattr(last, "note", None) or (
+                            last.get("note") if isinstance(last, dict) else ""
+                        )
+                        if note:
+                            status.update(label=note)
+                if final is None:  # nothing yielded — defensive
+                    final = state
+                status.update(label="Complete", state="complete", expanded=False)
+            st.session_state["state"] = (
+                ArchitectState.model_validate(final)
+                if isinstance(final, dict)
+                else final
+            )
+            st.rerun()
+            return
+        except Exception:
+            # Streaming failed mid-run — never crash; fall through to run_pipeline.
+            pass
+
     with st.spinner("Pipeline running…"):
         st.session_state["state"] = run_pipeline(state)
     st.rerun()  # restart the script so the DRAW section shows the new state
