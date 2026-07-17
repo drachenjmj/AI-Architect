@@ -49,7 +49,7 @@ from pipeline.state import (
 # Summarising an unknown codebase correctly matters for everything downstream
 # (Researcher queries, Architect design), so — like the Clarifier — this uses
 # the stronger model, not the cheap default.
-INGESTOR_MODEL = "flash"
+INGESTOR_MODEL = "flash-lite"
 
 # POLICY only; the output SHAPE is enforced by response_schema=RepoBehavior.
 INGESTOR_SYSTEM = """\

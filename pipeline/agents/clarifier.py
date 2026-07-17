@@ -39,7 +39,7 @@ from pipeline.state import (
 
 # The clarifier's judgment sets the quality of everything downstream, so it uses
 # the stronger model rather than the cheap default.
-CLARIFIER_MODEL = "flash"
+CLARIFIER_MODEL = "flash-lite"
 
 # The system prompt carries the POLICY (assume-vs-ask). The OUTPUT SHAPE is
 # enforced separately by `response_schema=ClarificationResult`, so we don't
@@ -65,14 +65,19 @@ Split every gap into exactly one of two kinds:
    For these, do NOT ask. Instead record a short, explicit entry in
    `assumptions` so a human can later veto it. NEVER assume anything silently.
 
-Also fill `captured_context` with the facts you DID ground in the request
-(key -> value), e.g. "domain" -> "e-commerce", "cloud" -> "AWS".
+Also fill the `captured` object with everything you DID ground in the request:
+`business_goal`, `problem_statement`, `users`, `functional_requirements` (the
+capabilities AS THE USER STATES THEM — do not invent formal features),
+`non_functional_requirements` (scale, availability, performance), `cloud_provider`,
+`budget`, `compliance_requirements`, and `existing_systems`. Leave a field empty
+if the request does not state it — an empty field that is architecture-critical
+belongs in `missing_critical`, not guessed.
 
 When a REPO ANALYSIS block is present, treat it as ground truth about the
 EXISTING system (this is a brownfield run). Any architecture-critical fact it
 already settles — the current stack, frameworks, external services, the overall
-structure — is KNOWN: record it in `captured_context` and do NOT put it in
-`missing_critical` or ask about it. Only ask about critical facts the analysis
+structure — is KNOWN: record it in `captured` (e.g. `existing_systems`) and do
+NOT put it in `missing_critical` or ask about it. Only ask about critical facts the analysis
 does not settle (e.g. target scale, budget, compliance, cloud preference).
 
 Be conservative: it is better to ask one more critical question than to guess a
@@ -127,19 +132,37 @@ def _build_prompt(state: ArchitectState) -> str:
 
 
 def _freeze_context_record(result: ClarificationResult) -> ContextRecord:
-    """Distil the completed clarification into the frozen Context Record.
+    """Distil the completed clarification into Maheen's frozen ContextRecord.
 
-    The Clarifier is the WRITER of the ContextRecord (its schema is Maheen's).
-    Until that schema is frozen we populate the current placeholder `summary`
-    field. Swapping to the real schema later touches ONLY this function, because
-    everyone imports ContextRecord from state.py.
+    The Clarifier is the WRITER of the ContextRecord (schema owned by Maheen).
+    The extracted `captured` fields map ~1:1 onto it; the control signals fold in
+    too: labelled `assumptions` carry across, and any remaining (non-critical)
+    `questions` become `open_questions` the Architect should keep in mind.
+    `summary` is kept as a short human-readable digest for backward compatibility.
     """
-    lines = [f"{c.key}: {c.value}" for c in result.captured_context]
-    if result.assumptions:
-        lines.append("Assumptions (human may veto): " + "; ".join(result.assumptions))
-    summary = "\n".join(lines) if lines else "(no context captured)"
-    # TODO(map to Maheen's ContextRecord schema once frozen)
-    return ContextRecord(summary=summary)
+    c = result.captured
+    bits = [
+        f"Goal: {c.business_goal}" if c.business_goal else "",
+        f"Problem: {c.problem_statement}" if c.problem_statement else "",
+        f"Cloud: {c.cloud_provider}" if c.cloud_provider else "",
+        f"Budget: {c.budget}" if c.budget else "",
+    ]
+    summary = " | ".join(b for b in bits if b) or "(clarified context)"
+    return ContextRecord(
+        project_name=c.project_name,
+        business_goal=c.business_goal,
+        problem_statement=c.problem_statement,
+        users=c.users,
+        functional_requirements=c.functional_requirements,
+        non_functional_requirements=c.non_functional_requirements,
+        cloud_provider=c.cloud_provider,
+        budget=c.budget,
+        compliance_requirements=c.compliance_requirements,
+        existing_systems=c.existing_systems,
+        assumptions=result.assumptions,
+        open_questions=[q.question for q in result.questions],
+        summary=summary,
+    )
 
 
 @node("clarifier")

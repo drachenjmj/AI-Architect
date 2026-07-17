@@ -9,11 +9,11 @@ from __future__ import annotations
 from pipeline.state import (
     ADR,
     Blueprint,
+    CapturedContext,
     ComponentDescription,
     Feature,
     ClarificationResult,
     ClarifyingQuestion,
-    ContextField,
     Stage,
     new_run,
 )
@@ -31,7 +31,7 @@ def _missing(state, prompt, *, system="", model="", response_schema=None):
     """Something architecture-critical is unknown."""
 
     return ClarificationResult(
-        captured_context=[ContextField(key="domain", value="e-commerce")],
+        captured=CapturedContext(business_goal="Sell sneakers online"),
         assumptions=["Assume REST API (low-stakes)."],
         questions=[
             ClarifyingQuestion(
@@ -51,11 +51,12 @@ def _complete(state, prompt, *, system="", model="", response_schema=None):
     """Everything critical is known."""
 
     return ClarificationResult(
-        captured_context=[
-            ContextField(key="domain", value="e-commerce"),
-            ContextField(key="scale", value="50k peak"),
-            ContextField(key="cloud", value="AWS"),
-        ],
+        captured=CapturedContext(
+            business_goal="Sell sneakers online",
+            non_functional_requirements=["50k peak users"],
+            cloud_provider="AWS",
+            compliance_requirements=["GDPR"],
+        ),
         assumptions=["Assume English-only UI (low-stakes)."],
         questions=[],
         missing_critical=[],
@@ -220,9 +221,14 @@ def test_advances_and_locks_context_when_complete():
     out = clar.clarifier_node(new_run(PROMPT))
 
     assert out["stage"] is Stage.CLARIFYING
-    assert out["context_record"] is not None
-    assert "scale: 50k peak" in out["context_record"].summary
-    assert "Assumptions" in out["context_record"].summary
+    cr = out["context_record"]
+    assert cr is not None
+    # mapped 1:1 onto Maheen's real ContextRecord fields
+    assert cr.cloud_provider == "AWS"
+    assert "50k peak users" in cr.non_functional_requirements
+    assert cr.compliance_requirements == ["GDPR"]
+    assert cr.assumptions == ["Assume English-only UI (low-stakes)."]
+    assert "Goal: Sell sneakers online" in cr.summary
     assert out["clarifying_questions"] == []
 
 

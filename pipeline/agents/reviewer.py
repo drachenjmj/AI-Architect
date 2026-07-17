@@ -25,7 +25,7 @@ from pipeline.state import (
 )
 
 
-REVIEWER_MODEL = "flash"
+REVIEWER_MODEL = "flash-lite"
 
 GROUND_TRUTH_FLAW = (
     "The monolithic shop couples checkout/order processing with catalog "

@@ -25,7 +25,7 @@ from pipeline.state import (
 )
 
 
-ARCHITECT_MODEL = "flash"
+ARCHITECT_MODEL = "flash-lite"
 
 
 class FeatureDesign(BaseModel):

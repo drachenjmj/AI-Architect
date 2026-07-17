@@ -514,17 +514,27 @@ class ClarifyingQuestion(BaseModel):
     why_needed: str = Field("", description="Why this changes the design — for the user and for traceability.")
 
 
-class ContextField(BaseModel):
-    """One grounded fact, as an explicit key/value pair.
+class CapturedContext(BaseModel):
+    """The structured understanding the Clarifier extracts from the prompt.
 
-    We use a LIST of these instead of a dict[str, str] because Gemini's
-    Developer-API structured-output mode rejects open-ended maps (a dict becomes
-    JSON-Schema `additionalProperties`, unsupported there). A list of fixed-key
-    objects is a closed schema and is also more self-documenting.
+    Its fields deliberately MIRROR the extractable subset of Maheen's
+    `ContextRecord`, so freezing the record is a near 1:1 copy (see
+    `clarifier._freeze_context_record`). All fields are `str` / `list[str]`
+    only — no `dict` — because Gemini's Developer-API structured-output mode
+    rejects the `additionalProperties` a dict would generate. Empty values are
+    fine: whatever is missing-and-critical is reported via `missing_critical`.
     """
 
-    key: str = Field(..., description="Name of the fact, e.g. 'cloud'.")
-    value: str = Field(..., description="Its value, e.g. 'AWS'.")
+    project_name: str = Field("", description="Short name identifying the project, if stated.")
+    business_goal: str = Field("", description="Business outcome the architecture must support.")
+    problem_statement: str = Field("", description="Current problem, limitation, or flaw to address.")
+    users: list[str] = Field(default_factory=list, description="Users / stakeholders / user groups.")
+    functional_requirements: list[str] = Field(default_factory=list, description="Capabilities the system must provide, AS STATED by the user (the Architect derives formal Features later).")
+    non_functional_requirements: list[str] = Field(default_factory=list, description="Quality needs: scale, availability, performance, latency.")
+    cloud_provider: str = Field("", description="Required/preferred cloud provider, if specified.")
+    budget: str = Field("", description="Budget level or cost constraint, if specified.")
+    compliance_requirements: list[str] = Field(default_factory=list, description="Legal / regulatory / security requirements, e.g. GDPR, PCI-DSS.")
+    existing_systems: list[str] = Field(default_factory=list, description="Existing apps, services, data stores, or integrations (brownfield).")
 
 
 class ClarificationResult(BaseModel):
@@ -535,7 +545,7 @@ class ClarificationResult(BaseModel):
     Empty means we can lock the ContextRecord and advance.
     """
 
-    captured_context: list[ContextField] = Field(default_factory=list, description="Facts grounded in the prompt.")
+    captured: CapturedContext = Field(default_factory=CapturedContext, description="Structured facts grounded in the prompt.")
     assumptions: list[str] = Field(default_factory=list, description="Low-stakes fills, labelled so a human can veto them.")
     questions: list[ClarifyingQuestion] = Field(default_factory=list, description="Questions to ask when critical info is missing.")
     missing_critical: list[str] = Field(default_factory=list, description="Architecture-critical gaps. Non-empty ⇒ pause and ask.")
