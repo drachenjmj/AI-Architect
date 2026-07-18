@@ -280,7 +280,11 @@ def test_full_pause_then_resume():
 
     state = orchestrator.run_pipeline(state)
 
-    assert state.stage is Stage.REFINING
+    # The reviewer mock always fails, so with the refine loop now wired the run
+    # loops until the cost cap and finishes GRACEFULLY as DONE (best-effort),
+    # rather than stalling at REFINING as it did before the loop was closed.
+    assert state.stage is Stage.DONE
+    assert state.stopped_on_cap
     assert state.review is not None
     assert state.review.requires_refinement
     assert state.context_record is not None
