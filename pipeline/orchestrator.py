@@ -114,3 +114,23 @@ def run_pipeline(state: ArchitectState, max_steps: int = 20) -> ArchitectState:
         state.errors.append(f"max_steps ({max_steps}) reached before DONE")
         state.log_step("orchestrator", Stage.FAILED, "step cap reached")
         return state
+
+
+def run_pipeline_streaming(state: ArchitectState, max_steps: int = 20):
+    """Yield the validated state after EVERY node, for live progress display.
+
+    Same graph, routing and step cap as `run_pipeline`; the only difference is
+    that it surfaces the intermediate state after each node instead of only the
+    final one. The LAST yielded value is the terminal state (identical to what
+    `run_pipeline` returns), so callers can simply keep the last item. The
+    existing `run_pipeline` and all its callers are completely unaffected.
+    """
+    try:
+        for chunk in GRAPH.stream(
+            state, config={"recursion_limit": max_steps}, stream_mode="values"
+        ):
+            yield ArchitectState.model_validate(chunk)
+    except GraphRecursionError:
+        state.errors.append(f"max_steps ({max_steps}) reached before DONE")
+        state.log_step("orchestrator", Stage.FAILED, "step cap reached")
+        yield state

@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from pipeline.orchestrator import run_pipeline
+from pipeline.orchestrator import run_pipeline_streaming
 from pipeline.repo_analysis import is_repo_url
 from pipeline.state import ArchitectState, Stage, new_run
 
@@ -56,15 +56,31 @@ _ORDER[Stage.CREATED] = -1
 _ORDER[Stage.REFINING] = _ORDER[Stage.REVIEWING]
 _ORDER[Stage.FAILED] = -1
 
+# Human-readable label for each stage — drives the live status header in `_run`.
+_STAGE_LABELS: dict[Stage, str] = dict(_CHECKLIST)
+_STAGE_LABELS[Stage.CREATED] = "Starting"
+_STAGE_LABELS[Stage.AWAITING_INPUT] = "Clarifying"
+_STAGE_LABELS[Stage.REFINING] = "Refining"
+_STAGE_LABELS[Stage.FAILED] = "Failed"
+
 
 def _run(state: ArchitectState) -> None:
-    """REACT half: drive the pipeline, store the returned state, redraw.
+    """REACT half: drive the pipeline, show live backend status, redraw.
 
-    run_pipeline RETURNS a new validated state (LangGraph copies), so we must
-    reassign it — mutating the old object would not be enough.
+    Streams the state after each node so the viewer can follow what the backend
+    is doing (stage header + the latest step note). The last streamed state is
+    the terminal one — identical to what run_pipeline would return — so we just
+    keep it. No pipeline logic is touched; we only consume the stream.
     """
-    with st.spinner("Pipeline running…"):
-        st.session_state["state"] = run_pipeline(state)
+    latest = state
+    with st.status("Pipeline running…", expanded=True) as status:
+        for snapshot in run_pipeline_streaming(state):
+            latest = snapshot
+            status.update(label=f"{_STAGE_LABELS.get(snapshot.stage, 'Working')}…")
+            if snapshot.history:
+                step = snapshot.history[-1]
+                st.write(f"**{step.agent}** — {step.note or step.stage_out.value}")
+        st.session_state["state"] = latest
     st.rerun()  # restart the script so the DRAW section shows the new state
 
 
