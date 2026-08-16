@@ -21,7 +21,8 @@ EXAMPLE_PROMPT = (
 
 def main() -> None:
     state = new_run(raw_prompt=EXAMPLE_PROMPT)
-    # LangGraph's invoke() returns the FINAL state — it does NOT mutate the input.
+    # run_pipeline returns the FINAL state — it does NOT mutate the input, on
+    # any path (a step-cap failure marks a copy, not your object).
     # Always use the returned object; do not read the state you passed in.
     state = run_pipeline(state)
 

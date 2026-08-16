@@ -65,17 +65,16 @@ Row 10 is code for the same reason: persisting a state is plumbing, not a
 judgment. It is hooked on a single line in `run_pipeline_streaming`, so it
 observes transitions without participating in routing.
 
-## Known deferrals
+## Failure semantics
 
-* **Inconsistent failure semantics in `run_pipeline` (mutation).** Every normal
-  path returns a freshly validated state and leaves the caller's object
-  untouched. The `GraphRecursionError` (step-cap) path is the one exception: it
-  mutates the caller's `state` in place — appending to `errors` and calling
-  `log_step` — and then returns that same object. So "run_pipeline does not
-  mutate its input" holds everywhere except a step-cap blowout. Left as-is
-  deliberately when state-on-disk landed: it predates that work, and `run.py` /
-  `ui.py` currently observe a cap failure through the object they passed in.
-  Fixing it is a contract change and wants its own commit. Consequence for
-  persistence: the checkpoint written on that path (from the `finally` block in
-  `run_pipeline_streaming`) is the caller's mutated object, not a stream
-  emission — the only checkpoint in the system with that provenance.
+`run_pipeline` never mutates its input, on **any** path. Normal transitions come
+back as freshly validated states from the graph; the `GraphRecursionError`
+(step-cap) path marks a deep copy FAILED rather than writing into the caller's
+object. So a caller may always keep the state it passed in — to retry from, or
+to compare against — and trust that it is unchanged.
+
+One consequence for persistence: the checkpoint written on the step-cap path
+comes from the `finally` block in `run_pipeline_streaming`, not from a stream
+emission, because that FAILED state is born from an exception and never reaches
+the graph. It is the only checkpoint in the system with that provenance, and
+`test_persistence.test_step_cap_failure_is_checkpointed` pins it.

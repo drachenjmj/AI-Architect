@@ -304,9 +304,8 @@ def test_step_cap_failure_is_checkpointed():
     Every other transition reaches the hook as a stream emission. This one does
     not: it surfaces as `GraphRecursionError`, so the FAILED state is written by
     the `finally` block in `run_pipeline_streaming`. What gets written there is
-    the CALLER's mutated state object — the known deferral recorded in
-    DETERMINISM_MAP.md — and this test pins that provenance so a later fix to
-    the mutation wart has to update it deliberately.
+    a COPY of the caller's state carrying the FAILED marker — the caller's own
+    object must come back untouched, exactly as on every other path.
     """
     _isolate("step_cap")
     _install_llm_mocks(clarifier=tc._complete)
@@ -316,7 +315,12 @@ def test_step_cap_failure_is_checkpointed():
 
     assert result.stage is Stage.FAILED
     assert result.errors == ["max_steps (3) reached before DONE"]
-    assert result is seed, "documented deferral: this path mutates its input"
+
+    # run_pipeline does not mutate its input — on THIS path too.
+    assert result is not seed
+    assert seed.errors == [], "the caller's state must survive a cap failure clean"
+    assert seed.stage is Stage.CREATED
+    assert seed.history == []
 
     files = sorted(p.name for p in (runs_dir() / seed.run_id).glob("*.json"))
     assert files[-1].endswith("_failed.json"), files

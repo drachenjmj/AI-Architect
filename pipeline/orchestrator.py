@@ -174,18 +174,16 @@ def run_pipeline_streaming(state: ArchitectState, max_steps: int = 20):
     except GraphRecursionError:
         # Step cap hit — mark FAILED loudly instead of hanging (old behaviour).
         #
-        # KNOWN DEFERRAL (mutation): unlike every other path, this one MUTATES
-        # the caller's `state` instead of returning a fresh object, so
-        # run_pipeline's "does not mutate its input" contract holds everywhere
-        # except here. Left alone deliberately: it predates state-on-disk, and
-        # callers (run.py, ui.py) currently observe the cap failure through the
-        # object they passed in. Changing it is a contract change that belongs
-        # in its own commit, not smuggled in with persistence. Recorded in
-        # DETERMINISM_MAP.md so it is a tracked deferral, not a lurking bug.
-        state.errors.append(f"max_steps ({max_steps}) reached before DONE")
-        state.log_step("orchestrator", Stage.FAILED, "step cap reached")
-        latest = state
-        yield state
+        # The FAILED marker goes on a COPY, never on the caller's object. Every
+        # other path already returns a freshly validated state, so copying here
+        # is what makes "run_pipeline does not mutate its input" true on ALL
+        # paths rather than merely most of them — a caller that kept the
+        # pre-run state to retry or compare against still holds it untouched.
+        failed = state.model_copy(deep=True)
+        failed.errors.append(f"max_steps ({max_steps}) reached before DONE")
+        failed.log_step("orchestrator", Stage.FAILED, "step cap reached")
+        latest = failed
+        yield failed
     finally:
         # Safety net for the step-cap path ONLY. That FAILED state is born from
         # an exception, never from a stream emission, so the hook above never
