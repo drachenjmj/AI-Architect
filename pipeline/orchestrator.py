@@ -20,6 +20,14 @@ WHY LangGraph: it hands us — for free and as industry-standard primitives — 
 two things still on Kati's roadmap: human-in-the-loop PAUSE (`interrupt`) for the
 clarifier, and state-on-disk recovery (`checkpointer`). We build on the standard
 container instead of extending bespoke loop code.
+
+STATE ON DISK (added)
+---------------------
+Every state this module yields is checkpointed to `.cache/runs/<run_id>/` by
+`pipeline.persistence`. That is deterministic file I/O, not a judgment call, so
+it belongs here and does not break the LLM-free rule. The hook is ONE line
+inside `run_pipeline_streaming`; `run_pipeline` delegates to that same
+generator, so there is one code path and no second call site to keep in sync.
 """
 from __future__ import annotations
 
@@ -33,6 +41,7 @@ from pipeline.agents import (
     researcher_node,
     reviewer_node,
 )
+from pipeline.persistence import checkpoint
 from pipeline.refine_gate import refine_gate_node
 from pipeline.state import ArchitectState, Stage
 
@@ -125,15 +134,18 @@ def run_pipeline(state: ArchitectState, max_steps: int = 20) -> ArchitectState:
 
     `max_steps` -> LangGraph `recursion_limit`: a hard safety cap so a mis-wired
     route can never loop forever (also the natural home for the Week-3 guardrail).
+
+    Expressed as "run the stream, keep the last value". The stream's final
+    emission is exactly what `GRAPH.invoke` returned before — an equivalence
+    pinned by `test_persistence.test_stream_final_emission_matches_invoke`, so a
+    LangGraph upgrade that breaks it fails a test instead of silently changing
+    what this returns. Delegating also means checkpointing lives on ONE code
+    path shared by both entry points.
     """
-    try:
-        result = GRAPH.invoke(state, config={"recursion_limit": max_steps})
-        return ArchitectState.model_validate(result)
-    except GraphRecursionError:
-        # step cap hit — mark FAILED loudly instead of hanging (old behaviour).
-        state.errors.append(f"max_steps ({max_steps}) reached before DONE")
-        state.log_step("orchestrator", Stage.FAILED, "step cap reached")
-        return state
+    final = state
+    for snapshot in run_pipeline_streaming(state, max_steps):
+        final = snapshot
+    return final
 
 
 def run_pipeline_streaming(state: ArchitectState, max_steps: int = 20):
@@ -142,15 +154,43 @@ def run_pipeline_streaming(state: ArchitectState, max_steps: int = 20):
     Same graph, routing and step cap as `run_pipeline`; the only difference is
     that it surfaces the intermediate state after each node instead of only the
     final one. The LAST yielded value is the terminal state (identical to what
-    `run_pipeline` returns), so callers can simply keep the last item. The
-    existing `run_pipeline` and all its callers are completely unaffected.
+    `run_pipeline` returns), so callers can simply keep the last item.
+
+    THE CHECKPOINT SITE. `stream_mode="values"` emits the FULL state once per
+    super-step, so saving each emission records every agent transition —
+    including the FAILED transition the `@node` wrapper produces when an agent
+    raises, which arrives here as an ordinary emission and needs no special
+    case. `checkpoint` never raises: a lost checkpoint must not cost us the run.
     """
+    latest = state       # newest state seen, checkpointed or not
+    saved = None         # newest state actually handed to `checkpoint`
     try:
         for chunk in GRAPH.stream(
             state, config={"recursion_limit": max_steps}, stream_mode="values"
         ):
-            yield ArchitectState.model_validate(chunk)
+            latest = saved = ArchitectState.model_validate(chunk)
+            checkpoint(latest)  # ← THE hook: one call, every transition
+            yield latest
     except GraphRecursionError:
+        # Step cap hit — mark FAILED loudly instead of hanging (old behaviour).
+        #
+        # KNOWN DEFERRAL (mutation): unlike every other path, this one MUTATES
+        # the caller's `state` instead of returning a fresh object, so
+        # run_pipeline's "does not mutate its input" contract holds everywhere
+        # except here. Left alone deliberately: it predates state-on-disk, and
+        # callers (run.py, ui.py) currently observe the cap failure through the
+        # object they passed in. Changing it is a contract change that belongs
+        # in its own commit, not smuggled in with persistence. Recorded in
+        # DETERMINISM_MAP.md so it is a tracked deferral, not a lurking bug.
         state.errors.append(f"max_steps ({max_steps}) reached before DONE")
         state.log_step("orchestrator", Stage.FAILED, "step cap reached")
+        latest = state
         yield state
+    finally:
+        # Safety net for the step-cap path ONLY. That FAILED state is born from
+        # an exception, never from a stream emission, so the hook above never
+        # sees it — and a blowout is exactly when a resume point matters most.
+        # The identity guard keeps the happy path free of a duplicate final
+        # checkpoint: there, `latest is saved` and this is a no-op.
+        if latest is not saved:
+            checkpoint(latest)

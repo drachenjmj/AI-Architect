@@ -27,6 +27,7 @@ from THIS file, tightening a placeholder later does not change the pipeline wiri
 from __future__ import annotations
 
 import operator
+import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Literal, Optional
@@ -491,6 +492,17 @@ class Stage(str, Enum):
     FAILED = "failed"
 
 
+def _new_run_id() -> str:
+    """Generate a run identifier that sorts chronologically and never collides.
+
+    `<UTC timestamp>-<short uuid>`: the timestamp makes a directory listing
+    readable and time-ordered, the suffix makes two runs started in the same
+    second distinct. Filesystem-safe on every platform (no colons).
+    """
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{stamp}-{uuid.uuid4().hex[:8]}"
+
+
 class StepLog(BaseModel):
     """One entry in the run trace: which agent ran, when, and what it did."""
 
@@ -579,6 +591,11 @@ class ArchitectState(BaseModel):
     repo_deep_dives: Annotated[list[DeepDive], operator.add] = Field(default_factory=list)
 
     # --- 4. Control / orchestration meta (Kati owns fully) ----------------
+    # Stable identity of ONE run, assigned at birth and never rewritten by any
+    # agent. It is what state-on-disk keys on: every checkpoint of this run
+    # lands in `.cache/runs/<run_id>/` (see pipeline/persistence.py). Purely
+    # additive — nothing upstream of persistence reads it.
+    run_id: str = Field(default_factory=_new_run_id)
     stage: Stage = Stage.CREATED
     # Annotated with operator.add so LangGraph MERGES (appends) each node's
     # returned step onto the running trace instead of overwriting it. This is

@@ -26,12 +26,23 @@ The pipeline pauses by RETURNING with stage == AWAITING_INPUT (see
 orchestrator._route). This script is the "caller" from clarifier-design: it
 holds the state between calls, writes answers into
 `state.clarification_answers`, and calls run_pipeline(state) again to resume.
+
+RESUMING ACROSS SESSIONS
+------------------------
+`st.session_state` dies with the browser tab, but the orchestrator checkpoints
+every transition to disk (pipeline/persistence.py). So the "Resume run" picker
+below is the promise at the top of this docstring being collected: because the
+chat is DERIVED from the state object rather than stored separately, loading a
+checkpoint back into `st.session_state` replays the whole conversation for
+free — including a pending clarifying-question form. Nothing in the DRAW
+section needed to change to support it.
 """
 from __future__ import annotations
 
 import streamlit as st
 
 from pipeline.orchestrator import run_pipeline_streaming
+from pipeline.persistence import CheckpointError, list_runs, load_state
 from pipeline.repo_analysis import is_repo_url
 from pipeline.state import ArchitectState, Stage, new_run
 
@@ -84,6 +95,62 @@ def _run(state: ArchitectState) -> None:
     st.rerun()  # restart the script so the DRAW section shows the new state
 
 
+# The first option is a sentinel, not a run: it is what keeps "start a new run"
+# a ZERO-CLICK path. The selector defaults to it, so a user who ignores the
+# picker entirely lands in the intake form exactly as before.
+_NEW_RUN_LABEL = "➕ Start a new run"
+
+
+def _run_label(summary) -> str:
+    """One picker line: when it was last touched, where it stopped, what it was about."""
+    when = summary.updated_at.replace("T", " ").removesuffix("+00:00").strip()
+    where = summary.stage.replace("_", " ").capitalize()
+    return f"{when} · {where} · {summary.raw_prompt_excerpt}"
+
+
+def _resume_picker() -> None:
+    """DRAW the "Resume run" selector above the intake form.
+
+    Renders NOTHING when there are no checkpoints on disk, so a first-time user
+    never sees it. Selecting a run loads that checkpoint into `st.session_state`
+    and reruns; from there the normal DRAW section takes over and replays the
+    run — question form included — because the whole UI is derived from state.
+
+    Persistence problems degrade to a working app: an unreadable runs directory
+    just means no picker, and a corrupt checkpoint reports itself instead of
+    blocking the new-run path.
+    """
+    try:
+        runs = list_runs()
+    except Exception as exc:  # noqa: BLE001 — the picker is never worth a crash
+        st.warning(f"Could not read saved runs: {exc}")
+        return
+    if not runs:
+        return
+
+    options = {_NEW_RUN_LABEL: None}
+    for summary in runs:
+        options[_run_label(summary)] = summary.run_id
+
+    choice = st.selectbox(
+        "Resume a previous run",
+        list(options),
+        index=0,  # ← the zero-click default
+        help="Every run is checkpointed after each step, so you can close the "
+             "tab mid-run and pick up exactly where you left off.",
+    )
+    run_id = options[choice]
+    if run_id is None:
+        return  # sentinel selected — fall through to the intake form
+
+    try:
+        st.session_state["state"] = load_state(run_id)
+    except CheckpointError as exc:
+        st.error(f"Could not resume that run: {exc}")
+        return
+    st.rerun()  # redraw with the loaded state
+
+
 # ── session init ──────────────────────────────────────────────────────────
 st.session_state.setdefault("state", None)
 state: ArchitectState | None = st.session_state["state"]
@@ -125,6 +192,7 @@ with st.sidebar:
 
 # ── DRAW: replay the conversation from the state object ──────────────────
 if state is None:
+    _resume_picker()  # above the prompt box; silent when nothing is saved yet
     st.markdown("#### Describe the system you need architected")
     st.caption(
         "Include what you know: domain, scale, cloud, compliance, budget. "
@@ -217,3 +285,15 @@ else:
             st.error("Run failed.")
             for err in state.errors:
                 st.code(err)
+
+    # 6. Parked mid-flight → offer to carry on.
+    #    Only reachable by RESUMING a checkpoint whose process died between
+    #    stages (crash, closed tab, killed server). A live run never lands here:
+    #    `_run` keeps control until the pipeline reaches a terminal stage or
+    #    pauses at AWAITING_INPUT.
+    else:
+        with st.chat_message("assistant"):
+            label = _STAGE_LABELS.get(state.stage, state.stage.value)
+            st.info(f"This run was interrupted at **{label}**.")
+            if st.button("▶ Continue run"):
+                _run(state)
