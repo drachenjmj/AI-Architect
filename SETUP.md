@@ -6,6 +6,9 @@ identically on every machine. Two files guarantee this:
 - `.python-version` → Python **3.12** (the version the lock was resolved for)
 - `requirements.txt` → fully pinned, cross-resolved dependency lock
 
+The lock includes `pytest`, so once you are set up the test suite runs with
+`python -m pytest -q`.
+
 You need a **Gemini API key** before the app will run. Each developer uses their
 **own** key (independent free-tier quotas) — get one free at
 [Google AI Studio](https://aistudio.google.com/apikey).
