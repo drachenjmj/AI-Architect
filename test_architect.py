@@ -6,6 +6,7 @@ deterministic structured responses.
 
 from __future__ import annotations
 
+import test_clarifier as tc  # reuse the shared canned-usage helper
 from pipeline.agents import architect as arch
 from pipeline.state import (
     ADR,
@@ -28,10 +29,10 @@ def _fake_architect_llm(
     model="",
     response_schema=None,
 ):
-    """Return canned outputs for both Architect phases."""
+    """Return canned outputs for both Architect phases, as `(reply, usage)`."""
 
     if response_schema is arch.FeatureDesign:
-        return arch.FeatureDesign(
+        return (arch.FeatureDesign(
             features=[
                 Feature(
                     id="FEAT-001",
@@ -45,10 +46,10 @@ def _fake_architect_llm(
                     ],
                 )
             ]
-        )
+        ), tc.fake_usage())
 
     if response_schema is arch.ArchitectureDesign:
-        return arch.ArchitectureDesign(
+        return (arch.ArchitectureDesign(
             blueprint=Blueprint(
                 project_name="E-commerce Platform",
                 selected_pattern="Event-Driven Microservices Architecture",
@@ -114,7 +115,7 @@ def _fake_architect_llm(
                     scalability_considerations=["Horizontal scaling"],
                 )
             ],
-        )
+        ), tc.fake_usage())
 
     raise AssertionError(f"Unexpected response schema: {response_schema}")
 

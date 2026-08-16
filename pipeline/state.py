@@ -504,13 +504,42 @@ def _new_run_id() -> str:
 
 
 class StepLog(BaseModel):
-    """One entry in the run trace: which agent ran, when, and what it did."""
+    """One entry in the run trace: which agent ran, when, what it did, what it cost.
+
+    The token/cost fields are what make PER-AGENT attribution free: this entry
+    already carries the agent name, and `history` already accumulates through a
+    reducer, so "tokens per agent" is a plain groupby over the trace (see
+    `ArchitectState.usage_by_agent`) and needs no custom dict reducer.
+
+    A step with no LLM call (researcher, refine_gate, a greenfield repo_ingestor)
+    simply leaves these at zero.
+    """
 
     agent: str
     stage_in: Stage
     stage_out: Stage
     note: str = ""
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    model: str = Field("", description="Real model ID(s) this step called; empty when it called none.")
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float = Field(0.0, description="List-price-equivalent cost of THIS step, in USD (free-tier key: not money spent).")
+
+
+class AgentUsage(BaseModel):
+    """One agent's share of the run, aggregated from `history`.
+
+    A derived view, never stored on the state — see
+    `ArchitectState.usage_by_agent`.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float = 0.0
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
 
 
 # ── Clarifier output (Kati owns) ─────────────────────────────────────────
@@ -608,8 +637,14 @@ class ArchitectState(BaseModel):
     # An honest "finished best-effort, not perfect" signal for the UI/report;
     # the run still ends as DONE (not FAILED). Single writer: the refine gate.
     stopped_on_cap: bool = False
-    input_tokens: int = 0
-    output_tokens: int = 0
+    # Reducers (add), same pattern as `history` and `errors`. Each node returns
+    # ONLY the tokens ITS OWN calls consumed and LangGraph adds them onto the
+    # running total. They must be reducers: `llm_call` is pure with respect to
+    # state, so a node that merely mutated these would have its count dropped —
+    # which is exactly the bug that left the refine gate's budget comparing 0
+    # against 500k forever.
+    input_tokens: Annotated[int, operator.add] = 0
+    output_tokens: Annotated[int, operator.add] = 0
     # Reducer (append) so a failure in any node adds to — never clobbers —
     # errors already recorded upstream. See `history` above.
     errors: Annotated[list[str], operator.add] = Field(default_factory=list)
@@ -626,6 +661,33 @@ class ArchitectState(BaseModel):
         """Increment and return this agent's retry counter (for retry caps later)."""
         self.retry_counts[agent] = self.retry_counts.get(agent, 0) + 1
         return self.retry_counts[agent]
+
+    def usage_by_agent(self) -> dict[str, AgentUsage]:
+        """Per-agent token/cost totals. READ-ONLY — derived, never stored.
+
+        A plain groupby over `history`: every StepLog carries the agent name and
+        that step's own usage, so no extra reducer or bookkeeping field is
+        needed. An agent that ran several times (the Architect in a refine loop)
+        accumulates across all of its steps.
+
+        Sums to `input_tokens` / `output_tokens` by construction, because each
+        node writes the SAME numbers to its StepLog and to its returned update.
+        """
+        totals: dict[str, AgentUsage] = {}
+        for step in self.history:
+            bucket = totals.setdefault(step.agent, AgentUsage())
+            bucket.input_tokens += step.input_tokens
+            bucket.output_tokens += step.output_tokens
+            bucket.cost_usd += step.cost_usd
+        return totals
+
+    def total_cost_usd(self) -> float:
+        """List-price-equivalent cost of the whole run in USD, summed from `history`.
+
+        NOT money spent: we run on free-tier keys, so this is what the run would
+        have cost at Google's list prices (see `pipeline/llm.py`).
+        """
+        return sum(step.cost_usd for step in self.history)
 
 def new_run(raw_prompt: str, repo_url: str = "") -> ArchitectState:
     """Factory: build a fresh state at the start of a run.

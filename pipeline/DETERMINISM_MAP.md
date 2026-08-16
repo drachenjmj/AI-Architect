@@ -47,7 +47,7 @@ input, not automated.
 |---|------|------|--------------------------|---------------------------|--------------|
 | 1 | `run.py` entry / `new_run` | CODE | Wraps the raw prompt into an `ArchitectState` | Pydantic v2 validation | none (pure) |
 | 2 | Orchestrator `_route` / `_entry_route` / `STAGE_TO_NODE` | CODE | Picks the next node from `state.stage` | Static table; unknown stage → END; `recursion_limit` cap | mis-wired route → fails loudly, never hangs |
-| 3 | `llm.py` `llm_call` | HYBRID | The wrapper is code; the model response is stochastic | Model registry, per-call system prompt, token accounting | API/network error, token overrun |
+| 3 | `llm.py` `llm_call` | HYBRID | The wrapper is code; the model response is stochastic | Model registry, per-call system prompt; usage **returned** per call as `LLMUsage`, summed by the `input_tokens`/`output_tokens` reducers, then enforced by `refine_gate.MAX_TOTAL_TOKENS` | API/network error; token overrun now stops the refine loop (but the cap itself is still untuned — see below) |
 | 4 | Clarifier `_act` | HYBRID | LLM judges assume-vs-ask; the human answers | Deterministic gate + HITL `interrupt`; writes only `ContextRecord` | hallucinated assumption, poor question |
 | 5 | Human input | HUMAN | User supplies answers on resume | — (external) | missing / ambiguous answer |
 | 6 | Researcher `_act` | LLM | Reasons over RAG-retrieved KB chunks | RAG grounding (retrieval is code), citations | retrieval miss, ungrounded claim |
@@ -60,6 +60,31 @@ Rows 8 and 9 are split on purpose: the reviewer's *judgment* (is this good?) is
 stochastic LLM, but the *action* taken on that judgment (loop back vs. finish) is
 pure code in the router. That separation is exactly what proves the LLM never
 decides control flow.
+
+### Correction: row 3's token guardrail was dead until now
+
+This row previously claimed "token accounting" as a working guardrail. It was
+not one. `llm_call` recorded usage by mutating `state.input_tokens` /
+`state.output_tokens` in place, and no node ever RETURNED those fields — and
+LangGraph persists only what a node returns. Every count was therefore
+discarded: an 11-call run finished reporting `input_tokens=0, output_tokens=0`,
+so `refine_gate.evaluate_caps` compared 0 against its budget on every visit and
+the run-cost cap could never trip. Only the iteration cap was doing any work.
+
+Fixed by making `llm_call` pure with respect to state and returning
+`(reply, LLMUsage)`; each node sums its own calls and returns the totals, which
+the `operator.add` reducers accumulate. `test_token_accounting.py` pins this at
+the full-graph level, which is where the bug lived — `llm_call` and the nodes
+were each individually fine and only the wiring between them was broken.
+
+Two honest caveats for the report:
+
+* `MAX_TOTAL_TOKENS = 500_000` was chosen while counting was broken, so it has
+  never been measured against a real run. It is a placeholder ceiling, not an
+  evidence-based budget.
+* Costs are computed from Google's published USD list prices, but this project
+  runs on free-tier keys. Every dollar figure is a **list-price equivalent** —
+  what the run would have cost on the paid tier — never money actually spent.
 
 Row 10 is code for the same reason: persisting a state is plumbing, not a
 judgment. It is hooked on a single line in `run_pipeline_streaming`, so it

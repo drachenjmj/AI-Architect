@@ -266,6 +266,7 @@ else:
     elif state.stage is Stage.DONE:
         with st.chat_message("assistant"):
             st.success("Design complete.")
+            st.caption(f"Run cost: {state.input_tokens:,} in / {state.output_tokens:,} out tokens · ≈ ${state.total_cost_usd():.4f} at Gemini list prices (free-tier key — not money spent).")
             if state.context_record:
                 st.markdown("**Context Record** (locked after clarification)")
                 st.markdown(state.context_record.summary or "_empty (stub)_")

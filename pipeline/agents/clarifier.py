@@ -29,7 +29,7 @@ Never SILENTLY assume, and never assume anything architecture-critical.
 from __future__ import annotations
 
 from pipeline.agents.base import make_step, node
-from pipeline.llm import llm_call
+from pipeline.llm import LLMUsage, attach_usage, llm_call
 from pipeline.state import (
     ArchitectState,
     ClarificationResult,
@@ -167,46 +167,63 @@ def _freeze_context_record(result: ClarificationResult) -> ContextRecord:
 
 @node("clarifier")
 def clarifier_node(state: ArchitectState) -> dict:
-    # 1. LLM JUDGES — returns a validated ClarificationResult (no manual parsing).
-    result: ClarificationResult = llm_call(
-        state,
-        _build_prompt(state),
-        system=CLARIFIER_SYSTEM,
-        model=CLARIFIER_MODEL,
-        response_schema=ClarificationResult,
-    )
+    # `usage` is what this node's ONE call consumed. It is RETURNED (never
+    # written into state) because LangGraph persists only what a node returns;
+    # the try/except hands it to `@node` if anything below the call raises, so
+    # already-billed tokens survive a failure. See pipeline/llm.py.
+    usage: LLMUsage | None = None
+    try:
+        # 1. LLM JUDGES — returns a validated ClarificationResult (no manual parsing).
+        result: ClarificationResult
+        result, usage = llm_call(
+            state,
+            _build_prompt(state),
+            system=CLARIFIER_SYSTEM,
+            model=CLARIFIER_MODEL,
+            response_schema=ClarificationResult,
+        )
 
-    # 2. CODE ROUTES — the deterministic gate.
-    if result.missing_critical:
-        # Something architecture-critical is still unknown → pause and ask.
-        # TODO(W3): retry cap via state.bump_retry to clamp re-ask rounds.
-        questions = [q.question for q in result.questions]
+        # 2. CODE ROUTES — the deterministic gate.
+        if result.missing_critical:
+            # Something architecture-critical is still unknown → pause and ask.
+            # TODO(W3): retry cap via state.bump_retry to clamp re-ask rounds.
+            questions = [q.question for q in result.questions]
+            step = make_step(
+                "clarifier",
+                state.stage,
+                Stage.AWAITING_INPUT,
+                f"missing {len(result.missing_critical)} critical fact(s); asked {len(questions)}",
+                usage,
+            )
+            return {
+                "clarifying_questions": questions,
+                "stage": Stage.AWAITING_INPUT,
+                "history": [step],
+                "input_tokens": usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+            }
+
+        # Enough is known → lock the Context Record and advance to the Researcher.
+        context_record = _freeze_context_record(result)
         step = make_step(
             "clarifier",
             state.stage,
-            Stage.AWAITING_INPUT,
-            f"missing {len(result.missing_critical)} critical fact(s); asked {len(questions)}",
+            Stage.CLARIFYING,
+            f"context locked; {len(result.assumptions)} assumption(s) recorded",
+            usage,
         )
         return {
-            "clarifying_questions": questions,
-            "stage": Stage.AWAITING_INPUT,
+            "context_record": context_record,
+            "clarifying_questions": [],  # clear any stale questions from a prior pause
+            "stage": Stage.CLARIFYING,
             "history": [step],
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
         }
-
-    # Enough is known → lock the Context Record and advance to the Researcher.
-    context_record = _freeze_context_record(result)
-    step = make_step(
-        "clarifier",
-        state.stage,
-        Stage.CLARIFYING,
-        f"context locked; {len(result.assumptions)} assumption(s) recorded",
-    )
-    return {
-        "context_record": context_record,
-        "clarifying_questions": [],  # clear any stale questions from a prior pause
-        "stage": Stage.CLARIFYING,
-        "history": [step],
-    }
+    except Exception as e:
+        if usage is not None:
+            attach_usage(e, usage)
+        raise
 
 
 # ── Live smoke test: `python -m pipeline.agents.clarifier` ────────────────
@@ -219,12 +236,14 @@ if __name__ == "__main__":
     from pipeline.state import new_run
 
     s = new_run("We want a webshop to sell sneakers online. Around 50k users at peak sale days.")
-    out = clarifier_node(s)  # side effect: token counts land in `s`
+    out = clarifier_node(s)  # pure: token counts come back in `out`, not in `s`
     print(f"stage           : {out['stage'].value}")
     print(f"questions       : {out.get('clarifying_questions')}")
     if out.get("context_record") is not None:
         print(f"context_record  :\n{out['context_record'].summary}")
-    print(f"tokens in/out   : {s.input_tokens}/{s.output_tokens}")
+    # Read the RETURNED update, not `s` — the node never mutates the state.
+    print(f"tokens in/out   : {out.get('input_tokens', 0)}/{out.get('output_tokens', 0)}")
+    print(f"cost_usd        : {out['history'][0].cost_usd:.6f} (list-price equiv.; free-tier key)")
     if out["stage"] is Stage.FAILED:
         print("→ FAILED — check .env / model / prompt (see errors):", out.get("errors"))
 

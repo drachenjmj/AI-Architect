@@ -92,7 +92,7 @@ def _install_llm_mocks(clarifier=None) -> None:
 
     clar.llm_call = clarifier or _stateful
     arch.llm_call = tc._architect_response
-    rev.llm_call = lambda state, prompt, **kwargs: rev.LLMJudgments()
+    rev.llm_call = lambda state, prompt, **kwargs: (rev.LLMJudgments(), tc.fake_usage())
 
 
 def _rich_state() -> ArchitectState:

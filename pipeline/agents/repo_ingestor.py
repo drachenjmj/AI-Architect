@@ -26,7 +26,7 @@ not this node's; `meta.clone_path` tells it where to read files from.
 from __future__ import annotations
 
 from pipeline.agents.base import make_step, node
-from pipeline.llm import llm_call
+from pipeline.llm import LLMUsage, llm_call, usage_from_exception
 from pipeline.repo_analysis import (
     REPO_URL_SEARCH,
     build_dependency_edges,
@@ -162,8 +162,9 @@ def repo_ingestor_node(state: ArchitectState) -> dict:
 
     # 4. BEHAVIOR — the one LLM call. A refusal leaves the layer empty.
     behavior = RepoBehavior()
+    usage = LLMUsage()
     try:
-        behavior = llm_call(
+        behavior, usage = llm_call(
             state,
             _build_behavior_prompt(structure),
             system=INGESTOR_SYSTEM,
@@ -172,6 +173,12 @@ def repo_ingestor_node(state: ArchitectState) -> dict:
         )
     except Exception as e:
         errors.append(f"repo_ingestor: behavior LLM call failed: {e}")
+        # This node degrades instead of failing, so `@node` never sees the
+        # exception and cannot recover its usage — do it here. A call that was
+        # billed but returned unusable output still spent real tokens.
+        spent = usage_from_exception(e)
+        if spent is not None:
+            usage = spent
 
     # 5. Write the write-once artifact and advance.
     representation = RepoRepresentation(
@@ -184,11 +191,14 @@ def repo_ingestor_node(state: ArchitectState) -> dict:
         f"ingested {url}@{sha[:7]}: {len(structure.dependency_edges)} import edge(s), "
         f"{len(behavior.partitions)} partition(s)"
         + (f", {len(errors)} part(s) degraded" if errors else ""),
+        usage,
     )
     out: dict = {
         "repo_representation": representation,
         "stage": Stage.INGESTING,
         "history": [step],
+        "input_tokens": usage.input_tokens,
+        "output_tokens": usage.output_tokens,
     }
     if errors:
         out["errors"] = errors
@@ -219,4 +229,5 @@ if __name__ == "__main__":
             print(f"  partition {p.name!r}: paths={p.paths} — {p.role[:80]}")
     if out.get("errors"):
         print("degraded:", out["errors"])
-    print(f"tokens  : {s.input_tokens}/{s.output_tokens}")
+    # Read the RETURNED update, not `s` — the node never mutates the state.
+    print(f"tokens  : {out.get('input_tokens', 0)}/{out.get('output_tokens', 0)}")

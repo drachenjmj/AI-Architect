@@ -13,7 +13,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from pipeline.agents.base import make_step, node
-from pipeline.llm import llm_call
+from pipeline.llm import LLMUsage, attach_usage, llm_call
 from pipeline.review_checks import DeterministicChecks, run_deterministic_checks
 from pipeline.state import (
     ArchitectState,
@@ -274,24 +274,37 @@ def _assemble_report(
 def reviewer_node(state: ArchitectState) -> dict:
     """Run deterministic checks, one qualitative call, then code-owned routing."""
 
-    checks = run_deterministic_checks(state)
-    judgments: LLMJudgments = llm_call(
-        state,
-        _build_prompt(state, checks),
-        system=REVIEWER_SYSTEM,
-        model=REVIEWER_MODEL,
-        response_schema=LLMJudgments,
-    )
-    report = _assemble_report(judgments, checks)
-    stage_out = Stage.REFINING if report.requires_refinement else Stage.DONE
-    step = make_step(
-        "reviewer",
-        state.stage,
-        stage_out,
-        f"{report.overall_status}; {len(report.issues)} issue(s)",
-    )
-    return {
-        "review": report,
-        "stage": stage_out,
-        "history": [step],
-    }
+    # `usage` is RETURNED, never written into state — LangGraph persists only
+    # what a node returns. The try/except forwards already-billed tokens to
+    # `@node` if report assembly raises. See pipeline/llm.py.
+    usage: LLMUsage | None = None
+    try:
+        checks = run_deterministic_checks(state)
+        judgments: LLMJudgments
+        judgments, usage = llm_call(
+            state,
+            _build_prompt(state, checks),
+            system=REVIEWER_SYSTEM,
+            model=REVIEWER_MODEL,
+            response_schema=LLMJudgments,
+        )
+        report = _assemble_report(judgments, checks)
+        stage_out = Stage.REFINING if report.requires_refinement else Stage.DONE
+        step = make_step(
+            "reviewer",
+            state.stage,
+            stage_out,
+            f"{report.overall_status}; {len(report.issues)} issue(s)",
+            usage,
+        )
+        return {
+            "review": report,
+            "stage": stage_out,
+            "history": [step],
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+        }
+    except Exception as e:
+        if usage is not None:
+            attach_usage(e, usage)
+        raise

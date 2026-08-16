@@ -6,6 +6,7 @@ from pathlib import Path
 
 from jsonschema import validate
 
+import test_clarifier as tc  # reuse the shared canned-usage helper
 from pipeline.agents import reviewer as rev
 from pipeline.review_checks import run_deterministic_checks
 from pipeline.state import (
@@ -189,6 +190,17 @@ def _flaw_failed_judgments(*_args, **_kwargs) -> rev.LLMJudgments:
     return judgments
 
 
+def _as_llm_call(build):
+    """Wrap a judgment builder into an `llm_call` stub.
+
+    `llm_call` returns `(reply, usage)` — the reply plus what it cost — so a
+    stub standing in for it must do the same. The builders above stay pure so
+    they can still be called directly.
+    """
+
+    return lambda *args, **kwargs: (build(*args, **kwargs), tc.fake_usage())
+
+
 def test_state_model_matches_frozen_json_schema():
     schema = json.loads(
         (Path(__file__).parent / "docs/prompt_quality/06_reviewer_report_schema.json")
@@ -266,7 +278,7 @@ def test_prose_mentions_do_not_replace_structured_links_by_default():
 
 
 def test_code_assembles_pass_when_every_gate_passes():
-    rev.llm_call = _all_pass_judgments
+    rev.llm_call = _as_llm_call(_all_pass_judgments)
     output = rev.reviewer_node(_good_design_state())
     report = output["review"]
 
@@ -279,7 +291,7 @@ def test_code_assembles_pass_when_every_gate_passes():
 
 
 def test_code_failure_cannot_be_overridden_by_positive_llm_judgments():
-    rev.llm_call = _all_pass_judgments
+    rev.llm_call = _as_llm_call(_all_pass_judgments)
     output = rev.reviewer_node(_context_only_constraints_state())
     report = output["review"]
 
@@ -290,7 +302,7 @@ def test_code_failure_cannot_be_overridden_by_positive_llm_judgments():
 
 
 def test_failed_binary_judgment_becomes_issue_and_refinement_instruction():
-    rev.llm_call = _flaw_failed_judgments
+    rev.llm_call = _as_llm_call(_flaw_failed_judgments)
     output = rev.reviewer_node(_good_design_state())
     report = output["review"]
 
@@ -307,7 +319,7 @@ def test_reviewer_requests_only_the_binary_judgment_schema():
 
     def _capture(*args, **kwargs):
         captured["response_schema"] = kwargs["response_schema"]
-        return _all_pass_judgments()
+        return _all_pass_judgments(), tc.fake_usage()
 
     rev.llm_call = _capture
     rev.reviewer_node(_good_design_state())

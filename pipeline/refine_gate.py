@@ -41,6 +41,11 @@ from pipeline.state import ArchitectState, Stage
 # budget is a generous safety net — retune it after watching one real run's
 # `input_tokens + output_tokens`.
 MAX_REFINE_ITERATIONS = 2
+# UNTUNED — pending a real run. This number was picked while token counting was
+# broken (nodes never returned their usage, so this cap compared 0 against
+# 500_000 and could not trip). Counting works now, but nothing has been measured
+# against it yet: treat it as a placeholder ceiling, not an evidence-based
+# budget, and set it from an actual run's totals before quoting it anywhere.
 MAX_TOTAL_TOKENS = 500_000
 
 

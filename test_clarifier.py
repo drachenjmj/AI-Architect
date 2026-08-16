@@ -2,10 +2,16 @@
 
 No API key or network needed. The Clarifier, Architect, and Reviewer LLM calls
 are replaced with deterministic canned responses.
+
+Every stub returns `(value, LLMUsage)` because that is `llm_call`'s contract —
+the reply plus what it cost. `FAKE_USAGE` gives each stubbed call a non-zero,
+predictable price so the token-accounting tests have real numbers to check
+against; see test_token_accounting.py.
 """
 
 from __future__ import annotations
 
+from pipeline.llm import LLMUsage
 from pipeline.state import (
     ADR,
     Blueprint,
@@ -26,6 +32,31 @@ from pipeline import orchestrator
 PROMPT = "Build me a system to sell sneakers online."
 
 
+# ── canned token usage ───────────────────────────────────────────────────
+# What ONE stubbed call "consumed". Non-zero and asymmetric so a test summing
+# these cannot pass by accident (e.g. by swapping input and output), and priced
+# through the REAL cost table against a real model ID, so the cost assertions
+# exercise production pricing code rather than a hand-written number.
+FAKE_MODEL = "gemini-3.1-flash-lite"
+FAKE_INPUT_TOKENS = 1000
+FAKE_OUTPUT_TOKENS = 500
+
+
+def fake_usage() -> LLMUsage:
+    """Usage for one stubbed call — the second half of `llm_call`'s contract."""
+
+    from pipeline.llm import estimate_cost_usd
+
+    return LLMUsage(
+        model=FAKE_MODEL,
+        input_tokens=FAKE_INPUT_TOKENS,
+        output_tokens=FAKE_OUTPUT_TOKENS,
+        cost_usd=estimate_cost_usd(
+            FAKE_MODEL, FAKE_INPUT_TOKENS, FAKE_OUTPUT_TOKENS
+        ),
+    )
+
+
 # ── canned Clarifier judgments ──────────────────────────────────────────
 def _missing(state, prompt, *, system="", model="", response_schema=None):
     """Something architecture-critical is unknown."""
@@ -44,7 +75,7 @@ def _missing(state, prompt, *, system="", model="", response_schema=None):
             ),
         ],
         missing_critical=["expected scale", "compliance"],
-    )
+    ), fake_usage()
 
 
 def _complete(state, prompt, *, system="", model="", response_schema=None):
@@ -60,7 +91,7 @@ def _complete(state, prompt, *, system="", model="", response_schema=None):
         assumptions=["Assume English-only UI (low-stakes)."],
         questions=[],
         missing_critical=[],
-    )
+    ), fake_usage()
 
 
 # ── canned Architect judgments ──────────────────────────────────────────
@@ -75,7 +106,7 @@ def _architect_response(
     """Return deterministic structured output for both Architect phases."""
 
     if response_schema is arch.FeatureDesign:
-        return arch.FeatureDesign(
+        return (arch.FeatureDesign(
             features=[
                 Feature(
                     id="FEAT-001",
@@ -93,10 +124,10 @@ def _architect_response(
                     ],
                 )
             ]
-        )
+        ), fake_usage())
 
     if response_schema is arch.ArchitectureDesign:
-        return arch.ArchitectureDesign(
+        return (arch.ArchitectureDesign(
             blueprint=Blueprint(
                 project_name="Sneaker Webshop",
                 selected_pattern="Event-Driven Microservices Architecture",
@@ -194,7 +225,7 @@ def _architect_response(
                     ],
                 )
             ],
-        )
+        ), fake_usage())
 
     raise AssertionError(
         f"Unexpected Architect response schema: {response_schema}"
@@ -264,7 +295,7 @@ def test_full_pause_then_resume():
 
     clar.llm_call = _stateful
     arch.llm_call = _architect_response
-    rev.llm_call = lambda state, prompt, **kwargs: rev.LLMJudgments()
+    rev.llm_call = lambda state, prompt, **kwargs: (rev.LLMJudgments(), fake_usage())
 
     state = new_run(PROMPT)
     state = orchestrator.run_pipeline(state)

@@ -14,7 +14,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from pipeline.agents.base import make_step, node
-from pipeline.llm import llm_call
+from pipeline.llm import LLMUsage, attach_usage, llm_call, sum_usage
 from pipeline.state import (
     ADR,
     ArchitectState,
@@ -166,49 +166,68 @@ Create the structured Architecture Blueprint, ADRs, and Component Descriptions.
 def architect_node(state: ArchitectState) -> dict:
     """Run feature derivation first, then architecture design."""
 
-    # Phase 1 — feature-first design
-    feature_result: FeatureDesign = llm_call(
-        state,
-        _build_feature_prompt(state),
-        system=FEATURE_SYSTEM_PROMPT,
-        model=ARCHITECT_MODEL,
-        response_schema=FeatureDesign,
-    )
+    # This node is the only one that calls the LLM TWICE, so it reports the SUM
+    # of both phases. `usages` collects them as they happen rather than at the
+    # end, because every validation below can raise between the two calls — the
+    # except clause then hands the already-billed phase-1 tokens to `@node`
+    # instead of losing them. See pipeline/llm.py for the mechanism.
+    usages: list[LLMUsage] = []
+    try:
+        # Phase 1 — feature-first design
+        feature_result: FeatureDesign
+        feature_result, phase1_usage = llm_call(
+            state,
+            _build_feature_prompt(state),
+            system=FEATURE_SYSTEM_PROMPT,
+            model=ARCHITECT_MODEL,
+            response_schema=FeatureDesign,
+        )
+        usages.append(phase1_usage)
 
-    if not feature_result.features:
-        raise ValueError("Architect produced no features.")
+        if not feature_result.features:
+            raise ValueError("Architect produced no features.")
 
-    # Phase 2 — architecture derived from those features
-    design_result: ArchitectureDesign = llm_call(
-        state,
-        _build_architecture_prompt(state, feature_result.features),
-        system=ARCHITECTURE_SYSTEM_PROMPT,
-        model=ARCHITECT_MODEL,
-        response_schema=ArchitectureDesign,
-    )
+        # Phase 2 — architecture derived from those features
+        design_result: ArchitectureDesign
+        design_result, phase2_usage = llm_call(
+            state,
+            _build_architecture_prompt(state, feature_result.features),
+            system=ARCHITECTURE_SYSTEM_PROMPT,
+            model=ARCHITECT_MODEL,
+            response_schema=ArchitectureDesign,
+        )
+        usages.append(phase2_usage)
 
-    if not design_result.adrs:
-        raise ValueError("Architect produced no ADRs.")
+        if not design_result.adrs:
+            raise ValueError("Architect produced no ADRs.")
 
-    if not design_result.components:
-        raise ValueError("Architect produced no Component Descriptions.")
+        if not design_result.components:
+            raise ValueError("Architect produced no Component Descriptions.")
 
-    step = make_step(
-        "architect",
-        state.stage,
-        Stage.DESIGNING,
-        (
-            f"derived {len(feature_result.features)} feature(s); "
-            f"generated blueprint, {len(design_result.adrs)} ADR(s), "
-            f"and {len(design_result.components)} component(s)"
-        ),
-    )
+        usage = sum_usage(usages)  # BOTH phases, reported as one per-node total
+        step = make_step(
+            "architect",
+            state.stage,
+            Stage.DESIGNING,
+            (
+                f"derived {len(feature_result.features)} feature(s); "
+                f"generated blueprint, {len(design_result.adrs)} ADR(s), "
+                f"and {len(design_result.components)} component(s)"
+            ),
+            usage,
+        )
 
-    return {
-        "features": feature_result.features,
-        "blueprint": design_result.blueprint,
-        "adrs": design_result.adrs,
-        "components": design_result.components,
-        "stage": Stage.DESIGNING,
-        "history": [step],
-    }
+        return {
+            "features": feature_result.features,
+            "blueprint": design_result.blueprint,
+            "adrs": design_result.adrs,
+            "components": design_result.components,
+            "stage": Stage.DESIGNING,
+            "history": [step],
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+        }
+    except Exception as e:
+        if usages:
+            attach_usage(e, sum_usage(usages))
+        raise

@@ -32,7 +32,7 @@ PROMPT = "Fix our monolithic online shop so it survives seasonal peak load."
 def _failing_review(state, prompt, **kwargs):
     """All-default judgments (every criterion passed=False) → reviewer fails."""
 
-    return rev.LLMJudgments()
+    return rev.LLMJudgments(), tc.fake_usage()
 
 
 def _seed_designable_state(**overrides):
