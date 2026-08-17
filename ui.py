@@ -6,6 +6,13 @@ From the AI-Architect/ folder (so the `pipeline` package imports resolve):
 
     streamlit run ui.py
 
+    streamlit run ui.py -- --demo          # DEV ONLY: load a finished run
+    streamlit run ui.py -- --demo capped   # DEV ONLY: one stopped on budget
+
+The `--demo` flag loads a fully-populated state straight into the session so
+the finished-run screen can be screenshotted without spending API quota (see
+ui_demo.py). It never runs the pipeline and makes no LLM calls.
+
 HOW THIS WORKS (the one mental model you need)
 ----------------------------------------------
 Streamlit re-runs this WHOLE script top-to-bottom on every user interaction.
@@ -27,6 +34,33 @@ orchestrator._route). This script is the "caller" from clarifier-design: it
 holds the state between calls, writes answers into
 `state.clarification_answers`, and calls run_pipeline(state) again to resume.
 
+THE FINISHED-RUN SCREEN (what the DONE branch shows)
+----------------------------------------------------
+This file stays the event/DRAW spine; the sections themselves live in
+ui_sections.py as small DRAW-only functions, each taking the state and reading
+nothing else. The DONE branch below is therefore a table of contents, in the
+order a viewer should meet them.
+
+The screen has one job: make what the run actually DID visible. Four of the
+five agentic behaviours happen inside the pipeline and used to leave no trace
+on screen, so each section is labelled with the behaviour it evidences —
+
+    Run trace            -> multi-step reasoning
+    Knowledge retrieved  -> retrieval
+    Repository analysis  -> tool use
+    Review report        -> iteration + quality gate
+    the Q&A replay above -> clarification
+
+— followed by the artifacts in full. Nothing on this screen is computed here:
+every value already exists on the state object, and the run status, the token
+totals and the cost are read from the same fields the pipeline wrote.
+
+Two honesty rules are load-bearing. The status line never claims completion
+for a run whose review failed or that stopped on the refine budget; and every
+cost is labelled as the list-price equivalent on a free-tier key, never as
+money spent (`ui_sections` prints "unknown" rather than a confident $0.0000
+when a step used a model we have no verified price for).
+
 RESUMING ACROSS SESSIONS
 ------------------------
 `st.session_state` dies with the browser tab, but the orchestrator checkpoints
@@ -39,12 +73,32 @@ section needed to change to support it.
 """
 from __future__ import annotations
 
+import sys
+
 import streamlit as st
 
 from pipeline.orchestrator import run_pipeline_streaming
 from pipeline.persistence import CheckpointError, list_runs, load_state
 from pipeline.repo_analysis import is_repo_url
 from pipeline.state import ArchitectState, Stage, new_run
+from ui_sections import (
+    BCG_DARK as _BCG_DARK,
+    BCG_GREEN as _BCG_GREEN,
+    GREY as _GREY,
+    RED as _RED,
+    live_step_caption,
+    render_adrs,
+    render_blueprint,
+    render_components,
+    render_context_record,
+    render_features,
+    render_knowledge,
+    render_repo_analysis,
+    render_review_report,
+    render_run_status,
+    render_run_trace,
+    render_status_strip,
+)
 
 # ── page setup ────────────────────────────────────────────────────────────
 st.set_page_config(page_title="AI Architect", page_icon="🏛️", layout="wide")
@@ -82,6 +136,12 @@ def _run(state: ArchitectState) -> None:
     is doing (stage header + the latest step note). The last streamed state is
     the terminal one — identical to what run_pipeline would return — so we just
     keep it. No pipeline logic is touched; we only consume the stream.
+
+    Each step also prints the RUNNING token/cost total. `input_tokens` and
+    `output_tokens` are reducer fields, so every snapshot already carries the
+    total so far and nothing has to be accumulated here. That turns the cost
+    guardrail into something you watch happen — the number climbing through the
+    refine loop — rather than a figure that only appears at the end.
     """
     latest = state
     with st.status("Pipeline running…", expanded=True) as status:
@@ -91,6 +151,7 @@ def _run(state: ArchitectState) -> None:
             if snapshot.history:
                 step = snapshot.history[-1]
                 st.write(f"**{step.agent}** — {step.note or step.stage_out.value}")
+                st.caption(live_step_caption(snapshot))
         st.session_state["state"] = latest
     st.rerun()  # restart the script so the DRAW section shows the new state
 
@@ -151,15 +212,37 @@ def _resume_picker() -> None:
     st.rerun()  # redraw with the loaded state
 
 
+# ── DEV ONLY: `-- --demo [variant]` loads a finished run, no pipeline ────
+# Fills the session with a fully-populated state so the finished-run screen can
+# be screenshotted for the slides and the video without spending API quota (our
+# KB currently returns nothing, so a live run cannot fill every section). The
+# import is lazy: a normal `streamlit run ui.py` never touches ui_demo.
+def _demo_variant() -> str | None:
+    """The variant named after `--demo` on the command line, or None if absent."""
+    argv = sys.argv[1:]
+    if "--demo" not in argv:
+        return None
+    position = argv.index("--demo") + 1
+    if position < len(argv) and not argv[position].startswith("-"):
+        return argv[position]
+    return "pass"
+
+
 # ── session init ──────────────────────────────────────────────────────────
 st.session_state.setdefault("state", None)
+
+_DEMO = _demo_variant()
+if _DEMO is not None and st.session_state["state"] is None:
+    from ui_demo import build_demo_state
+
+    st.session_state["state"] = build_demo_state(_DEMO)
+
 state: ArchitectState | None = st.session_state["state"]
 
-# ── BCG brand palette (widget theme lives in .streamlit/config.toml) ─────
-_BCG_GREEN = "#29BA74"  # signature green — the active step
-_BCG_DARK = "#147B58"   # dark BCG green — headings, completed steps
-_GREY = "#ADB5B1"       # pending steps
-_RED = "#C0392B"        # failure
+# ── BCG brand palette ────────────────────────────────────────────────────
+# Defined once in ui_sections.py and imported above under these names, so the
+# spine and the section renderers cannot drift apart. (Widget theme itself
+# lives in .streamlit/config.toml.)
 
 # ── SIDEBAR: stage checklist (Event-agnostic — pure DRAW) ─────────────────
 with st.sidebar:
@@ -261,24 +344,30 @@ else:
                     )
                     _run(state)  # resume: entry router sends us back to clarifier
 
-    # 4. Finished? → render whatever artifacts exist (placeholder-tolerant:
-    #    as teammates land real agents, this section fills up by itself).
+    # 4. Finished? → show what the run DID, then the design in full.
+    #    Every section is a DRAW-only function in ui_sections.py taking this
+    #    same state object; the order below is the order a viewer meets them.
+    #    Each renderer is null-safe on its own: a section whose source is
+    #    missing either omits itself or says why it is empty, so a thin run
+    #    (greenfield, no KB results, no review) renders honestly rather than
+    #    leaving empty headings behind.
     elif state.stage is Stage.DONE:
         with st.chat_message("assistant"):
-            st.success("Design complete.")
-            st.caption(f"Run cost: {state.input_tokens:,} in / {state.output_tokens:,} out tokens · ≈ ${state.total_cost_usd():.4f} at Gemini list prices (free-tier key — not money spent).")
-            if state.context_record:
-                st.markdown("**Context Record** (locked after clarification)")
-                st.markdown(state.context_record.summary or "_empty (stub)_")
-            if state.blueprint:
-                st.markdown("**Blueprint — stakeholder view**")
-                st.markdown(state.blueprint.stakeholder_view or "_empty (stub)_")
-                st.markdown("**Blueprint — technical view**")
-                st.markdown(state.blueprint.technical_view or "_empty (stub)_")
-            for adr in state.adrs:
-                st.markdown(f"**ADR: {adr.title}**\n\n{adr.decision}")
-            for comp in state.components:
-                st.markdown(f"**Component: {comp.name}**\n\n{comp.description}")
+            render_run_status(state)    # honest verdict — never a false success
+            render_status_strip(state)  # the run's shape at a glance
+
+            # What the system DID — one expander per agentic behaviour.
+            render_run_trace(state)      # multi-step reasoning
+            render_knowledge(state)      # retrieval
+            render_repo_analysis(state)  # tool use
+            render_review_report(state)  # iteration + quality gate
+
+            # What the system PRODUCED — the artifacts, in full.
+            render_context_record(state)
+            render_features(state)
+            render_blueprint(state)
+            render_adrs(state)
+            render_components(state)
 
     # 5. Failed? → say so plainly, with the recorded errors.
     elif state.stage is Stage.FAILED:
