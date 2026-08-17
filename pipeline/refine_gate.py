@@ -37,15 +37,32 @@ from pipeline.state import ArchitectState, Stage
 
 
 # ── Cost-cap policy ───────────────────────────────────────────────────────
-# Tunable. The iteration cap is what realistically trips in a demo; the token
-# budget is a generous safety net — retune it after watching one real run's
-# `input_tokens + output_tokens`.
+# Tunable. The iteration cap is what realistically trips; the token budget is a
+# safety net for a run that burns tokens abnormally fast.
 MAX_REFINE_ITERATIONS = 2
-# UNTUNED — pending a real run. This number was picked while token counting was
-# broken (nodes never returned their usage, so this cap compared 0 against
-# 500_000 and could not trip). Counting works now, but nothing has been measured
-# against it yet: treat it as a placeholder ceiling, not an evidence-based
-# budget, and set it from an actual run's totals before quoting it anywhere.
+# STILL UNTUNED, but no longer unmeasured — deliberately left as-is pending a
+# decision, not an oversight.
+#
+# The number was picked while token counting was broken (nodes never returned
+# their usage, so this compared 0 against 500_000 and could not trip). Counting
+# works now, and the first real end-to-end run measured:
+#
+#     complete run, both refine iterations spent, greenfield:
+#     16,677 in + 8,042 out = 24,719 tokens  (~$0.016 at list prices)
+#
+# So this ceiling is ~20x a full run: MAX_REFINE_ITERATIONS always trips first
+# and this cap never fires on a normal run. Quote it as a backstop, never as
+# "the budget we run to".
+#
+# Two things to weigh before retuning it, because a naive tightening to ~30k
+# would fire on nothing it is meant to catch:
+#   * It is only evaluated HERE, at the refine gate, i.e. after a reviewer
+#     failure. Tokens burned before the first gate visit — a runaway clarifier
+#     call, for instance — are never checked against it at all.
+#   * The failure worth catching is exactly that runaway: one observed clarifier
+#     call spent 65,521 output tokens (~$0.098, 6x a whole successful run) and
+#     still returned nothing usable. A per-call `max_output_tokens` in llm.py
+#     would catch that; this whole-run cap, checked only at the gate, would not.
 MAX_TOTAL_TOKENS = 500_000
 
 

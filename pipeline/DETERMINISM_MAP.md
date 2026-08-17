@@ -79,9 +79,13 @@ were each individually fine and only the wiring between them was broken.
 
 Two honest caveats for the report:
 
-* `MAX_TOTAL_TOKENS = 500_000` was chosen while counting was broken, so it has
-  never been measured against a real run. It is a placeholder ceiling, not an
-  evidence-based budget.
+* `MAX_TOTAL_TOKENS = 500_000` was chosen while counting was broken. It has now
+  been measured against a real run — a complete greenfield run spending both
+  refine iterations came to **24,719 tokens (~$0.016)** — which puts the ceiling
+  at roughly 20x a full run. `MAX_REFINE_ITERATIONS` therefore always trips
+  first and this cap never fires in normal operation. Describe it as a backstop,
+  not as the budget the system runs to. It is left unchanged pending a decision;
+  `refine_gate.py` records what to weigh before retuning it.
 * Costs are computed from Google's published USD list prices, but this project
   runs on free-tier keys. Every dollar figure is a **list-price equivalent** —
   what the run would have cost on the paid tier — never money actually spent.
