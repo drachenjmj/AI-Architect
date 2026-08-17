@@ -64,7 +64,7 @@ pipeline/
   orchestrator.py  deterministic router (stage -> agent)
   llm.py           single door for all LLM calls (see LLM_MODULE.md)
   review_checks.py deterministic Reviewer checks
-  run.py           entry point / end-to-end trace
+  run.py           CLI entry point: answer loop + full plain-text report
   agents/          base class + one file per agent
 eval/              development-only labeled evaluation harness
 architect.py       single-agent prototype (reference for prompt + RAG wiring)
@@ -80,12 +80,48 @@ pinned `requirements.txt`, `.env`). In short, from the `AI-Architect/` folder:
 python3.12 -m venv .venv && source .venv/bin/activate   # Windows: py -3.12 -m venv .venv; .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 cp .env.example .env          # then paste your own Gemini API key into .env
-python -m pipeline.run        # run the pipeline end to end
+python -m pipeline.run        # drive one run from the terminal (see below)
 ```
 
 Each developer uses their **own** Gemini API key (`GEMINI_API_KEY` in the
 gitignored `.env`). All agents call the LLM through `pipeline/llm.py`; see
 **[pipeline/LLM_MODULE.md](pipeline/LLM_MODULE.md)** for the interface.
+
+## Running from the command line
+
+`python -m pipeline.run` drives one complete run and prints the live step
+trace followed by every artifact as plain text: Context Record, Features,
+Blueprint, ADRs, Components, the review report, the retrieved knowledge, the
+token/cost breakdown, and the run id with its checkpoint directory.
+
+The Clarifier pauses mid-run by returning with `stage == AWAITING_INPUT`, and
+the caller is expected to supply answers and re-invoke. The command does that
+for you: it asks each question, merges the answers into the state, and resumes,
+up to three clarification rounds. Answering interactively is the default;
+`--answers` makes a run reproducible without a keyboard.
+
+```bash
+python -m pipeline.run                                   # default example prompt
+python -m pipeline.run "Design an order pipeline for 10k rps."
+python -m pipeline.run --repo-url https://github.com/pallets/flask
+python -m pipeline.run --answers answers.json --no-input  # unattended
+```
+
+| Flag | What it does |
+|------|--------------|
+| `PROMPT` | The system to architect. Defaults to the built-in `EXAMPLE_PROMPT`, whose repo URL is fictional — the ingestor records the failed clone and the run continues without repository insight. |
+| `--repo-url URL` | Existing codebase to re-architect, passed to `new_run()`. Omit for greenfield. |
+| `--answers FILE` | JSON answers to the Clarifier's questions. An **object** maps question text to answer (exact match); an **array** is consumed positionally in the order asked. A question with no match is asked on stdin, or fails the run under `--no-input`. |
+| `--no-input` | Never prompt — fail instead. For unattended runs. |
+| `--max-steps N` | Graph step cap per invocation (default 20). |
+
+Exit codes: `0` the run reached DONE, `1` it reached FAILED, `2` it could not be
+driven to a terminal stage (an unanswerable question, the round cap, or a pause
+that carried no questions). `python -m pipeline.run --help` is the full
+reference.
+
+The Streamlit UI (`streamlit run ui.py`) drives the same contract with a form
+instead of a terminal.
 
 ## Conventions
 
