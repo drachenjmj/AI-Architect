@@ -10,6 +10,8 @@ Rubric v2 keeps the decision boundary explicit:
 """
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, Field
 
 from pipeline.agents.base import make_step, node
@@ -132,6 +134,125 @@ _CRITERION_ISSUES = {
         "Name the affected artifact and the concrete correction required.",
     ),
 }
+
+
+# REFINEMENT-INSTRUCTION ASSEMBLY. This string is the only channel by which a
+# review reaches the next architect pass, so it has to carry the EVIDENCE and
+# not merely the fix. Run 20260818T194159Z-107ff26e is the case this shape
+# exists to prevent. Its one high-severity issue found "Constraint group(s) not
+# addressed in the design: budget", but the instruction was assembled from
+# `suggested_fix` alone, so what the architect actually received was the
+# generic default: "Address each stated constraint explicitly in the Blueprint,
+# ADRs, or Component Descriptions." It was never told WHICH constraint was
+# missing, could not close the gap, and `constraint_coverage` stayed at 1 for
+# all three rounds.
+#
+# The same run also lost its single most useful instruction to FILTERING. The
+# old `[high] or issues` expression dropped every medium whenever any high
+# existed, discarding an LLM-written medium that read "justify the
+# cost-effectiveness of the proposed AWS services (SQS, RDS Replicas) relative
+# to the 'Medium' budget constraint" — specific, actionable, and thrown away in
+# favour of boilerplate. So this assembler RANKS by severity and drops nothing
+# except past a stated cap.
+_MAX_INSTRUCTION_ISSUES = 8
+_SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+_FINDING_LIMIT = 200
+_FIX_LIMIT = 240
+_EVIDENCE_LIMIT = 200
+
+# The instruction is interpolated into a `<refinement_instruction>` block in the
+# architect prompt (see agents/architect.py), and `finding` / `evidence` /
+# `suggested_fix` are partly LLM-authored text. A stray delimiter in that text
+# would close the block early and hand the model whatever followed as prompt
+# rather than as data. Stripped rather than escaped: the tag carries no meaning
+# worth preserving inside a finding.
+_INSTRUCTION_TAG_RE = re.compile(r"</?\s*refinement_instruction\s*>", re.IGNORECASE)
+
+
+def _clean(text: str) -> str:
+    """Strip block delimiters and collapse whitespace. Pure."""
+
+    return " ".join(_INSTRUCTION_TAG_RE.sub("", text or "").split())
+
+
+def _clip(text: str, limit: int) -> str:
+    """Truncate on a word boundary. Pure.
+
+    Per-field truncation is what keeps the instruction small enough to sit in
+    every refine prompt without crowding out the artifacts it is judging.
+    """
+
+    if len(text) <= limit:
+        return text
+    return text[:limit].rsplit(" ", 1)[0].rstrip(" ,;:.") + "..."
+
+
+def _restates_finding(evidence: str, finding: str) -> bool:
+    """Would this evidence just repeat the finding? Pure."""
+
+    left = evidence.lower().rstrip(".")
+    right = finding.lower().rstrip(".")
+    if not left:
+        return True
+    return left in right or right in left
+
+
+def _build_refinement_instruction(issues: list[ReviewIssue]) -> str:
+    """Assemble the architect's instruction from the issue list. Pure.
+
+    Deterministic by construction: the sort is stable and keyed ONLY on
+    severity, so issues of equal severity keep their original list order and
+    the same `ReviewResult` always yields a byte-identical string.
+    """
+
+    if not issues:
+        # The review can fail with no issues attached — a code score below 2
+        # with every judgment passing does it. Never hand the architect an
+        # empty instruction on a failing review.
+        return "Address the listed issues and resubmit the design."
+
+    rendered: list[list[str]] = []
+    seen: set[tuple[str, str]] = set()
+    for issue in sorted(
+        issues, key=lambda issue: _SEVERITY_ORDER.get(issue.severity, 2)
+    ):
+        finding = _clip(_clean(issue.finding), _FINDING_LIMIT)
+        fix = _clip(_clean(issue.suggested_fix), _FIX_LIMIT)
+        # Deduplicate on the RENDERED pair rather than the raw one, so that no
+        # two visible entries can read identically.
+        key = (finding, fix)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        lines = [f"[{issue.severity}] {finding or 'Unspecified issue.'}"]
+        # Evidence on highs only. That is where the reviewer's reasoning lives
+        # and where the architect most needs it; on mediums it is bulk paid for
+        # in every subsequent prompt.
+        if issue.severity == "high":
+            evidence = _clip(_clean(issue.evidence), _EVIDENCE_LIMIT)
+            if not _restates_finding(evidence, finding):
+                lines.append(f"Evidence: {evidence}")
+        if fix:
+            lines.append(f"Fix: {fix}")
+        rendered.append(lines)
+
+    kept = rendered[:_MAX_INSTRUCTION_ISSUES]
+    omitted = len(rendered) - len(kept)
+
+    body: list[str] = []
+    for number, lines in enumerate(kept, start=1):
+        body.append(f"{number}. {lines[0]}")
+        body.extend(f"   {line}" for line in lines[1:])
+
+    text = (
+        f"The review found {len(rendered)} issue(s). "
+        "Address them in priority order.\n\n" + "\n".join(body)
+    )
+    if omitted:
+        # Say so. A silent cap reads as "that was everything" when it wasn't.
+        text += f"\n\n({omitted} further lower-severity issue(s) omitted.)"
+    return text
 
 
 def _format_artifacts(state: ArchitectState) -> str:
@@ -270,10 +391,7 @@ def _assemble_report(
     if passed:
         instruction = ""
     else:
-        prioritized = [issue for issue in issues if issue.severity == "high"] or issues
-        instruction = " ".join(
-            issue.suggested_fix for issue in prioritized[:3]
-        ).strip() or "Address the listed issues and resubmit the design."
+        instruction = _build_refinement_instruction(issues)
 
     return ReviewResult(
         overall_status="pass" if passed else "fail",

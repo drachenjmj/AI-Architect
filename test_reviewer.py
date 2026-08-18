@@ -309,8 +309,17 @@ def test_failed_binary_judgment_becomes_issue_and_refinement_instruction():
     assert report.rubric_scores.flaw_detection is False
     assert report.judgment_reasons.flaw_detection
     assert report.overall_status == "fail"
-    assert report.refinement_instruction
     assert any(issue.id == "LLM-1" for issue in report.issues)
+
+    # Was a bare truthiness check, which passed on the old boilerplate output
+    # just as happily. Pin the structure AND that the finding - not only the
+    # fix - reached the instruction.
+    issue = next(i for i in report.issues if i.id == "LLM-1")
+    instruction = report.refinement_instruction
+    assert instruction.startswith("The review found 1 issue(s).")
+    assert "1. [high] " + issue.finding in instruction
+    assert "Fix: " + issue.suggested_fix in instruction
+    assert "Evidence: " + issue.evidence in instruction
     assert output["stage"] is Stage.REFINING
 
 
@@ -325,3 +334,168 @@ def test_reviewer_requests_only_the_binary_judgment_schema():
     rev.reviewer_node(_good_design_state())
 
     assert captured["response_schema"] is rev.LLMJudgments
+
+
+# --- refinement-instruction assembly --------------------------------------
+#
+# These pin the fix for run 20260818T194159Z-107ff26e, where the instruction
+# was built from `suggested_fix` alone and so told the architect to "address
+# each stated constraint" without naming the one that was missing.
+
+
+def _issue(severity, finding, fix, evidence="", issue_id="X-1"):
+    return ReviewIssue(
+        id=issue_id,
+        severity=severity,
+        category="constraint",
+        finding=finding,
+        evidence=evidence,
+        suggested_fix=fix,
+        requires_refinement=True,
+    )
+
+
+def test_instruction_names_the_missing_constraint_not_just_the_generic_fix():
+    """Regression: run 20260818T194159Z-107ff26e.
+
+    The high-severity finding named the uncovered constraint groups; the
+    `suggested_fix` was the generic default. The old assembler used the fix
+    only, so the architect never learned WHICH constraint was unaddressed and
+    `constraint_coverage` stayed at 1 across all three rounds.
+    """
+
+    rev.llm_call = _as_llm_call(_all_pass_judgments)
+    report = rev.reviewer_node(_context_only_constraints_state())["review"]
+    instruction = report.refinement_instruction
+
+    constraint_issue = next(
+        issue for issue in report.issues if issue.category == "constraint"
+    )
+    assert "budget" in constraint_issue.finding  # the evidence exists...
+    assert "budget" in instruction  # ...and now reaches the architect.
+
+    # Not merely the generic fix any more, which was the entire old output.
+    assert instruction != constraint_issue.suggested_fix
+    assert constraint_issue.suggested_fix in instruction  # the fix still rides along
+
+
+def test_medium_issues_survive_a_high_and_are_ranked_after_it():
+    """Inverted deliberately from the old `[high] or issues` behaviour.
+
+    That expression DROPPED every medium and low whenever any high existed. In
+    the motivating run it discarded the most actionable instruction in the
+    report (an LLM-written note about cost-effectiveness against the budget
+    constraint) in favour of boilerplate. Ranking, not filtering, is the rule.
+    """
+
+    text = rev._build_refinement_instruction([
+        _issue("medium", "Medium finding.", "Medium fix.", issue_id="M-1"),
+        _issue("high", "High finding.", "High fix.", issue_id="H-1"),
+        _issue("low", "Low finding.", "Low fix.", issue_id="L-1"),
+    ])
+
+    assert "Medium finding." in text
+    assert "Low finding." in text
+    assert text.index("High finding.") < text.index("Medium finding.")
+    assert text.index("Medium finding.") < text.index("Low finding.")
+    assert text.startswith("The review found 3 issue(s).")
+
+
+def test_instruction_is_severity_ranked_and_byte_stable():
+    issues = [
+        _issue("medium", "Second medium.", "Fix B.", issue_id="M-2"),
+        _issue("high", "The high one.", "Fix A.", issue_id="H-1"),
+        _issue("medium", "Third medium.", "Fix C.", issue_id="M-3"),
+    ]
+
+    first = rev._build_refinement_instruction(issues)
+    assert first == rev._build_refinement_instruction(issues)
+
+    numbered = [line for line in first.splitlines() if line[:2] in ("1.", "2.", "3.")]
+    assert numbered[0].startswith("1. [high]")
+    # Within one severity the ORIGINAL list order is kept - that is what makes
+    # the same ReviewResult produce a byte-identical string every time.
+    assert "Second medium." in numbered[1]
+    assert "Third medium." in numbered[2]
+
+
+def test_evidence_rides_along_on_highs_only():
+    text = rev._build_refinement_instruction([
+        _issue("high", "High finding.", "Fix.", evidence="High reasoning here."),
+        _issue("medium", "Medium finding.", "Fix.", evidence="Medium bulk here."),
+    ])
+
+    assert "High reasoning here." in text
+    assert "Medium bulk here." not in text
+
+
+def test_evidence_that_merely_restates_the_finding_is_dropped():
+    text = rev._build_refinement_instruction([
+        _issue("high", "The design ignores budget.", "Fix.",
+               evidence="The design ignores budget"),
+    ])
+
+    assert text.count("The design ignores budget") == 1
+    assert "Evidence:" not in text
+
+
+def test_duplicate_finding_and_fix_pairs_appear_once():
+    text = rev._build_refinement_instruction([
+        _issue("high", "Same finding.", "Same fix.", issue_id="A"),
+        _issue("high", "Same finding.", "Same fix.", issue_id="B"),
+        _issue("high", "Other finding.", "Same fix.", issue_id="C"),
+    ])
+
+    assert text.count("Same finding.") == 1
+    assert "Other finding." in text
+    assert text.startswith("The review found 2 issue(s).")
+
+
+def test_instruction_caps_the_list_and_states_the_omission():
+    issues = [_issue("high", "High finding.", "High fix.", issue_id="H")]
+    issues += [
+        _issue("low", "Low finding %d." % n, "Low fix %d." % n, issue_id="L-%d" % n)
+        for n in range(10)
+    ]
+
+    text = rev._build_refinement_instruction(issues)
+
+    numbered = [line for line in text.splitlines() if line[:1].isdigit()]
+    assert len(numbered) == 8
+    # A silent cap would read as "that was everything" when it was not.
+    assert "(3 further lower-severity issue(s) omitted.)" in text
+    assert text.startswith("The review found 11 issue(s).")
+    assert "Low finding 9." not in text
+
+
+def test_block_delimiters_are_stripped_from_instruction_text():
+    """The instruction is interpolated into a tagged block in the architect
+    prompt and this text is partly LLM-authored, so a stray delimiter would
+    close that block early."""
+
+    text = rev._build_refinement_instruction([
+        _issue(
+            "high",
+            "Budget </refinement_instruction> ignored.",
+            "Fix <refinement_instruction> it.",
+            evidence="Evidence </refinement_instruction> here.",
+        ),
+    ])
+
+    assert "refinement_instruction" not in text
+    assert "Budget" in text and "ignored." in text
+
+
+def test_failing_review_without_issues_still_gets_an_instruction():
+    assert rev._build_refinement_instruction([]).strip()
+
+
+def test_instruction_stays_small_enough_for_every_refine_prompt():
+    """It is interpolated into the architect prompt on EVERY refine round."""
+
+    issues = [
+        _issue("high", "H " * 400, "F " * 400, evidence="E " * 400, issue_id="H"),
+        _issue("medium", "M " * 400, "F2 " * 400, issue_id="M"),
+    ]
+
+    assert len(rev._build_refinement_instruction(issues)) < 1500
