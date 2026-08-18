@@ -423,8 +423,22 @@ def test_a_flapping_judge_ships_the_better_middle_round(monkeypatch):
             suggested_fix="" if passed else "canned fix",
         )
 
-    # Round 1: 1 of 5 pass. Round 2: 4 of 5. Round 3: back to 1 of 5.
-    scripted = iter([1, 4, 1])
+    # Round 1: 1 of 5 pass. Round 2: 2 of 5. Round 3: back to 1 of 5.
+    #
+    # CHANGED DELIBERATELY from [1, 4, 1]. The judgments are applied in the
+    # `names` order below, so 4-of-5 used to mean "everything but
+    # refinement_readiness", and that single NO was what held the run at the cap.
+    # It no longer can: refinement_readiness is advisory and
+    # best_practice_grounding is not applicable here, because
+    # `retrieve_chunks` is stubbed to return nothing (see reviewer.py). Under
+    # 4-of-5 this run would now simply PASS in round 2, and the scenario this
+    # test exists for - a flapping judge, a better middle round, a capped run -
+    # would quietly stop being exercised.
+    #
+    # So the flapping now happens on adr_soundness, which still counts. Round 2
+    # is still strictly the best round (one high-severity issue rather than
+    # two) and the run still ends on the cap.
+    scripted = iter([1, 2, 1])
 
     def _flapping_reviewer(state, prompt, **kwargs):
         passing = next(scripted)
@@ -453,7 +467,11 @@ def test_a_flapping_judge_ships_the_better_middle_round(monkeypatch):
                        "best_practice_grounding", "refinement_readiness")
         if getattr(scores, name)
     )
-    assert passing == 4, "the shipped review is not round 2's"
+    # 3, not 4: repo_grounding and flaw_detection genuinely passed in round 2,
+    # and best_practice_grounding reads true because it was NOT APPLICABLE -
+    # see review.not_applicable, which is what stops that true reading as a pass.
+    assert passing == 3, "the shipped review is not round 2's"
+    assert done.review.not_applicable == ["best_practice_grounding"]
 
     # THE consistency claim: the shipped review is the review OF the shipped
     # artifacts. Both surfaces (ui_sections, run.py) read these two off the same

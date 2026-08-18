@@ -46,6 +46,8 @@ from pipeline.state import (
     ArchitectState,
     ContextRecord,
     KBChunk,
+    ReviewResult,
+    RubricScores,
     Stage,
     new_run,
 )
@@ -433,3 +435,52 @@ if __name__ == "__main__":
     print("PASS  stream's last emission matches invoke field-for-field")
 
     print("\nALL PERSISTENCE TESTS PASSED")
+
+
+# ---------------------------------------------------------------------------
+# 6. `ReviewResult.not_applicable` — forward and backward compatible.
+#
+# The field records criteria that were asked but carry no verdict weight. It was
+# added after runs had already been recorded, so BOTH directions matter: a new
+# report must survive the round trip, and a checkpoint written before the field
+# existed must still load.
+# ---------------------------------------------------------------------------
+
+
+def test_not_applicable_survives_the_round_trip():
+    _isolate("not_applicable_round_trip")
+    state = new_run(PROMPT)
+    state.review = ReviewResult(
+        overall_status="pass",
+        rubric_scores=RubricScores(best_practice_grounding=True),
+        issues=[],
+        requires_refinement=False,
+        not_applicable=["best_practice_grounding"],
+    )
+
+    save_state(state)
+    loaded = load_state(state.run_id)
+
+    assert loaded.review.not_applicable == ["best_practice_grounding"]
+    assert loaded.review == state.review
+
+
+def test_checkpoint_written_before_the_field_existed_still_loads():
+    """An older checkpoint has no `not_applicable` key at all."""
+
+    _isolate("not_applicable_legacy")
+    state = new_run(PROMPT)
+    state.review = ReviewResult(overall_status="fail", requires_refinement=True)
+    path = save_state(state)
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    del payload["review"]["not_applicable"]
+    assert "not_applicable" not in payload["review"]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = load_state(state.run_id)
+
+    # Defaults to empty, which is exactly "nothing was excluded" - the rule that
+    # applied when the checkpoint was written.
+    assert loaded.review.not_applicable == []
+    assert loaded.review.overall_status == "fail"

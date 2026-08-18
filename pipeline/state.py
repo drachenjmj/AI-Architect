@@ -463,6 +463,14 @@ class ReviewIssue(BaseModel):
     requires_refinement: bool = False
 
 
+# Why a criterion can be marked NOT APPLICABLE, keyed by the names that appear in
+# `ReviewResult.not_applicable`. Rendered by both the CLI report and the UI, which
+# is why it lives here beside the model rather than inside the reviewer.
+NOT_APPLICABLE_REASONS: dict[str, str] = {
+    "best_practice_grounding": "no knowledge retrieved",
+}
+
+
 class ReviewResult(BaseModel):
     """Code-assembled Reviewer verdict and audit evidence."""
 
@@ -472,6 +480,13 @@ class ReviewResult(BaseModel):
     issues: list[ReviewIssue] = Field(default_factory=list)
     requires_refinement: bool = True
     refinement_instruction: str = ""
+    # Criteria that were ASKED and recorded but carry no verdict weight, because
+    # there was no evidence for them to be a judgment ABOUT. Deliberately a list
+    # of names rather than a tri-state on RubricScores: the booleans stay
+    # booleans, so persistence, the UI and every existing test keep working, and
+    # this field is what stops a "true" here from reading as a pass. Absent from
+    # older checkpoints, hence the default.
+    not_applicable: list[str] = Field(default_factory=list)
 
 
 class DesignSnapshot(BaseModel):

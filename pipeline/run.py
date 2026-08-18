@@ -93,6 +93,7 @@ from typing import Sequence
 from pipeline.agents import clarifier as clarifier_gate
 from pipeline.llm import LLMError
 from pipeline.orchestrator import MAX_STEPS, run_pipeline_streaming
+from pipeline.agents.reviewer import ADVISORY_CRITERIA
 from pipeline.persistence import runs_dir
 from pipeline.refine_gate import MAX_USER_ROUNDS, begin_user_round
 from pipeline.state import (
@@ -101,6 +102,7 @@ from pipeline.state import (
     ComponentDescription,
     ContextEdits,
     Feature,
+    NOT_APPLICABLE_REASONS,
     PendingDecision,
     Stage,
     new_run,
@@ -939,8 +941,21 @@ def print_review(state: ArchitectState) -> None:
 
     print("LLM-owned judgments (binary; never summed into the verdict):")
     for field, label in _LLM_CHECKS:
-        passed = bool(getattr(review.rubric_scores, field, False))
-        print(f"  [{'PASS' if passed else 'FAIL'}] {label}")
+        # not_applicable FIRST. The stored boolean is true for such a criterion
+        # so nothing downstream breaks, so reading it first would render "no
+        # evidence existed" as a pass - which is the one thing this must not do.
+        if field in review.not_applicable:
+            why = NOT_APPLICABLE_REASONS.get(field, "not applicable")
+            print(f"  [ n/a] {label}  ({why}; excluded from the verdict)")
+        else:
+            passed = bool(getattr(review.rubric_scores, field, False))
+            # An advisory criterion is asked and shown but cannot decide
+            # anything, so a bare FAIL beside a PASS verdict would look like a
+            # contradiction rather than the deliberate choice it is.
+            note = "  (advisory; excluded from the verdict)" if (
+                field in ADVISORY_CRITERIA and not passed
+            ) else ""
+            print(f"  [{'PASS' if passed else 'FAIL'}] {label}{note}")
         reason = (getattr(review.judgment_reasons, field, "") or "").strip()
         print(_wrap(reason or "(no reason recorded)", "        "))
     print()

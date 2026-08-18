@@ -66,6 +66,7 @@ from pipeline.agents.clarifier import (
     CLARIFIER_LABEL,
     EDITABLE_RECORD_FIELDS,
 )
+from pipeline.agents.reviewer import ADVISORY_CRITERIA
 from pipeline.llm import PRICING_USD_PER_MTOK
 from pipeline.persistence import runs_dir
 from pipeline.refine_gate import MAX_REFINE_ITERATIONS, MAX_USER_ROUNDS
@@ -76,6 +77,7 @@ from pipeline.state import (
     ContextEdits,
     ContextRecord,
     Feature,
+    NOT_APPLICABLE_REASONS,
     StepLog,
 )
 
@@ -701,12 +703,29 @@ def render_review_report(state: ArchitectState) -> None:
             )
             st.write("")
             for field, label in _LLM_CHECKS:
-                passed = bool(getattr(review.rubric_scores, field, False))
-                mark, color = ("✓", BCG_GREEN) if passed else ("✕", RED)
-                st.markdown(
-                    f"{_tag(mark, color)} &nbsp; {html.escape(label)}",
-                    unsafe_allow_html=True,
-                )
+                # not_applicable FIRST - see the same guard in pipeline/run.py.
+                # The stored boolean is true for these, so checking it first
+                # would paint "no evidence existed" as a green tick.
+                if field in review.not_applicable:
+                    why = NOT_APPLICABLE_REASONS.get(field, "not applicable")
+                    st.markdown(
+                        f"{_tag('n/a', GREY)} &nbsp; {html.escape(label)} &nbsp; "
+                        f"{_tag(html.escape(why) + ' · excluded from verdict', GREY)}",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    passed = bool(getattr(review.rubric_scores, field, False))
+                    mark, color = ("✓", BCG_GREEN) if passed else ("✕", RED)
+                    # See the same note in pipeline/run.py: an advisory ✕ beside
+                    # a PASS verdict needs to say why it did not block.
+                    advisory = (
+                        f" &nbsp; {_tag('advisory · excluded from verdict', GREY)}"
+                        if field in ADVISORY_CRITERIA and not passed else ""
+                    )
+                    st.markdown(
+                        f"{_tag(mark, color)} &nbsp; {html.escape(label)}{advisory}",
+                        unsafe_allow_html=True,
+                    )
                 reason = getattr(review.judgment_reasons, field, "") or ""
                 st.caption(reason.strip() or "_no reason recorded_")
 

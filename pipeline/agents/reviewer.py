@@ -11,6 +11,7 @@ Rubric v2 keeps the decision boundary explicit:
 from __future__ import annotations
 
 import re
+from typing import Sequence
 
 from pydantic import BaseModel, Field
 
@@ -20,6 +21,7 @@ from pipeline.review_checks import DeterministicChecks, run_deterministic_checks
 from pipeline.state import (
     ArchitectState,
     JudgmentReasons,
+    NOT_APPLICABLE_REASONS,
     ReviewIssue,
     ReviewResult,
     RubricScores,
@@ -315,11 +317,97 @@ def _judgment_items(judgments: LLMJudgments):
         yield name, getattr(judgments, name)
 
 
+# The four code-owned scores, every one of which must be 2. Named here so the
+# verdict rule reads as a list of criteria rather than a hand-written `and`.
+_CODE_SCORES = (
+    "all_artifacts_present",
+    "constraint_coverage",
+    "traceability",
+    "adr_presence",
+)
+
+# The judgments that CAN block the verdict. `refinement_readiness` is absent by
+# design - see ADVISORY_CRITERIA below.
+_VERDICT_JUDGMENTS = (
+    "repo_grounding",
+    "flaw_detection",
+    "adr_soundness",
+    "best_practice_grounding",
+)
+
+# ASKED, RECORDED, AND ADVISORY. This is the fallback the old comment at this
+# spot agreed to in advance, now taken, and the evidence that triggered it is
+# run 20260818T194159Z-107ff26e: `refinement_readiness` answered NO with the
+# reason "The deterministic checks identify that the 'Medium' budget constraint
+# remains unaddressed" - it failed BECAUSE another check had failed, then raised
+# its own issue about that same failure. Circular, and as the fifth term of an
+# AND it could veto a design nothing else objected to.
+#
+# So it is still asked, and its answer and reason still appear in
+# `rubric_scores` and `judgment_reasons`, because a judgment that disagrees with
+# its own instruction is evidence about the judge and hiding it loses that. It
+# is simply no longer allowed to decide anything, and no longer generates a
+# ReviewIssue - the issue it raised was always a duplicate of the finding that
+# provoked it.
+#
+# NOT fixed by softening its prompt, and NOT removed from the schema. If it ever
+# starts agreeing with the other four, that agreement is worth having on record.
+ADVISORY_CRITERIA = ("refinement_readiness",)
+
+
+def derive_verdict(
+    rubric_scores: RubricScores,
+    issues: list[ReviewIssue],
+    not_applicable: Sequence[str] = (),
+) -> tuple[bool, list[str]]:
+    """The pass/fail rule, pure and inspectable. Returns (passed, blocking).
+
+    `blocking` names every criterion that failed, so a report can say WHY the
+    verdict was no. Order is fixed - code scores, then judgments, then the
+    severity gate - so the same report always yields the same list.
+
+    Kept free of `DeterministicChecks` and of the LLM reply on purpose: a stored
+    `ReviewResult` carries everything this needs, which is what lets
+    eval/replay_reviews.py re-derive historical verdicts off disk.
+    """
+
+    blocking: list[str] = []
+
+    for name in _CODE_SCORES:
+        if getattr(rubric_scores, name, 0) != 2:
+            blocking.append(name)
+
+    for name in _VERDICT_JUDGMENTS:
+        if name in not_applicable:
+            # No evidence existed for this judgment to be ABOUT, so it is not a
+            # pass and not a fail. See ReviewResult.not_applicable.
+            continue
+        if not getattr(rubric_scores, name, False):
+            blocking.append(name)
+
+    if any(issue.severity == "high" for issue in issues):
+        blocking.append("high_severity_issue")
+
+    return not blocking, blocking
+
+
 def _assemble_report(
     judgments: LLMJudgments,
     checks: DeterministicChecks,
+    knowledge_retrieved: bool,
 ) -> ReviewResult:
     """Build the complete report and verdict in deterministic Python."""
+
+    # NOT APPLICABLE, not passed. With `retrieved_knowledge` empty there is
+    # nothing for `best_practice_grounding` to be a judgment ABOUT, and the
+    # answer proved it: across two runs with an equally empty knowledge base it
+    # came back false in one and true in the other. Same absent evidence,
+    # opposite verdicts - the criterion is unanchored, not merely strict. It is
+    # still asked (the schema is unchanged) and its reason is still recorded;
+    # its ANSWER is what gets ignored.
+    not_applicable: list[str] = []
+    if not knowledge_retrieved:
+        not_applicable.append("best_practice_grounding")
 
     rubric = RubricScores(
         all_artifacts_present=checks.score_all_artifacts_present,
@@ -329,7 +417,13 @@ def _assemble_report(
         repo_grounding=judgments.repo_grounding.passed,
         flaw_detection=judgments.flaw_detection.passed,
         adr_soundness=judgments.adr_soundness.passed,
-        best_practice_grounding=judgments.best_practice_grounding.passed,
+        # True so that nothing reading this boolean breaks. `not_applicable` is
+        # what keeps it honest, and every renderer consults that FIRST.
+        best_practice_grounding=(
+            True
+            if "best_practice_grounding" in not_applicable
+            else judgments.best_practice_grounding.passed
+        ),
         refinement_readiness=judgments.refinement_readiness.passed,
     )
     reasons = JudgmentReasons(
@@ -342,6 +436,12 @@ def _assemble_report(
     qualitative_issues: list[ReviewIssue] = []
     for name, judgment in _judgment_items(judgments):
         if judgment.passed:
+            continue
+        if name in ADVISORY_CRITERIA or name in not_applicable:
+            # Recorded in the rubric above, but never raised as a finding. An
+            # advisory criterion's issue only ever restated the failure that
+            # provoked it, and a not-applicable one has no evidence to base a
+            # finding on.
             continue
         severity, category, finding, default_fix = _CRITERION_ISSUES[name]
         qualitative_issues.append(
@@ -357,36 +457,11 @@ def _assemble_report(
         )
 
     issues = checks.issues + qualitative_issues
-    code_items_full = all(
-        score == 2
-        for score in (
-            rubric.all_artifacts_present,
-            rubric.constraint_coverage,
-            rubric.traceability,
-            rubric.adr_presence,
-        )
-    )
-    # WATCH `refinement_readiness` HERE. Its own instruction says "if all
-    # preceding answers pass, answer yes", but in run 20260818T074835Z-1925fbd7
-    # it returned NO in all three rounds while the other four judgments passed
-    # every time — so it alone flipped this AND to False and vetoed a design
-    # nothing else objected to. It is left in the AND for now, deliberately,
-    # because the loop it was complaining about genuinely could not close its
-    # findings (feature IDs were re-randomised each pass — see
-    # agents/architect.py) and it may simply stop firing now that it can.
-    #
-    # AGREED FALLBACK, if it still fires once the loop converges: keep ASKING
-    # it — the answer is useful and belongs in the report — but drop it from
-    # this AND, so it stays visible and can no longer veto an otherwise-passing
-    # design. That is a scoped, one-line change to this generator expression.
-    # Do not "fix" it by softening the prompt: a judgment that disagrees with
-    # its own instruction is evidence about the judge, and hiding it loses that.
-    judged_items_pass = all(
-        judgment.passed
-        for _, judgment in _judgment_items(judgments)
-    )
-    has_high_severity_issue = any(issue.severity == "high" for issue in issues)
-    passed = code_items_full and judged_items_pass and not has_high_severity_issue
+    # The rule itself lives in derive_verdict: pure, and reachable from a stored
+    # ReviewResult alone, which is what lets eval/replay_reviews.py re-derive
+    # historical verdicts without an LLM. `blocking` is recomputed there rather
+    # than stored - it is a function of what is already in the report.
+    passed, _blocking = derive_verdict(rubric, issues, not_applicable)
 
     if passed:
         instruction = ""
@@ -400,6 +475,7 @@ def _assemble_report(
         issues=issues,
         requires_refinement=not passed,
         refinement_instruction=instruction,
+        not_applicable=not_applicable,
     )
 
 
@@ -421,7 +497,9 @@ def reviewer_node(state: ArchitectState) -> dict:
             model=REVIEWER_MODEL,
             response_schema=LLMJudgments,
         )
-        report = _assemble_report(judgments, checks)
+        report = _assemble_report(
+            judgments, checks, knowledge_retrieved=bool(state.retrieved_knowledge)
+        )
         stage_out = Stage.REFINING if report.requires_refinement else Stage.DONE
         step = make_step(
             "reviewer",

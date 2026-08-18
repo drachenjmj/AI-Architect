@@ -10,7 +10,8 @@
     "judgment_reasons",
     "issues",
     "requires_refinement",
-    "refinement_instruction"
+    "refinement_instruction",
+    "not_applicable"
   ],
   "properties": {
     "overall_status": {
@@ -99,11 +100,16 @@
     },
     "requires_refinement": {
       "type": "boolean",
-      "description": "True unless every code item is full, every judged item passes, and no high-severity issue exists."
+      "description": "True unless every code item is full, every VERDICT-BEARING judgment passes, and no high-severity issue exists. Criteria listed in not_applicable, and refinement_readiness, are excluded from that test."
     },
     "refinement_instruction": {
       "type": "string",
-      "description": "Code-assembled instruction from the highest-priority failed checks; empty on pass."
+      "description": "Code-assembled instruction carrying the finding, evidence and fix of every issue, ranked by severity; empty on pass."
+    },
+    "not_applicable": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Criteria asked and recorded but carrying no verdict weight, because no evidence existed for them to judge. Must render as n/a, never as a pass."
     }
   }
 }

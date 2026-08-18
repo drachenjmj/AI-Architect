@@ -499,3 +499,141 @@ def test_instruction_stays_small_enough_for_every_refine_prompt():
     ]
 
     assert len(rev._build_refinement_instruction(issues)) < 1500
+
+
+# --- the verdict rule ------------------------------------------------------
+
+
+def _rubric(**overrides):
+    """A rubric that passes everything, minus whatever the caller breaks."""
+
+    base = dict(
+        all_artifacts_present=2,
+        constraint_coverage=2,
+        traceability=2,
+        adr_presence=2,
+        repo_grounding=True,
+        flaw_detection=True,
+        adr_soundness=True,
+        best_practice_grounding=True,
+        refinement_readiness=True,
+    )
+    base.update(overrides)
+    return RubricScores(**base)
+
+
+def test_derive_verdict_passes_a_clean_report():
+    assert rev.derive_verdict(_rubric(), []) == (True, [])
+
+
+def test_refinement_readiness_alone_no_longer_blocks():
+    """Run 20260818T194159Z-107ff26e: it answered NO because a deterministic
+    check had failed, then raised its own issue about that same failure. As the
+    fifth term of an AND it could veto a design nothing else objected to."""
+
+    passed, blocking = rev.derive_verdict(_rubric(refinement_readiness=False), [])
+    assert passed is True
+    assert "refinement_readiness" not in blocking
+
+
+def test_a_high_severity_issue_still_blocks():
+    passed, blocking = rev.derive_verdict(
+        _rubric(), [_issue("high", "Structural problem.", "Fix it.")]
+    )
+    assert passed is False
+    assert blocking == ["high_severity_issue"]
+
+
+def test_a_medium_issue_does_not_block():
+    passed, _ = rev.derive_verdict(_rubric(), [_issue("medium", "Minor.", "Fix.")])
+    assert passed is True
+
+
+def test_every_code_score_must_still_be_full():
+    for field in ("all_artifacts_present", "constraint_coverage",
+                  "traceability", "adr_presence"):
+        passed, blocking = rev.derive_verdict(_rubric(**{field: 1}), [])
+        assert passed is False, field
+        assert blocking == [field]
+
+
+def test_the_three_remaining_judgments_still_block():
+    for field in ("repo_grounding", "flaw_detection", "adr_soundness"):
+        passed, blocking = rev.derive_verdict(_rubric(**{field: False}), [])
+        assert passed is False, field
+        assert blocking == [field]
+
+
+def test_a_not_applicable_criterion_is_excluded_from_the_verdict():
+    passed, blocking = rev.derive_verdict(
+        _rubric(best_practice_grounding=False),
+        [],
+        not_applicable=["best_practice_grounding"],
+    )
+    assert passed is True
+    assert "best_practice_grounding" not in blocking
+
+
+def test_derive_verdict_is_pure_and_order_stable():
+    rubric = _rubric(traceability=0, flaw_detection=False)
+    issues = [_issue("high", "F.", "X.")]
+    assert rev.derive_verdict(rubric, issues) == rev.derive_verdict(rubric, issues)
+    assert rev.derive_verdict(rubric, issues)[1] == [
+        "traceability", "flaw_detection", "high_severity_issue",
+    ]
+
+
+# --- criterion applicability ----------------------------------------------
+
+
+def _judgments_failing(name: str, reason: str):
+    judgments = _all_pass_judgments()
+    setattr(judgments, name, _judgment(False, reason))
+    return lambda *_a, **_k: judgments
+
+
+def _no_knowledge_state():
+    state = _good_design_state()
+    state.retrieved_knowledge = []
+    return state
+
+
+def test_refinement_readiness_is_recorded_but_raises_no_issue():
+    rev.llm_call = _as_llm_call(
+        _judgments_failing("refinement_readiness", "Circular: another check failed.")
+    )
+    report = rev.reviewer_node(_good_design_state())["review"]
+
+    # Still asked, still visible - a judgment that disagrees with its own
+    # instruction is evidence about the judge.
+    assert report.rubric_scores.refinement_readiness is False
+    assert report.judgment_reasons.refinement_readiness
+    # But it no longer generates a finding, nor vetoes the design.
+    assert not [i for i in report.issues if "actionable enough" in i.finding]
+    assert report.overall_status == "pass"
+
+
+def test_empty_knowledge_makes_best_practice_grounding_not_applicable():
+    rev.llm_call = _as_llm_call(
+        _judgments_failing("best_practice_grounding", "Nothing cited.")
+    )
+    report = rev.reviewer_node(_no_knowledge_state())["review"]
+
+    assert report.not_applicable == ["best_practice_grounding"]
+    assert not [i for i in report.issues if "retrieved knowledge" in i.finding]
+    assert report.overall_status == "pass"
+    # True ONLY so downstream readers keep working; not_applicable is the truth,
+    # and every renderer consults it first.
+    assert report.rubric_scores.best_practice_grounding is True
+
+
+def test_retrieved_knowledge_restores_the_original_behaviour():
+    rev.llm_call = _as_llm_call(
+        _judgments_failing("best_practice_grounding", "Nothing cited.")
+    )
+    report = rev.reviewer_node(_good_design_state())["review"]  # HAS knowledge
+
+    assert report.not_applicable == []
+    assert report.rubric_scores.best_practice_grounding is False
+    assert report.overall_status == "fail"
+    assert [i for i in report.issues if "retrieved knowledge" in i.finding]
