@@ -5,7 +5,7 @@ canned response (the Clarifier / Architect / Reviewer mocks are reused from
 test_clarifier). Covers five things:
 
   1. Round-trip — save → load preserves the state, history included.
-  2. Resume — a run checkpointed at AWAITING_INPUT can be reloaded from disk,
+  2. Resume — a run checkpointed at AWAITING_HUMAN can be reloaded from disk,
      answered, and driven to completion in the SAME run directory.
   3. Robustness — a corrupt checkpoint is skipped by `list_runs` and reported
      clearly by `load_state`; it never takes the listing down with it.
@@ -99,7 +99,7 @@ def _rich_state() -> ArchitectState:
     """A state with something in every layer, so a round-trip has work to do."""
     state = new_run(PROMPT, "https://github.com/example/bugged-shop")
     state.log_step("repo_ingestor", Stage.INGESTING, "ingested 4 partition(s)")
-    state.log_step("clarifier", Stage.AWAITING_INPUT, "missing 2 critical fact(s)")
+    state.log_step("clarifier", Stage.AWAITING_HUMAN, "missing 2 critical fact(s)")
     state.clarifying_questions = ["Expected peak users?", "Is GDPR in scope?"]
     state.clarification_answers = {"Expected peak users?": "about 50k"}
     state.context_record = ContextRecord(
@@ -132,7 +132,7 @@ def test_round_trip_preserves_state_and_history():
     # survived; the explicit checks below name what we care about most.
     assert loaded == state
     assert loaded.run_id == state.run_id
-    assert loaded.stage is Stage.AWAITING_INPUT
+    assert loaded.stage is Stage.AWAITING_HUMAN
     assert [(s.agent, s.stage_in, s.stage_out, s.note) for s in loaded.history] == [
         (s.agent, s.stage_in, s.stage_out, s.note) for s in state.history
     ]
@@ -157,14 +157,14 @@ def test_round_trip_preserves_state_and_history():
     assert excerpt.startswith("Our monolithic shop")
 
 
-# ── 2. resume from AWAITING_INPUT ────────────────────────────────────────
+# ── 2. resume from AWAITING_HUMAN ────────────────────────────────────────
 def test_resume_from_awaiting_input_continues():
     _isolate("resume")
     _install_llm_mocks()
 
     # First leg: run until the Clarifier pauses for the human.
     paused = orchestrator.run_pipeline(new_run(PROMPT))
-    assert paused.stage is Stage.AWAITING_INPUT
+    assert paused.stage is Stage.AWAITING_HUMAN
     assert paused.clarifying_questions
 
     run_id = paused.run_id
@@ -177,7 +177,7 @@ def test_resume_from_awaiting_input_continues():
     # rebuild the run from disk, exactly as the UI's resume picker does.
     del paused
     resumed = load_state(run_id)
-    assert resumed.stage is Stage.AWAITING_INPUT
+    assert resumed.stage is Stage.AWAITING_HUMAN
     assert resumed.run_id == run_id
     questions_before = list(resumed.clarifying_questions)
     history_before = len(resumed.history)
@@ -418,7 +418,7 @@ if __name__ == "__main__":
     print("PASS  save/load round-trip preserves state and history")
 
     test_resume_from_awaiting_input_continues()
-    print("PASS  resume from AWAITING_INPUT continues in the same run")
+    print("PASS  resume from AWAITING_HUMAN continues in the same run")
 
     test_corrupt_checkpoint_is_skipped_by_list_runs()
     print("PASS  corrupt checkpoint skipped by list_runs, raised by load_state")

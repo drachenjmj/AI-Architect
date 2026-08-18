@@ -11,7 +11,19 @@ LangGraph `StateGraph`. The CONTROL LOGIC is identical and still 100% code:
     via the `STAGE_TO_NODE` table below. No LLM decides routing — that is the
     determinism principle, preserved. This table IS the determinism map.
   * `max_steps` maps to LangGraph's `recursion_limit`, so a mis-wired route can
-    never loop forever (fails loudly, never hangs).
+    never loop forever (fails loudly, never hangs). It is now DERIVED from the
+    cost caps (`MAX_STEPS`, below) rather than hand-picked, so raising a cap can
+    never again surface as a `GraphRecursionError` — i.e. as a crash.
+
+ONE PAUSE STAGE, ONE DISCRIMINATOR
+-----------------------------------
+There is exactly one human-in-the-loop stage, `AWAITING_HUMAN`, and
+`state.pending_decision` says which decision is owed. `_route` does not read the
+discriminator at all — every kind of pause ends the invocation the same way —
+and `_entry_route` reads it only to REFUSE one case (see below). That is the
+whole cost of adding a human touchpoint to this file: nothing, plus one refusal.
+A new `AWAITING_*` stage per interaction would instead have made the stage enum
+the router's problem, one row of `STAGE_TO_NODE` at a time.
 
 The public entry point `run_pipeline(state, max_steps)` keeps its old signature,
 so run.py, the UI, and tests call it exactly as before.
@@ -42,8 +54,15 @@ from pipeline.agents import (
     reviewer_node,
 )
 from pipeline.persistence import checkpoint
-from pipeline.refine_gate import refine_gate_node
-from pipeline.state import ArchitectState, Stage
+from pipeline.refine_gate import derive_max_steps, refine_gate_node
+from pipeline.state import ArchitectState, PendingDecision, Stage
+
+# The step cap every entry point defaults to. DERIVED from the budget caps that
+# actually determine it (see refine_gate.derive_max_steps), not the hard-coded 20
+# it replaces: that constant was silently coupled to MAX_REFINE_ITERATIONS, so
+# raising a cost cap surfaced as a GraphRecursionError -> FAILED, i.e. a budget
+# change arriving as a crash. Computed once at import; the caps are constants.
+MAX_STEPS = derive_max_steps()
 
 # ── DETERMINISM MAP ───────────────────────────────────────────────────────
 # current stage -> which node runs next. Pure rules; the single source of
@@ -53,7 +72,7 @@ STAGE_TO_NODE: dict[Stage, str] = {
     Stage.CREATED:        "repo_ingestor",  # read the repo FIRST (or skip: greenfield)
     Stage.INGESTING:      "clarifier",      # so the clarifier can ground its questions in it
     Stage.CLARIFYING:     "researcher",     # context locked → research
-    Stage.AWAITING_INPUT: END,   # clarifier needs the human → pause (see _route)
+    Stage.AWAITING_HUMAN: END,   # a human owes us a decision → pause (see _route)
     Stage.RESEARCHING:    "architect",
     Stage.DESIGNING:      "reviewer",
     Stage.REFINING:       "refine_gate",  # reviewer failed → cost-cap gate decides loop-vs-stop
@@ -78,7 +97,9 @@ def _route(state: ArchitectState) -> str:
 
     Terminal or unwired stages -> END. This is the old `ROUTES.get(...) or fail`
     logic, expressed as a LangGraph conditional-edge function. Here
-    `AWAITING_INPUT -> END` — reaching it mid-run means "pause for the human."
+    `AWAITING_HUMAN -> END` — reaching it mid-run means "pause for the human."
+    WHICH decision is pending does not matter to this direction: every kind of
+    pause ends the invocation, so the discriminator stays out of the router.
     """
     return STAGE_TO_NODE.get(state.stage, END)
 
@@ -86,12 +107,31 @@ def _route(state: ArchitectState) -> str:
 def _entry_route(state: ArchitectState) -> str:
     """Deterministic router for the START edge ONLY (graph entry / resume).
 
-    `AWAITING_INPUT` is directional: reaching it mid-run means pause (`_route`
-    sends it to END), but ENTERING the graph already in `AWAITING_INPUT` means
-    the user has just supplied answers and we must RE-RUN the clarifier to
+    `AWAITING_HUMAN` is directional: reaching it mid-run means pause (`_route`
+    sends it to END), but ENTERING the graph already in `AWAITING_HUMAN` means
+    the human has resolved their side — supplied answers, or edited the locked
+    record in a way that opened a gap — and we must RE-RUN the clarifier to
     re-judge. Everything else defers to the normal table.
+
+    ONE resolution never comes here: `CONTEXT_LOCK`. The whole point of that
+    pause is that the caller resolves it OUTSIDE the graph (accept, edit, ask —
+    see pipeline/agents/clarifier.py), so arriving with it still pending means a
+    caller re-entered on a half-resolved pause. Routing to the clarifier anyway
+    would "work": it would burn a call, re-lock, and pause again, and the bug
+    would look like a slow gate rather than a wiring error. So it is refused
+    here, loudly, at the only place that can still tell the difference. Not an
+    `assert` statement — those vanish under `python -O`, and a routing invariant
+    that switches itself off in optimised mode is not an invariant.
     """
-    if state.stage is Stage.AWAITING_INPUT:
+    if state.stage is Stage.AWAITING_HUMAN:
+        if state.pending_decision is PendingDecision.CONTEXT_LOCK:
+            raise RuntimeError(
+                "run_pipeline was entered while a CONTEXT_LOCK decision is still "
+                "pending. That pause is resolved by the CALLER, before re-entry: "
+                "clarifier.accept_context_lock (approve), or "
+                "clarifier.submit_context_edits + clarifier.open_for_rejudge "
+                "(edit). clarifier.ask_advisor never enters the graph at all."
+            )
         return "clarifier"
     return _route(state)
 
@@ -129,11 +169,13 @@ def _build_graph():
 GRAPH = _build_graph()
 
 
-def run_pipeline(state: ArchitectState, max_steps: int = 20) -> ArchitectState:
+def run_pipeline(state: ArchitectState, max_steps: int = MAX_STEPS) -> ArchitectState:
     """Drive one state through the graph until DONE/FAILED. Same signature as before.
 
     `max_steps` -> LangGraph `recursion_limit`: a hard safety cap so a mis-wired
-    route can never loop forever (also the natural home for the Week-3 guardrail).
+    route can never loop forever. It DEFAULTS to `MAX_STEPS`, derived from the
+    cost caps rather than hard-coded, so raising a cap can never again present
+    itself as a crash. Callers may still pass a smaller number to test the cap.
 
     Expressed as "run the stream, keep the last value". The stream's final
     emission is exactly what `GRAPH.invoke` returned before — an equivalence
@@ -148,7 +190,7 @@ def run_pipeline(state: ArchitectState, max_steps: int = 20) -> ArchitectState:
     return final
 
 
-def run_pipeline_streaming(state: ArchitectState, max_steps: int = 20):
+def run_pipeline_streaming(state: ArchitectState, max_steps: int = MAX_STEPS):
     """Yield the validated state after EVERY node, for live progress display.
 
     Same graph, routing and step cap as `run_pipeline`; the only difference is

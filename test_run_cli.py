@@ -10,7 +10,7 @@ WHAT IS MONKEYPATCHED, AND WHY THAT ONE
 point (so each step's note can be printed live, exactly as `ui.py:_run` does),
 and the pause/resume contract is identical either way: the LAST yielded state is
 what `run_pipeline` would have returned, and it is what the loop inspects for
-`AWAITING_INPUT`. Patching the name inside `pipeline.run` leaves the real
+`AWAITING_HUMAN`. Patching the name inside `pipeline.run` leaves the real
 orchestrator untouched for every other test in the suite.
 
 Each fake yields ONE state per invocation — enough for the loop, and it keeps
@@ -23,7 +23,14 @@ import json
 import pytest
 
 from pipeline import run as cli
-from pipeline.state import ArchitectState, Stage, new_run
+from pipeline.agents import clarifier as clar
+from pipeline.state import (
+    ArchitectState,
+    ContextRecord,
+    PendingDecision,
+    Stage,
+    new_run,
+)
 
 
 PROMPT = "Build me a system to sell sneakers online."
@@ -36,7 +43,7 @@ Q_CLOUD = "Which cloud provider must this run on?"
 # Scripted pipeline
 # ══════════════════════════════════════════════════════════════════════════
 def _paused(state: ArchitectState, questions: list[str]) -> ArchitectState:
-    """A copy of `state` parked at AWAITING_INPUT, like a real pause.
+    """A copy of `state` parked at AWAITING_HUMAN, like a real pause.
 
     A COPY, because the real `run_pipeline*` never mutates the state it is
     handed — a fake that mutated would let a loop bug (reading the input state
@@ -44,7 +51,7 @@ def _paused(state: ArchitectState, questions: list[str]) -> ArchitectState:
     """
     out = state.model_copy(deep=True)
     out.clarifying_questions = list(questions)
-    out.log_step("clarifier", Stage.AWAITING_INPUT, f"asked {len(questions)}")
+    out.log_step("clarifier", Stage.AWAITING_HUMAN, f"asked {len(questions)}")
     return out
 
 
@@ -104,7 +111,7 @@ def _flat(text: str) -> str:
 # 1. The loop resumes and terminates
 # ══════════════════════════════════════════════════════════════════════════
 def test_loop_answers_a_pause_and_finishes(monkeypatch, tmp_path, capsys):
-    """AWAITING_INPUT on the first call, DONE on the second: --answers drives it."""
+    """AWAITING_HUMAN on the first call, DONE on the second: --answers drives it."""
     fake = _install(
         monkeypatch,
         [lambda s: _paused(s, [Q_SCALE]), _done],
@@ -124,7 +131,7 @@ def test_loop_answers_a_pause_and_finishes(monkeypatch, tmp_path, capsys):
     assert len(fake.calls) == 2
     # The second invocation carried the answer, so the clarifier could re-judge.
     assert fake.calls[1].clarification_answers == {Q_SCALE: "50k concurrent users"}
-    assert fake.calls[1].stage is Stage.AWAITING_INPUT  # entry router resumes on this
+    assert fake.calls[1].stage is Stage.AWAITING_HUMAN  # entry router resumes on this
 
     out = _flat(capsys.readouterr().out)
     assert "Final stage: done" in out
@@ -197,7 +204,7 @@ def test_answers_merge_across_two_rounds(monkeypatch, tmp_path):
 # 3. The loop is bounded — it exits instead of spinning
 # ══════════════════════════════════════════════════════════════════════════
 def test_pause_with_no_questions_exits_instead_of_spinning(monkeypatch, capsys):
-    """The known clarifier bug: AWAITING_INPUT with an EMPTY question list.
+    """The known clarifier bug: AWAITING_HUMAN with an EMPTY question list.
 
     There is nothing to ask, so a naive loop would re-invoke forever. It must
     stop, say what went wrong, and exit non-zero. (The clarifier itself is NOT
@@ -435,6 +442,166 @@ def test_report_prints_the_populated_artifacts(capsys):
     assert f"{state.input_tokens:,} in" in out
     for agent in state.usage_by_agent():
         assert agent in out
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 8. The context gate: a command grammar, so it needs testing like one
+# ══════════════════════════════════════════════════════════════════════════
+# `parse_gate_command` is pure, which is the only reason a terminal grammar can
+# be trusted at all: every branch below is reachable without a keyboard.
+def _gate_state() -> ArchitectState:
+    """A state parked at the context lock, as the clarifier leaves it."""
+    state = new_run(PROMPT, require_context_approval=True)
+    state.context_record = ContextRecord(
+        business_goal="Sell sneakers online",
+        cloud_provider="AWS",
+        compliance_requirements=["GDPR"],
+        assumptions=["Assume English-only UI.", "[assumed by clarifier] budget: medium."],
+        open_questions=["Is a mobile app in scope?"],
+    )
+    state.stage = Stage.AWAITING_HUMAN
+    state.pending_decision = PendingDecision.CONTEXT_LOCK
+    return state
+
+
+@pytest.mark.parametrize("line", ["", "   ", "accept", "ACCEPT"])
+def test_gate_accepts_on_enter_or_accept(line):
+    """Enter is the zero-effort path, because a gate people dread is a gate off."""
+    action, payload = cli.parse_gate_command(line, _gate_state())
+    assert (action, payload) == ("accept", None)
+
+
+def test_gate_parses_a_strike_by_number():
+    state = _gate_state()
+    action, edits = cli.parse_gate_command("strike 2", state)
+    assert action == "edit"
+    assert edits.struck_assumptions == ["[assumed by clarifier] budget: medium."]
+
+
+def test_gate_parses_a_text_field_and_a_list_field():
+    """A list field typed on ONE line is comma-separated — this caller's convention."""
+    state = _gate_state()
+
+    _, text_edit = cli.parse_gate_command("set cloud_provider = GCP", state)
+    assert text_edit.fields == {"cloud_provider": "GCP"}
+
+    _, list_edit = cli.parse_gate_command(
+        "set compliance_requirements = GDPR, PCI-DSS", state
+    )
+    assert list_edit.fields == {"compliance_requirements": ["GDPR", "PCI-DSS"]}
+
+
+def test_gate_parses_recommend_and_answer_and_ask():
+    state = _gate_state()
+
+    _, rec = cli.parse_gate_command("recommend budget", state)
+    assert rec.recommend == ["budget"]
+
+    _, ans = cli.parse_gate_command("answer 1 No, web only.", state)
+    assert ans.answered_questions == {"Is a mobile app in scope?": "No, web only."}
+
+    action, question = cli.parse_gate_command("? why does scale matter", state)
+    assert (action, question) == ("ask", "why does scale matter")
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "strike 9",                  # out of range
+        "strike",                    # nothing named
+        "set = value",               # no field
+        "set nonsense = x",          # unknown field
+        "set cloud_provider AWS",    # no '='
+        "answer 1",                  # no answer text
+        "?",                         # no question
+        "frobnicate",                # not an action
+    ],
+)
+def test_gate_rejects_nonsense_instead_of_guessing(line):
+    """Every rejection is a ValueError the loop prints and re-prompts on.
+
+    Guessing what a mistyped instruction meant would be the one failure mode a
+    veto gate cannot have: silently applying an edit the human did not ask for.
+    """
+    with pytest.raises(ValueError):
+        cli.parse_gate_command(line, _gate_state())
+
+
+def test_gate_with_no_one_on_stdin_stops_rather_than_self_approving(capsys):
+    """`--approve-context --no-input` is a gate with nobody to work it.
+
+    Auto-approving here would make the flag a lie: the run would rubber-stamp
+    its own ground truth and report that a human had seen it.
+    """
+    state = _gate_state()
+    answers = cli.AnswerSource(allow_stdin=False)
+
+    with pytest.raises(cli.GateAbort, match="needs a human"):
+        cli.resolve_context_gate(state, answers)
+
+    assert state.pending_decision is PendingDecision.CONTEXT_LOCK  # still pending
+    assert "CONTEXT LOCK" in capsys.readouterr().out
+
+
+def test_gate_accept_resolves_the_pause(monkeypatch, capsys):
+    state = _gate_state()
+    monkeypatch.setattr(cli.AnswerSource, "line", lambda self, label: "accept")
+
+    assert cli.resolve_context_gate(state, cli.AnswerSource()) is False
+    assert state.pending_decision is None
+    assert state.stage is Stage.CLARIFYING
+    assert "Approved" in capsys.readouterr().out
+
+
+def test_gate_edit_that_fills_a_value_stays_at_the_gate(monkeypatch, capsys):
+    """Filling a value cannot open a gap, so it re-freezes and waits — no re-judge."""
+    state = _gate_state()
+    typed = iter(["set cloud_provider = GCP", "accept"])
+    monkeypatch.setattr(cli.AnswerSource, "line", lambda self, label: next(typed))
+
+    assert cli.resolve_context_gate(state, cli.AnswerSource()) is False
+    assert state.context_record.cloud_provider == "GCP"
+    assert state.user_rounds == 0  # nothing was sent back through the graph
+    assert "No re-judge needed" in capsys.readouterr().out
+
+
+def test_gate_edit_that_opens_a_gap_asks_for_a_re_judge(monkeypatch, capsys):
+    state = _gate_state()
+    monkeypatch.setattr(cli.AnswerSource, "line", lambda self, label: "recommend budget")
+
+    assert cli.resolve_context_gate(state, cli.AnswerSource()) is True
+    assert state.pending_decision is None  # opened for re-entry
+    assert state.stage is Stage.AWAITING_HUMAN
+    assert state.user_rounds == 1  # a re-judge IS a user-initiated re-entry
+    assert "Re-judging" in capsys.readouterr().out
+
+
+def test_gate_advisory_question_resolves_nothing(monkeypatch, capsys):
+    """It answers, bills itself to the trace, and leaves the pause exactly as it was."""
+    from test_clarifier import fake_usage
+
+    monkeypatch.setattr(
+        clar, "llm_call", lambda state, prompt, **kw: ("Scale drives the pattern.", fake_usage())
+    )
+    state = _gate_state()
+    typed = iter(["? why does scale matter here", "accept"])
+    monkeypatch.setattr(cli.AnswerSource, "line", lambda self, label: next(typed))
+
+    cli.resolve_context_gate(state, cli.AnswerSource())
+
+    assert "Scale drives the pattern." in capsys.readouterr().out
+    assert len(state.advisory_turns) == 1
+    assert state.history[-1].agent == clar.ADVISOR_AGENT
+    assert state.user_rounds == 0  # advisory turns are not rounds
+
+
+def test_default_max_steps_is_the_derived_one():
+    """The CLI must not carry its own copy of a number derived from the caps."""
+    from pipeline.refine_gate import derive_max_steps
+
+    args = cli.build_parser().parse_args([])
+    assert args.max_steps == derive_max_steps()
+    assert args.approve_context is False  # unattended by default
 
 
 if __name__ == "__main__":

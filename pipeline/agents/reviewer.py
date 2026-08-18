@@ -245,6 +245,21 @@ def _assemble_report(
             rubric.adr_presence,
         )
     )
+    # WATCH `refinement_readiness` HERE. Its own instruction says "if all
+    # preceding answers pass, answer yes", but in run 20260818T074835Z-1925fbd7
+    # it returned NO in all three rounds while the other four judgments passed
+    # every time — so it alone flipped this AND to False and vetoed a design
+    # nothing else objected to. It is left in the AND for now, deliberately,
+    # because the loop it was complaining about genuinely could not close its
+    # findings (feature IDs were re-randomised each pass — see
+    # agents/architect.py) and it may simply stop firing now that it can.
+    #
+    # AGREED FALLBACK, if it still fires once the loop converges: keep ASKING
+    # it — the answer is useful and belongs in the report — but drop it from
+    # this AND, so it stays visible and can no longer veto an otherwise-passing
+    # design. That is a scoped, one-line change to this generator expression.
+    # Do not "fix" it by softening the prompt: a judgment that disagrees with
+    # its own instruction is evidence about the judge, and hiding it loses that.
     judged_items_pass = all(
         judgment.passed
         for _, judgment in _judgment_items(judgments)

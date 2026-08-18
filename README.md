@@ -94,17 +94,24 @@ trace followed by every artifact as plain text: Context Record, Features,
 Blueprint, ADRs, Components, the review report, the retrieved knowledge, the
 token/cost breakdown, and the run id with its checkpoint directory.
 
-The Clarifier pauses mid-run by returning with `stage == AWAITING_INPUT`, and
-the caller is expected to supply answers and re-invoke. The command does that
-for you: it asks each question, merges the answers into the state, and resumes,
-up to three clarification rounds. Answering interactively is the default;
-`--answers` makes a run reproducible without a keyboard.
+The pipeline pauses mid-run by returning with `stage == AWAITING_HUMAN`, and
+`state.pending_decision` says what is owed. The command resolves both kinds:
+
+* **Clarifying questions** — it asks each one, merges the answers into the
+  state, and resumes, up to three clarification rounds. Answering interactively
+  is the default; `--answers` makes a run reproducible without a keyboard.
+* **The context lock** (`--approve-context`, off by default) — once the Context
+  Record is frozen, the run stops and shows it for approval *before* any
+  research, design or review token is spent on it. Approve it, edit a field,
+  strike an assumption you do not accept, ask the clarifier to recommend a value
+  you do not know, or ask a read-only question about it.
 
 ```bash
 python -m pipeline.run                                   # default example prompt
 python -m pipeline.run "Design an order pipeline for 10k rps."
 python -m pipeline.run --repo-url https://github.com/pallets/flask
 python -m pipeline.run --answers answers.json --no-input  # unattended
+python -m pipeline.run --approve-context                  # approve the record first
 ```
 
 | Flag | What it does |
@@ -113,6 +120,7 @@ python -m pipeline.run --answers answers.json --no-input  # unattended
 | `--repo-url URL` | Existing codebase to re-architect, passed to `new_run()`. Omit for greenfield. |
 | `--answers FILE` | JSON answers to the Clarifier's questions. An **object** maps question text to answer (exact match); an **array** is consumed positionally in the order asked. A question with no match is asked on stdin, or fails the run under `--no-input`. |
 | `--no-input` | Never prompt — fail instead. For unattended runs. |
+| `--approve-context` | Pause at the context lock and show the frozen Context Record for approval before design begins. Needs a terminal, so it cannot be combined with `--no-input`: a gate with nobody to work it would just rubber-stamp its own ground truth. Off by default, so unattended runs behave exactly as before. |
 | `--max-steps N` | Graph step cap per invocation (default 20). |
 
 Exit codes: `0` the run reached DONE, `1` it reached FAILED, `2` it could not be
