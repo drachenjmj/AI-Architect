@@ -28,7 +28,8 @@ class RagLogger:
     ) -> None:
         """Append a single retrieval record to the JSON-Lines log file.
 
-        status is one of: "success" | "no_results" | "below_threshold".
+        status is one of:
+        "success" | "no_results" | "below_threshold" | "web_fallback".
         """
         record = {
             "timestamp": datetime.now().isoformat(),

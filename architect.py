@@ -10,6 +10,7 @@ import sqlite3
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
 
 from dotenv import load_dotenv
 import google.generativeai as genai
@@ -18,13 +19,15 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 from rag_logger import RagLogger
 
+_REPO_ROOT = Path(__file__).resolve().parent
+
 
 # ──────────────────────────────────────────────
 # CONFIGURATION
 # ──────────────────────────────────────────────
 MODEL_NAME = "gemini-3.1-flash-lite"
-CHROMA_DIR = "./chroma_db"
-DB_PATH = "architect.db"
+CHROMA_DIR = str(_REPO_ROOT / "chroma_db")
+DB_PATH = str(_REPO_ROOT / "architect.db")
 
 # None = inactive. Chroma returns a DISTANCE (lower = better); set to a float
 # once a value has been derived from rag_log.jsonl to drop weak matches.
@@ -87,7 +90,7 @@ STYLE GUIDELINES:
 # API KEY (internal)
 # ──────────────────────────────────────────────
 def _load_api_key() -> str:
-    load_dotenv()
+    load_dotenv(_REPO_ROOT / ".env")
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise ValueError("GEMINI_API_KEY not found in .env!")
@@ -122,14 +125,32 @@ def get_vectorstore():
     if _vectorstore is None:
         os.environ["GOOGLE_API_KEY"] = _load_api_key()
         embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-2")
-        _vectorstore = Chroma(
+        store = Chroma(
             persist_directory=CHROMA_DIR,
             embedding_function=embeddings,
         )
+        # Fail fast when the index is missing/empty instead of silently
+        # degrading into the web-search fallback. Runs once per process
+        # (singleton init), not per query.
+        try:
+            vector_count = store._collection.count()
+        except Exception as e:
+            raise RuntimeError(
+                f"Chroma index at '{CHROMA_DIR}' could not be read ({e}). "
+                "Run Rag_Setup.ipynb in the repo root to build the "
+                "knowledge base first."
+            ) from e
+        if vector_count == 0:
+            raise RuntimeError(
+                f"Chroma index at '{CHROMA_DIR}' contains 0 vectors — the "
+                "knowledge base is empty. Run Rag_Setup.ipynb in the repo "
+                "root to build chroma_db/ before querying."
+            )
+        _vectorstore = store
     return _vectorstore
 
 
-_rag_logger = RagLogger()
+_rag_logger = RagLogger(str(_REPO_ROOT / "rag_log.jsonl"))
 
 
 # ──────────────────────────────────────────────

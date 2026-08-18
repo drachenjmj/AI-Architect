@@ -217,5 +217,5 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 # Local RAG data
-chroma_db/
 rag_log.jsonl
+architect.db
