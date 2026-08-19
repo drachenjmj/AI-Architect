@@ -30,16 +30,23 @@ flowchart TD
     reviewer -->|fail: REFINING| gate2[refine gate]
     gate2 -->|under cap| architect
     gate2 -->|cap reached: DONE| done
+    done --> feedback[human: two boxes at DONE]
+    feedback -->|requirements box: AWAITING_HUMAN + CLARIFICATION| clarifier
+    feedback -->|design box: REFINING| gate2
+    done <-.->|ask about the design: outside the graph| advisor
+    done --> signoff[human: sign-off]
+    signoff -->|ACCEPTED| accepted([accepted])
+    accepted <-.->|still readable| advisor
 
     classDef code fill:#EAF3DE,stroke:#639922,color:#173404;
     classDef hybrid fill:#FAEEDA,stroke:#BA7517,color:#412402;
     classDef llm fill:#FCEBEB,stroke:#E24B4A,color:#501313;
     classDef human fill:#F1EFE8,stroke:#888780,color:#2C2C2A;
 
-    class start,done,gate2 code;
+    class start,done,accepted,gate2 code;
     class clarifier hybrid;
     class researcher,architect,reviewer,advisor llm;
-    class ask,gate human;
+    class ask,gate,feedback,signoff human;
 ```
 
 The dotted `advisor` edge is dotted because it is the one arrow that is NOT a
@@ -64,13 +71,17 @@ input, not automated.
 | 4a | Context lock (`require_context_approval`) | CODE | Sets `stage=AWAITING_HUMAN`, `pending_decision=CONTEXT_LOCK` | Off by default so headless callers never hang; resolved by the caller before re-entry | a human who approves without reading |
 | 4b | `clarifier.apply_user_edits` | CODE | Applies the human's veto pass to the record | Pure function; validates field name and shape, raises rather than dropping an edit | — (pure) |
 | 4c | `clarifier.emptied_critical_fields` | CODE | Decides whether the edit needs re-judging | Compares before/after against `CRITICAL_RECORD_FIELDS`; an edit that fills a value provably makes no LLM call | a critical field missing from the list would skip a needed re-judge |
-| 4d | `clarifier.ask_advisor` | LLM | Answers a read-only question about the paused record | Never enters the graph; writes no artifact, stage or `pending_decision`; append-only on `history` so its tokens stay reconcilable | ungrounded answer |
-| 5 | Human input | HUMAN | Answers on resume, or approves / edits / questions the locked record | — (external); `MAX_USER_ROUNDS` caps total re-entries | missing / ambiguous answer; an unread approval |
+| 4d | `clarifier.ask_advisor` | LLM | Answers a read-only question about whichever `subject` was passed — the paused record, or the finished design at DONE/ACCEPTED | Never enters the graph; writes no artifact, stage or `pending_decision`; append-only on `history` so its tokens stay reconcilable | ungrounded answer |
+| 5 | Human input | HUMAN | Answers on resume, approves / edits / questions the locked record, or sends feedback on the finished run | — (external); `MAX_USER_ROUNDS` caps the re-entries that ask for work to be REDONE (a gap-opening edit, and feedback at DONE) | missing / ambiguous answer; an unread approval |
 | 6 | Researcher `_act` | LLM | Reasons over RAG-retrieved KB chunks | RAG grounding (retrieval is code), citations | retrieval miss, ungrounded claim |
 | 7 | Architect `architect_node` | LLM | Generates the blueprint / ADRs / component descriptions | Output-schema validation, retry cap; on a REFINE pass phase 1 is skipped in code so feature IDs cannot drift between iterations (see below) | schema-invalid output; ADR/component IDs still drift across refine passes |
 | 8 | Reviewer PASS/FAIL judgment | LLM | Scores the artifact against the eval rubric | Eval rubric | wrong verdict |
 | 9 | Reviewer → REFINING routing | CODE | Sets `stage`; `_route` reads it (W3) | Same static table + retry cap | — |
 | 9a | `refine_gate.score_round` / best-so-far selection | CODE | Ranks each reviewed design and hands back the best one when a cap trips | Pure total order over `ReviewResult`; strict `>` so ties keep the earlier round; the selected round and the discarded ones are named in the `StepLog` | a wrong ranking ships a worse design — the ordering is a stated judgment, not a measurement |
+| 9b | `user_feedback.submit_feedback` (feedback at DONE) | CODE | Routes on WHICH box the text came from; appends the entry, files a requirements correction under a per-submission key | No classifier — the box is the route; `reopen_for_user_round` charges the round and resets the caps; refuses at DONE only, and records nothing on a refused round | a person typing a design change into the requirements box pays for a full re-run (mitigated by both boxes being visible, and by the warning on the requirements box) |
+| 9c | Architect `<user_directive>` block | HYBRID | The human's words are injected verbatim; the model applies them | Own block, ranked above `<refinement_instruction>`; the preservation rule gains a third exit so a named component may be changed; marked `applied` only after the pass succeeds | the model ignores or over-applies the directive — visible in `revision_note` and in the artifacts |
+| 9d | Architect `directive_objection` | HYBRID | The model reports a directive it could not build as stated; code files it on the matching `UserFeedback` entry | One objection per pass, then the run proceeds — a voice, not a veto; dropped entirely when no directive was in the prompt; NEVER read back into any prompt | the model objects to something it could in fact have built, or stays silent and substitutes something else anyway |
+| 9e | `sign_off.accept_design` (the human takes the design) | CODE | Writes `ACCEPTED`, `accepted_at`, the `Waiver`, and abandons anything still `pending` | Pure policy in code: refuses anywhere but DONE and refuses a second time; never blocks on findings or on unapplied text; `requires_deliberate_confirmation` is the one severity rule, not a property of a widget | a human who signs off without reading the findings the panel put above the button |
 | 10 | `persistence.checkpoint` (state on disk) | CODE | Serialises each emitted state to `.cache/runs/<run_id>/<NNN>_<stage>.json` | Atomic write (temp file + `os.replace`); `checkpoint` swallows every error | lost checkpoint (run continues), corrupt file (skipped by `list_runs`, raises in `load_state`) |
 
 Rows 4a-4d are the context lock, and they are split from row 4 for the same
@@ -263,3 +274,204 @@ on `20260818T083516Z-e92aa7cf` it is exactly what decides the case, since round
 2 has zero high-severity issues with a code sum of 7 while round 3 has one
 high-severity issue with a code sum of 8. If the judgment is wrong, it is wrong
 in five lines of `score_round` and can be argued with there.
+
+## User feedback at DONE — four ways it could have been a no-op
+
+The functional requirement is "enable iterative refinement with user feedback".
+The hard part is not collecting the text. It is that every plausible way to wire
+this fails SILENTLY — the box accepts a paragraph, the run restarts, and nothing
+the person asked for happens, with no error anywhere. Four of those were real,
+and each is now a test in `test_user_feedback.py`.
+
+**1. The stale cost caps.** The obvious implementation is "set
+`stage = REFINING` and re-run". A run that ended on the cap re-enters at the
+refine gate with `stopped_on_cap = True` and `refine_iterations` at the ceiling;
+the gate re-trips the same cap on its first visit and routes straight back to
+DONE. `refine_gate.reopen_for_user_round` is the fix — ONE function, both paths,
+charging the round through `begin_user_round` (still the only writer of
+`user_rounds`) and clearing the four fields that would otherwise eat it.
+
+**2. The incumbent design.** Clearing `best_design` is necessary and not
+sufficient. The first gate visit after design feedback does not follow a
+reviewer verdict — the artifacts on the state are the ones the human objected to
+— so the gate would immediately re-nominate that design as the incumbent and
+could hand it back two rounds later, reverting the directive. The guard is
+semantic rather than positional: while a design directive is `pending`, the
+design on the state is one nobody has redirected yet, so it is not a candidate.
+
+**3. The preservation rule.** The rule added for component reuse says to keep
+component names, ADR IDs and every decision the findings do not mention exactly
+as they are. A user directive is not a finding, so as written the architect
+would have faithfully preserved the very thing the user asked to change. The
+rule now has three exits — findings, structural necessity, and user direction —
+and the third one says so explicitly: anything named in `<user_directive>` is a
+licence to change.
+
+**4. A fixed key for the correction.** A requirements correction is filed into
+`clarification_answers`, which is a dict. Under a fixed key the second
+correction overwrites the first: the clarifier re-judges against text the person
+has moved on from, and what they just typed is gone. The key carries the round
+number, and the round number is charged once per submission.
+
+### What stayed out of the router
+
+Nothing was added to `STAGE_TO_NODE`, no new `Stage`, and no new
+`PendingDecision`. A requirements correction re-opens the run as an ordinary
+CLARIFICATION and the clarifier re-judges exactly as it does after a gate edit;
+a design directive is not a pause at all — `REFINING` re-enters the loop that
+already exists. The route is decided by WHICH BOX the text was typed into, which
+is known before any model runs, so a human-in-the-loop feature adds exactly zero
+stochastic routing. That is also the argument for showing both boxes at once
+rather than as tabs: hiding one is what makes people put everything in the
+first, and a mis-filed correction is the one input this design cannot recover
+from.
+
+### The record is frozen per version, not edited
+
+A correction does not rewrite the Context Record. The clarifier — still its only
+writer — re-freezes it as `version + 1` with `revision_reason` set from the
+human's own words, and the outgoing record is pushed onto `context_history`.
+That is what lets the trail say "the v1 design was correct given what we knew at
+v1" instead of quietly rewriting the ground truth so every past decision looks
+wrong. `_may_ask` is already false once a record exists, so the re-judge cannot
+open a fresh round of questions: any gap the correction opens becomes a labelled
+assumption on a record the human is shown at the approval gate before the
+expensive work runs.
+
+The requirements path also drops `features` and `review`, and only that path
+does. Both are derived from the record that was just superseded — the features
+literally, the review as a verdict on a design built for it — so carrying them
+forward would have the architect reuse a v1 feature set under a v1 reviewer
+instruction naming v1 feature IDs while designing against a v2 record. A design
+directive supersedes nothing, so there the findings still apply and travel into
+the same prompt as the directive, ranked below it.
+
+### Measured, on two live runs
+
+Greenfield, same prompt both times.
+
+| | to DONE | after feedback |
+|---|---|---|
+| **design directive** ("replace the broker with SQS+SNS, add ElastiCache") | `user_rounds` 0, `refine_iterations` 1, record v1, 21,608 tokens | `user_rounds` 1, `refine_iterations` 1, record v1, 32,094 tokens |
+| **requirements correction** ("Azure not AWS; 500k peak, not 50k") | `user_rounds` 0, `refine_iterations` 0, record v1, 11,907 tokens | `user_rounds` 1, `refine_iterations` 1, **record v2**, 33,092 tokens |
+
+The design directive cost ~10.5k tokens and produced two new components
+(`CacheStore`, `NotificationTopic`) with `revision_note` reading "Replaced
+self-managed message broker logic with AWS SQS/SNS and added Amazon ElastiCache
+for product catalogue read performance, per user directive." The four existing
+components and both ADR IDs came through unchanged — the preservation rule and
+its new third exit doing exactly the two different jobs they are meant to.
+
+The requirements correction cost ~21k tokens, which is the honest price of the
+expensive path: the record re-froze as v2 (`cloud_provider` AWS → Microsoft
+Azure, the scale NFR 50k → 500k), v1 went to `context_history`, the approval
+gate re-appeared with no new questions and four labelled assumptions — one of
+them explicitly attributing the change to the human — and after approval the
+researcher ran a SECOND time against a query that had itself changed. The
+architect then re-derived the feature set and the technical view mentions Azure
+and no longer mentions AWS.
+
+One honest observation from run A, unrelated to routing: the revision pass came
+back with `technology_choices` empty on every component, where the first pass had
+filled them. Nothing in the rubric scores that field, so the review still passed.
+It is the ordinary failure mode of asking a model to rewrite a large structured
+artifact, and it argues for a future deterministic check on fields that were
+populated before a revision and empty after — not for a change to this feature.
+
+## Sign-off, waivers and objections (governance at DONE)
+
+### DONE is not ACCEPTED
+
+`DONE` means the pipeline stopped. `ACCEPTED` means a person took the design.
+Those are two different facts, and until A2 the trail recorded only the first —
+so an unread run and a signed-off one were the same run on disk.
+
+`ACCEPTED` is the second terminal stage. It is absent from `STAGE_TO_NODE` for
+exactly the reason `DONE` is, so it routes to `END` with no new row and no new
+branch, and it is **unreachable from inside the graph**: no node writes it. It
+is written by one explicit human action, outside the graph, in
+`pipeline/sign_off.py`. A1 added a human touchpoint and cost the router nothing;
+A2 adds a terminal stage and costs it nothing either.
+
+A design the reviewer did NOT pass may be accepted, and that is the normal case
+rather than an escape hatch. Most runs end `stopped_on_cap` with open findings,
+so a sign-off gated on a passing review would leave exactly the runs that need
+closing out unable to be closed.
+
+### The waiver is what makes a best-effort acceptance legible
+
+Without it, an accepted best-effort design and an accepted clean one are
+indistinguishable the moment the run is closed. So a sign-off against open
+findings records a `Waiver` naming every one of them, their severities, the
+review's verdict at the time, and an optional note. One waiver per sign-off, not
+one per finding: a person signs off once, on the whole picture.
+
+A clean sign-off records **no waiver at all**, and its absence is the
+information. A waiver with an empty finding list would destroy that distinction
+in exchange for schema tidiness.
+
+The findings go above the button, highest severity first, so what is being
+accepted is on screen before it is accepted. A HIGH-severity finding needs a
+second, deliberate confirmation; a medium or low one does not — a confirmation
+that everything triggers is a confirmation nobody reads.
+
+### Unapplied feedback is surfaced, never blocking
+
+A1 leaves a `UserFeedback` entry `pending` until its agent consumes it. Someone
+who types a directive and then signs off without re-running leaves one behind,
+and a `pending` entry on a closed run is indistinguishable from one that is
+queued and about to run — the trail would claim work was outstanding on a run
+nobody will touch again.
+
+Blocking the sign-off would fix the record and cost a full refine round (one
+`user_round`, ~75k tokens) purely to close out a run the person has already
+decided to take. So it is shown on the same screen as the open findings — it is
+the same category of thing, a known item being accepted despite — and confirming
+sets it `abandoned`. Seen and dropped, rather than silently lost.
+
+### Objections: the architect gets a voice, not a veto
+
+A user directive still wins. What changed is the behaviour when one cannot be
+built as stated: previously the only available moves were to comply impossibly
+or to substitute something else silently, and a model does the second. So the
+architect now builds the closest feasible variant AND fills
+`ArchitectureDesign.directive_objection` with what was asked, why it does not
+work, and what it built instead. Code files that on the matching `UserFeedback`
+entry as `objected`, and the finished-run screen shows it against the artifacts.
+
+The transport is named explicitly — the phase-2 response schema, stored on the
+feedback entry — because the only other object with a spare free-text slot is
+`Blueprint`, and that is precisely where it must not go.
+
+### Prompt hygiene: none of this reaches a model
+
+The rule, and it is enforced by `test_sign_off.py` rather than trusted:
+
+* the **reviewer** must not learn that a change was user-directed, that a
+  finding was waived, or that a design was accepted. It grades artifacts, not
+  intentions — "the user asked for it" would excuse any deviation, and it is the
+  same self-advocacy leak `_format_artifacts` already keeps `revision_note` out
+  for. The fairness concern is answered by the waiver, not by softening the
+  judge;
+* the **architect** must not see waivers. A waived finding is not a solved one;
+* the **architect must not read back its own objections.** Storing the objection
+  on `UserFeedback` puts it one field away from the block the architect already
+  reads, so this is a live leak rather than a hypothetical one — the
+  `<user_directive>` builder serialises `entry.text` and nothing else, and the
+  test covers the case where an entry carrying an objection is still `pending`;
+* the **advisor** is an agent too, and gets none of it either.
+
+### The advisory turn, at the other end of the run
+
+`ask_advisor` gained a `subject` and nothing else: same mechanism, outside the
+graph, no stage change, no `pending_decision`, no round consumed, appended to
+`history` with its tokens so `usage_by_agent()` still reconciles. `subject`
+selects which context is formatted and how the model is framed, and only
+same-subject prior turns are threaded in — otherwise a question about an ADR
+arrives with the lock-gate Q&A about scale and budget stapled above it.
+
+It sits above the design box on purpose. Most first reactions to a finished
+design are questions, and with only a directive box on screen the question gets
+typed as an instruction and costs a full refine round to answer something one
+flash-lite call would have. It works at `ACCEPTED` as well as `DONE`: reading an
+accepted design is not changing one.

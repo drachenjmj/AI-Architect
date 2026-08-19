@@ -66,8 +66,13 @@ MAX_STEPS = derive_max_steps()
 
 # ── DETERMINISM MAP ───────────────────────────────────────────────────────
 # current stage -> which node runs next. Pure rules; the single source of
-# truth for routing. A stage absent here (DONE, FAILED, or anything unwired)
-# routes to END, so the graph always terminates.
+# truth for routing. A stage absent here (DONE, ACCEPTED, FAILED, or anything
+# unwired) routes to END, so the graph always terminates.
+#
+# ACCEPTED is absent for the same reason DONE is: it is terminal. It is also
+# unreachable from inside the graph — no node writes it. It is written by an
+# explicit human action at DONE, outside the graph (pipeline/sign_off.py), which
+# is why adding a second terminal stage cost this file no row and no branch.
 STAGE_TO_NODE: dict[Stage, str] = {
     Stage.CREATED:        "repo_ingestor",  # read the repo FIRST (or skip: greenfield)
     Stage.INGESTING:      "clarifier",      # so the clarifier can ground its questions in it
