@@ -85,6 +85,22 @@ If your node raises after a call was already billed, attach what you have with
 `attach_usage(exc, usage)` before re-raising; the `@node` wrapper reports it on
 the FAILED step so the tokens are not lost.
 
+### If you call the LLM from OUTSIDE the graph
+
+There is one such call today: `clarifier.ask_advisor`, the read-only question a
+human may ask while the run is paused at the context lock. It is not a node, so
+nothing returns its usage and no reducer accumulates it — which means the two
+steps above are the caller's job instead:
+
+1. Append a `StepLog` to `state.history` under **its own agent name**, carrying
+   the usage. That is what keeps `usage_by_agent()` complete.
+2. Add the same numbers to `state.input_tokens` / `state.output_tokens` by hand.
+
+Both, not one. `usage_by_agent()` promises to sum to the run totals, and a call
+that lands in only one of the two ledgers quietly breaks that promise — after
+which the per-agent cost table is wrong and nothing says so. If you add another
+out-of-graph call, copy that pattern; do not invent a second one.
+
 ## Cost — list-price equivalent, not spend
 
 `estimate_cost_usd(model_id, input_tokens, output_tokens)` prices a call from

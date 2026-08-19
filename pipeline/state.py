@@ -305,6 +305,17 @@ class Blueprint(BaseModel):
         default="1.0",
         description="Version of the blueprint.",
     )
+    # Written by the architect on a REFINE pass only, and deliberately kept OUT
+    # of the reviewer's view - see `_format_artifacts` in agents/reviewer.py.
+    # A design that narrates its own corrections to the judge grading it is
+    # asking to be believed rather than checked.
+    revision_note: str = Field(
+        default="",
+        description=(
+            "On a revision, a brief statement of what changed and why. "
+            "Empty on the initial design."
+        ),
+    )
 
 
 class ADR(BaseModel):
@@ -463,6 +474,14 @@ class ReviewIssue(BaseModel):
     requires_refinement: bool = False
 
 
+# Why a criterion can be marked NOT APPLICABLE, keyed by the names that appear in
+# `ReviewResult.not_applicable`. Rendered by both the CLI report and the UI, which
+# is why it lives here beside the model rather than inside the reviewer.
+NOT_APPLICABLE_REASONS: dict[str, str] = {
+    "best_practice_grounding": "no knowledge retrieved",
+}
+
+
 class ReviewResult(BaseModel):
     """Code-assembled Reviewer verdict and audit evidence."""
 
@@ -472,17 +491,64 @@ class ReviewResult(BaseModel):
     issues: list[ReviewIssue] = Field(default_factory=list)
     requires_refinement: bool = True
     refinement_instruction: str = ""
+    # Criteria that were ASKED and recorded but carry no verdict weight, because
+    # there was no evidence for them to be a judgment ABOUT. Deliberately a list
+    # of names rather than a tri-state on RubricScores: the booleans stay
+    # booleans, so persistence, the UI and every existing test keep working, and
+    # this field is what stops a "true" here from reading as a pass. Absent from
+    # older checkpoints, hence the default.
+    not_applicable: list[str] = Field(default_factory=list)
+
+
+class DesignSnapshot(BaseModel):
+    """One refine round's artifacts and the review that judged them, kept together.
+
+    The unit of BEST-SO-FAR SELECTION (see `refine_gate.score_round`). It exists
+    as one object rather than five loose fields for a single reason: a design and
+    the review of that design must travel together. Handing back round 2's
+    blueprint next to round 3's review would be worse than shipping round 3
+    outright — the report would confidently describe artifacts that are not in
+    the run.
+
+    `round` is 1-based and counts REVIEWED designs, not refine iterations: round
+    1 is the initial design, round 2 the first redesign, and so on. It is
+    `refine_iterations + 1` at the moment the gate sees it.
+    """
+
+    round: int = Field(1, description="1-based index of the reviewed design (initial design = 1).")
+    features: list[Feature] = Field(default_factory=list)
+    blueprint: Optional[Blueprint] = None
+    adrs: list[ADR] = Field(default_factory=list)
+    components: list[ComponentDescription] = Field(default_factory=list)
+    review: Optional[ReviewResult] = Field(
+        None, description="The verdict on THESE artifacts. Never a different round's."
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # 3. CONTROL / META  (owned by Kati)
 # ══════════════════════════════════════════════════════════════════════════
 class Stage(str, Enum):
-    """Where the run currently is. The orchestrator routes on this value."""
+    """Where the run currently is. The orchestrator routes on this value.
+
+    ONE pause stage, not many. `AWAITING_HUMAN` means "the graph has stopped and
+    a human owns the next move"; WHICH move is carried by
+    `ArchitectState.pending_decision` (see `PendingDecision`). The alternative —
+    an `AWAITING_*` stage per kind of interaction — would push every new
+    human-in-the-loop touchpoint into the router's static table, and the stage
+    enum would slowly become the routing problem it exists to keep simple.
+
+    NAMING NOTE. This member was `AWAITING_INPUT` until the context gate landed;
+    it is now `AWAITING_HUMAN`, because a lock approval is not "input". The
+    STRING VALUE is deliberately still `"awaiting_input"`: checkpoints already
+    written to `.cache/runs/` and rows already in `architect.db` carry that
+    literal, and they must keep deserialising. Renaming the member is a
+    source-level change; renaming the value would be a data migration.
+    """
 
     CREATED = "created"
     CLARIFYING = "clarifying"
-    AWAITING_INPUT = "awaiting_input"  # clarifier needs the human; graph pauses here
+    AWAITING_HUMAN = "awaiting_input"  # graph paused; see `pending_decision`
     INGESTING = "ingesting"            # repo_ingestor ran (or skipped: greenfield)
     RESEARCHING = "researching"
     DESIGNING = "designing"
@@ -490,6 +556,30 @@ class Stage(str, Enum):
     REFINING = "refining"
     DONE = "done"
     FAILED = "failed"
+
+
+class PendingDecision(str, Enum):
+    """WHICH decision a human owes us while `stage is Stage.AWAITING_HUMAN`.
+
+    The discriminator that keeps `Stage` small (see the note on
+    `Stage.AWAITING_HUMAN`). `None` means nothing is pending — the run is either
+    moving or terminal.
+
+      * CLARIFICATION — the clarifier asked questions it cannot safely assume
+        past. Resolved by writing answers into `clarification_answers` and
+        re-entering the graph, which sends the state back to the clarifier.
+      * CONTEXT_LOCK  — a ContextRecord has been frozen and is waiting to be
+        approved, edited, or questioned BEFORE any expensive work is spent on
+        it. Resolved ENTIRELY by the caller (see `pipeline.agents.clarifier`):
+        the graph is never entered with this pending, and `_entry_route` says so
+        out loud rather than routing on a half-resolved pause.
+
+    Feature A (user feedback at DONE) adds its own member here, not its own
+    stage.
+    """
+
+    CLARIFICATION = "clarification"
+    CONTEXT_LOCK = "context_lock"
 
 
 def _new_run_id() -> str:
@@ -542,6 +632,25 @@ class AgentUsage(BaseModel):
         return self.input_tokens + self.output_tokens
 
 
+class AdvisoryTurn(BaseModel):
+    """One read-only question a human asked while the run was paused, and its answer.
+
+    The advisory side-channel (see `clarifier.ask_advisor`) runs OUTSIDE the
+    graph: it changes no artifact, no stage and no `pending_decision`. It is
+    still recorded here rather than in the UI's session, because the whole front
+    end is DERIVED from this object — a transcript kept in `st.session_state`
+    would vanish on the next widget interaction and would not survive a
+    checkpoint reload, which is exactly the property the rest of the UI relies on.
+
+    The token COST of the same turn is recorded separately, as an ordinary
+    `StepLog` in `history`, so per-agent accounting stays a plain groupby.
+    """
+
+    question: str
+    answer: str = ""
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
 # ── Clarifier output (Kati owns) ─────────────────────────────────────────
 # The lean, machine-readable object the Clarifier LLM produces and the gate
 # reads. It is NOT the final ContextRecord (that is Maheen's frozen schema,
@@ -592,6 +701,53 @@ class ClarificationResult(BaseModel):
     missing_critical: list[str] = Field(default_factory=list, description="Architecture-critical gaps. Non-empty ⇒ pause and ask.")
 
 
+# ── Clarifier INPUT from the human (Kati owns) ───────────────────────────
+# The other direction of the same contract: `ClarificationResult` is what the
+# LLM says about the record, `ContextEdits` is what the HUMAN says about it at
+# the context-lock gate. It never travels on the state and never reaches a
+# model — it is consumed by `clarifier.apply_user_edits`, which is pure code —
+# so unlike `CapturedContext` it is free to use a dict and a union type.
+class ContextEdits(BaseModel):
+    """One human's veto pass over a locked ContextRecord.
+
+    Every field is optional; an empty instance is a no-op, which is what makes
+    "Accept" and "Edit" the same code path with different content.
+
+    `fields` is keyed by ContextRecord attribute name. A `str` field takes a
+    `str`, a `list[str]` field takes a `list[str]` — `apply_user_edits`
+    validates both the NAME and the TYPE and raises on either being wrong,
+    because a silently-dropped edit is a veto the human thinks they cast.
+    Turning typed text into list items is the CALLER's convention, deliberately
+    not baked in here: ui.py has a textarea and splits on newlines, run.py has
+    one line to work with and splits on commas. The schema takes real lists and
+    stays out of it.
+    """
+
+    fields: dict[str, str | list[str]] = Field(
+        default_factory=dict,
+        description="ContextRecord field name -> replacement value.",
+    )
+    struck_assumptions: list[str] = Field(
+        default_factory=list,
+        description="Assumptions the human rejects, verbatim. Removed, and remembered so a later re-judge cannot re-propose them.",
+    )
+    answered_questions: dict[str, str] = Field(
+        default_factory=dict,
+        description="Open question -> the human's answer. The question is resolved; the answer joins the run's Q&A.",
+    )
+    recommend: list[str] = Field(
+        default_factory=list,
+        description="ContextRecord field names the human wants the clarifier to propose a value for ('you recommend').",
+    )
+
+    def is_empty(self) -> bool:
+        """True when this edit set would change nothing — i.e. a plain Accept."""
+        return not (
+            self.fields or self.struck_assumptions
+            or self.answered_questions or self.recommend
+        )
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # THE STATE OBJECT
 # ══════════════════════════════════════════════════════════════════════════
@@ -612,6 +768,16 @@ class ArchitectState(BaseModel):
     # --- 3. Working fields (intermediate results) -------------------------
     clarifying_questions: list[str] = Field(default_factory=list)
     clarification_answers: dict[str, str] = Field(default_factory=dict)
+    # Assumptions a human STRUCK at the context-lock gate. Kept because a strike
+    # has to outlive the record it was cast against: an edit that empties a
+    # critical field re-runs the clarifier, which would otherwise cheerfully
+    # re-propose the very assumption that was just vetoed. `_freeze_context_record`
+    # filters against this, so the veto is enforced by code, not by the prompt.
+    vetoed_assumptions: list[str] = Field(default_factory=list)
+    # Read-only Q&A the human asked while paused (see `AdvisoryTurn`). Written
+    # only by `clarifier.ask_advisor`, outside the graph. Not a reducer: no node
+    # returns it, so LangGraph carries the input value through untouched.
+    advisory_turns: list[AdvisoryTurn] = Field(default_factory=list)
     retrieved_knowledge: list[KBChunk] = Field(default_factory=list)
     features: list[Feature] = Field(default_factory=list)
     # Drill-down cache (Malte): the Architect appends one DeepDive whenever it
@@ -626,17 +792,86 @@ class ArchitectState(BaseModel):
     # additive — nothing upstream of persistence reads it.
     run_id: str = Field(default_factory=_new_run_id)
     stage: Stage = Stage.CREATED
+    # WHICH decision the human owes us while `stage is AWAITING_HUMAN`; None the
+    # rest of the time. The discriminator that keeps one pause stage rather than
+    # one stage per interaction — see `PendingDecision`.
+    pending_decision: Optional[PendingDecision] = None
+    # ONE GLOBAL counter of POST-LOCK user-initiated refinement, across every
+    # stage. The cap itself (`MAX_USER_ROUNDS`) lives in refine_gate.py, which
+    # owns budget policy; the rule for what counts is:
+    #
+    #   COUNTS    — a graph re-entry the human caused by CHANGING something
+    #               after the Context Record was first locked: an edit at the
+    #               approval gate that reopened a gap, and (feature A) feedback
+    #               at DONE. These ask the pipeline to REDO work.
+    #   DOES NOT  — answering clarifying questions, approving the lock, and
+    #               advisory turns.
+    #
+    # It was originally "any user-initiated re-entry, any stage", and that was
+    # wrong in a way only a real run showed: run 20260818T074835Z-1925fbd7
+    # reached the architect with user_rounds ALREADY 6 of 6, because four rounds
+    # of clarifying questions plus the approval had consumed the entire budget
+    # before any design existed. But answering the clarifier is the pipeline
+    # working exactly as designed, and approving releases work rather than
+    # redoing it — neither is the runaway this cap exists to stop. Charging for
+    # them meant the budget was spent before the thing it was guarding began.
+    # (`run.MAX_CLARIFICATION_ROUNDS` is what bounds a clarifier that will not
+    # converge; that is a different failure and it already has its own cap.)
+    #
+    # Global rather than per-touchpoint because it is a COST cap and cost is
+    # global: a per-stage counter would let the same person spend three budgets
+    # by spreading the same number of round trips across three screens.
+    user_rounds: int = 0
+    # Does this run pause at the context lock for human approval? OFF by default
+    # ON PURPOSE: `pipeline/run.py`, the eval harness and the whole test suite
+    # drive the pipeline with no human attached, and a mandatory pause would turn
+    # every one of them into a hang. The UI — the only caller with a human in
+    # front of it — sets this True; the CLI exposes it as `--approve-context`.
+    # Default-off means "auto-approve", which is exactly today's behaviour.
+    require_context_approval: bool = False
     # Annotated with operator.add so LangGraph MERGES (appends) each node's
     # returned step onto the running trace instead of overwriting it. This is
     # the "reducer" — nodes return {"history": [one_step]} and it accumulates.
     history: Annotated[list[StepLog], operator.add] = Field(default_factory=list)
     retry_counts: dict[str, int] = Field(default_factory=dict)
     refine_iterations: int = 0
+    # How many times the clarifier has PAUSED TO ASK, before any context lock.
+    # Bounded by `clarifier.MAX_ASK_ROUNDS`. Distinct from `user_rounds`, and the
+    # boundary is the lock: this counts the pipeline gathering the ground truth,
+    # `user_rounds` counts a human sending finished work back to be redone. They
+    # were one counter once, and four clarifying rounds spent the whole redo
+    # budget before the architect had run - see refine_gate.MAX_USER_ROUNDS.
+    #
+    # A PLAIN int, not an operator.add reducer: the clarifier returns the
+    # absolute value it wants (`state.ask_rounds + 1`), so LangGraph overwrites
+    # rather than accumulates. A reducer here would double-count every replay of
+    # a resumed run.
+    ask_rounds: int = 0
     # Set True by the refine gate when the reviewer→refine loop stops on a cap
     # (max iterations or token budget) rather than on a clean reviewer pass.
     # An honest "finished best-effort, not perfect" signal for the UI/report;
     # the run still ends as DONE (not FAILED). Single writer: the refine gate.
     stopped_on_cap: bool = False
+    # The best round SEEN SO FAR, carried forward by the refine gate so that a
+    # capped run can hand back its best design instead of its last one. Single
+    # writer: the refine gate (see `refine_gate.score_round`).
+    #
+    # Exactly ONE snapshot — the incumbent — never a list of every round. The
+    # cost is what makes that the right call: a snapshot is a full artifact set,
+    # and `pipeline/persistence.py` writes one file PER TRANSITION. Measured on
+    # a real brownfield run (20260818T095745Z-79dceb73), the incumbent adds
+    # ~12.8 kB to a ~59 kB checkpoint — 22% — on every checkpoint from the first
+    # gate visit onward. Keeping one incumbent pays that once; keeping every
+    # round would multiply it by the iteration cap, to store information the
+    # trace in `history` already records in a few hundred bytes. That 22% is the
+    # deliberate price of the feature, not an oversight.
+    best_design: Optional[DesignSnapshot] = None
+    # Which round's design the run actually SHIPPED. Written by the refine gate
+    # on its stop branch, so it is the answer to "is what I am looking at the
+    # last thing the architect produced, or an earlier one?". 0 means the
+    # question never arose: the run passed at the reviewer, failed, or is still
+    # going, and never reached the gate's stop branch.
+    selected_round: int = 0
     # Reducers (add), same pattern as `history` and `errors`. Each node returns
     # ONLY the tokens ITS OWN calls consumed and LangGraph adds them onto the
     # running total. They must be reducers: `llm_call` is pure with respect to
@@ -689,15 +924,24 @@ class ArchitectState(BaseModel):
         """
         return sum(step.cost_usd for step in self.history)
 
-def new_run(raw_prompt: str, repo_url: str = "") -> ArchitectState:
+def new_run(
+    raw_prompt: str,
+    repo_url: str = "",
+    require_context_approval: bool = False,
+) -> ArchitectState:
     """Factory: build a fresh state at the start of a run.
 
     `raw_prompt` (the verbatim user message = ground truth) and the optional
     `repo_url` (the existing codebase, empty for greenfield) are the only
     inputs. Everything else is derived downstream by the agents.
+
+    `require_context_approval` defaults to False so that every EXISTING caller —
+    the CLI, the eval harness, the tests — keeps running unattended exactly as
+    before. Pass True only when there is a human to pause for.
     """
     return ArchitectState(
-        initial_request=InitialRequest(raw_prompt=raw_prompt, repo_url=repo_url)
+        initial_request=InitialRequest(raw_prompt=raw_prompt, repo_url=repo_url),
+        require_context_approval=require_context_approval,
     )
 
 # ── quick self-test: `python -m pipeline.state` ──────────────────────────

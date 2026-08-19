@@ -20,6 +20,8 @@ from pipeline.state import (
     Feature,
     ClarificationResult,
     ClarifyingQuestion,
+    ContextRecord,
+    PendingDecision,
     Stage,
     new_run,
 )
@@ -233,12 +235,27 @@ def _architect_response(
 
 
 # ── tests ────────────────────────────────────────────────────────────────
+def _locked_state(**kwargs):
+    """A state whose clarifier has already locked a record — i.e. a RE-JUDGE.
+
+    `context_record is not None` is what puts the clarifier into assume-only
+    mode, so this is the shortest honest way to reach that mode in a test.
+    """
+    state = new_run(PROMPT, **kwargs)
+    state.context_record = ContextRecord(
+        business_goal="Sell sneakers online",
+        cloud_provider="AWS",
+        assumptions=["Assume English-only UI (low-stakes)."],
+    )
+    return state
+
+
 def test_pauses_when_critical_missing():
     clar.llm_call = _missing
 
     out = clar.clarifier_node(new_run(PROMPT))
 
-    assert out["stage"] is Stage.AWAITING_INPUT
+    assert out["stage"] is Stage.AWAITING_HUMAN
     assert out["clarifying_questions"] == [
         "Expected peak users?",
         "GDPR in scope?",
@@ -300,7 +317,7 @@ def test_full_pause_then_resume():
     state = new_run(PROMPT)
     state = orchestrator.run_pipeline(state)
 
-    assert state.stage is Stage.AWAITING_INPUT
+    assert state.stage is Stage.AWAITING_HUMAN
     assert state.clarifying_questions
     assert state.context_record is None
 
@@ -330,6 +347,113 @@ def test_full_pause_then_resume():
     assert "reviewer" in agents_run
 
 
+# ── the context lock: pause at the lock, or do not ───────────────────────
+def test_lock_pauses_for_approval_when_required():
+    """Approval on -> the lock is a PAUSE, not an advance to research."""
+    clar.llm_call = _complete
+
+    out = clar.clarifier_node(new_run(PROMPT, require_context_approval=True))
+
+    assert out["stage"] is Stage.AWAITING_HUMAN
+    assert out["pending_decision"] is PendingDecision.CONTEXT_LOCK
+    # The record is still produced — the human is approving something real,
+    # not waiting for the clarifier to run again.
+    assert out["context_record"] is not None
+    assert out["context_record"].cloud_provider == "AWS"
+
+
+def test_lock_advances_when_approval_not_required():
+    """Approval off (the default) -> exactly the old behaviour, no pause.
+
+    This is the test that would fail if the gate were made mandatory, which is
+    what every headless caller depends on.
+    """
+    clar.llm_call = _complete
+
+    out = clar.clarifier_node(new_run(PROMPT))
+
+    assert out["stage"] is Stage.CLARIFYING
+    assert out["pending_decision"] is None
+    assert out["context_record"] is not None
+
+
+def test_pause_for_questions_carries_the_clarification_discriminator():
+    """The two pauses share a stage, so the discriminator has to tell them apart."""
+    clar.llm_call = _missing
+
+    out = clar.clarifier_node(new_run(PROMPT, require_context_approval=True))
+
+    assert out["stage"] is Stage.AWAITING_HUMAN
+    assert out["pending_decision"] is PendingDecision.CLARIFICATION
+
+
+# ── ask once, then assume ────────────────────────────────────────────────
+def test_rejudge_never_pauses_with_questions():
+    """A gap on a RE-JUDGE becomes a labelled assumption + an open question.
+
+    The model here reports two critical gaps AND two matching questions — the
+    well-behaved case. It still may not ask, because a human is already looking
+    at this record. "Never assume silently" is satisfied by showing them the
+    assumption, not by asking them again.
+    """
+    clar.llm_call = _missing
+
+    out = clar.clarifier_node(_locked_state(require_context_approval=True))
+
+    assert out["stage"] is Stage.AWAITING_HUMAN
+    assert out["pending_decision"] is PendingDecision.CONTEXT_LOCK
+    assert out["clarifying_questions"] == []
+
+    record = out["context_record"]
+    for gap in ("expected scale", "compliance"):
+        assert any(gap in q for q in record.open_questions), gap
+        assert any(gap in a for a in record.assumptions), gap
+    # Every assumption on a re-judge stands in for a question that was not
+    # asked, so every one of them is attributed.
+    assert all(a.startswith(clar.CLARIFIER_LABEL) for a in record.assumptions)
+
+
+def test_missing_critical_without_questions_does_not_park_the_run():
+    """The known clarifier bug, contained: gaps but no questions -> lock, not pause.
+
+    Pausing here used to leave the run somewhere no answer could reach it (see
+    run.py's docstring). There is nothing to ask, so the gaps are absorbed the
+    same way a re-judge absorbs them and the run keeps moving.
+    """
+
+    def _gaps_but_no_questions(state, prompt, **kwargs):
+        return ClarificationResult(
+            captured=CapturedContext(business_goal="Sell sneakers online"),
+            questions=[],
+            missing_critical=["expected scale"],
+        ), fake_usage()
+
+    clar.llm_call = _gaps_but_no_questions
+
+    out = clar.clarifier_node(new_run(PROMPT))
+
+    assert out["stage"] is Stage.CLARIFYING
+    assert out["context_record"] is not None
+    assert any("expected scale" in a for a in out["context_record"].assumptions)
+
+
+def test_vetoed_assumption_is_not_re_proposed():
+    """A strike outlives the record it was cast against.
+
+    The model re-proposes the struck line verbatim, which is the ordinary case
+    rather than the exotic one. Code filters it; the prompt asking nicely is not
+    a guarantee.
+    """
+    clar.llm_call = _complete
+
+    state = _locked_state()
+    state.vetoed_assumptions = ["Assume English-only UI (low-stakes)."]
+
+    out = clar.clarifier_node(state)
+
+    assert "Assume English-only UI (low-stakes)." not in out["context_record"].assumptions
+
+
 if __name__ == "__main__":
     test_pauses_when_critical_missing()
     print("PASS  pauses when critical information is missing")
@@ -340,4 +464,116 @@ if __name__ == "__main__":
     test_full_pause_then_resume()
     print("PASS  full pause and resume pipeline")
 
+    test_lock_pauses_for_approval_when_required()
+    print("PASS  lock pauses for approval when required")
+
+    test_lock_advances_when_approval_not_required()
+    print("PASS  lock advances when approval is not required")
+
+    test_pause_for_questions_carries_the_clarification_discriminator()
+    print("PASS  question pause carries pending_decision=CLARIFICATION")
+
+    test_rejudge_never_pauses_with_questions()
+    print("PASS  re-judge assumes instead of asking")
+
+    test_missing_critical_without_questions_does_not_park_the_run()
+    print("PASS  gaps without questions do not park the run")
+
+    test_vetoed_assumption_is_not_re_proposed()
+    print("PASS  a struck assumption stays struck")
+
     print("\nALL CLARIFIER TESTS PASSED")
+
+
+# ── the ask-round cap ────────────────────────────────────────────────────
+#
+# Run 20260819T083025Z-00c6557a spent 14 pause rounds before design started,
+# each answer surfacing two fresh "critical" gaps. `MAX_ASK_ROUNDS` stops that.
+# The point of these tests is that stopping is not the same as giving up: the
+# gaps still reach the human, as assumptions they can veto at the context gate.
+
+
+def test_the_cap_converts_remaining_gaps_into_assumptions_not_silence():
+    """THE guarantee. Past the cap a critical gap must still be visible.
+
+    `_missing` reports two critical gaps AND two questions, so under the cap
+    this pauses. At the cap it must lock instead — and both gaps have to survive
+    into the record as labelled assumptions plus open questions. Dropping them
+    would make the cap a data-loss bug rather than a budget.
+    """
+
+    state = new_run(PROMPT)
+    state.ask_rounds = clar.MAX_ASK_ROUNDS
+    clar.llm_call = _missing
+
+    output = clar.clarifier_node(state)
+
+    assert output["stage"] is not Stage.AWAITING_HUMAN
+    assert output["pending_decision"] is None
+    record = output["context_record"]
+    assert record is not None
+
+    for gap in ("expected scale", "compliance"):
+        assert any(gap.lower() in a.lower() for a in record.assumptions), gap
+        assert any(gap.lower() in q.lower() for q in record.open_questions), gap
+    # Labelled, so the human can tell what they are being asked to veto.
+    assert all(
+        a.startswith(clar.CLARIFIER_LABEL)
+        for a in record.assumptions
+        if "filled without confirmation" in a
+    )
+
+
+def test_asking_is_still_allowed_below_the_cap():
+    state = new_run(PROMPT)
+    state.ask_rounds = clar.MAX_ASK_ROUNDS - 1
+    clar.llm_call = _missing
+
+    output = clar.clarifier_node(state)
+
+    assert output["stage"] is Stage.AWAITING_HUMAN
+    assert output["clarifying_questions"]
+    # And the round is counted, absolutely rather than as a delta.
+    assert output["ask_rounds"] == clar.MAX_ASK_ROUNDS
+
+
+def test_each_pause_costs_exactly_one_ask_round():
+    state = new_run(PROMPT)
+    clar.llm_call = _missing
+
+    assert clar.clarifier_node(state)["ask_rounds"] == 1
+    state.ask_rounds = 1
+    assert clar.clarifier_node(state)["ask_rounds"] == 2
+
+
+def test_locking_does_not_spend_an_ask_round():
+    """Only PAUSING costs. A pass that locks is the pipeline working."""
+
+    state = new_run(PROMPT)
+    clar.llm_call = _complete
+
+    assert "ask_rounds" not in clar.clarifier_node(state)
+
+
+def test_one_predicate_governs_both_the_prompt_and_the_routing():
+    """`assume_only` and `_can_ask` must not drift into opposite polarity."""
+
+    state = new_run(PROMPT)
+    assert clar._may_ask(state) is True
+
+    state.ask_rounds = clar.MAX_ASK_ROUNDS
+    assert clar._may_ask(state) is False
+
+    # A locked record closes asking regardless of the budget.
+    spent = new_run(PROMPT)
+    spent.context_record = ContextRecord(business_goal="Sell sneakers online")
+    assert clar._may_ask(spent) is False
+
+
+def test_the_cli_backstop_stays_looser_than_the_ask_cap():
+    """If these invert, the CLI errors out where the clarifier would have
+    assumed and carried on — the capped path would become unreachable."""
+
+    from pipeline.run import MAX_CLARIFICATION_ROUNDS
+
+    assert MAX_CLARIFICATION_ROUNDS > clar.MAX_ASK_ROUNDS

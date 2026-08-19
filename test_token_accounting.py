@@ -185,9 +185,15 @@ def test_per_agent_totals_sum_to_state_totals(monkeypatch):
     assert sum(u.output_tokens for u in per_agent.values()) == state.output_tokens
     assert per_agent["architect"].total_tokens > 0
     assert per_agent["reviewer"].total_tokens > 0
-    # Attribution is per agent, not per call: the Architect makes TWO calls per
-    # visit, so its share must be twice the Reviewer's one-call-per-visit share.
-    assert per_agent["architect"].input_tokens == 2 * per_agent["reviewer"].input_tokens
+    # Attribution is per agent, not per call — but the two no longer sit in a
+    # fixed ratio. The Architect calls TWICE on the initial design and ONCE per
+    # refine pass, because phase 1 is skipped when refining so that feature IDs
+    # survive the loop (see agents/architect.py); the Reviewer calls once per
+    # visit throughout. Deriving both from the live call log rather than from a
+    # ratio is what keeps this test honest the next time either one changes.
+    assert calls.count("architect") == 2 + MAX_REFINE_ITERATIONS
+    assert per_agent["architect"].input_tokens == calls.count("architect") * IN
+    assert per_agent["reviewer"].input_tokens == calls.count("reviewer") * IN
     # An agent that calls no LLM stays honestly at zero.
     assert per_agent["refine_gate"].total_tokens == 0
     assert sum(u.cost_usd for u in per_agent.values()) == pytest.approx(
@@ -247,7 +253,7 @@ def test_resume_accumulates_without_double_counting(monkeypatch):
 
     state = new_run(PROMPT)
     state = orchestrator.run_pipeline(state)      # pass 1 — pauses for answers
-    assert state.stage is Stage.AWAITING_INPUT
+    assert state.stage is Stage.AWAITING_HUMAN
 
     after_first = len(calls)
     assert after_first > 0

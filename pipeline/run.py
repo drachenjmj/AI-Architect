@@ -10,18 +10,38 @@ a caller and a printer, nothing more.
 
 WHY A LOOP IS NEEDED (the pause/resume contract)
 ------------------------------------------------
-The Clarifier pauses mid-run by RETURNING with `stage == AWAITING_INPUT`. The
+The pipeline pauses mid-run by RETURNING with `stage == AWAITING_HUMAN`. The
 orchestrator routes that stage to END (`_route`) and expects the CALLER to
-collect answers and re-invoke; entering the graph already in `AWAITING_INPUT`
-sends the state back to the clarifier (`_entry_route`), which re-judges with the
-new answers. One call therefore never finishes a run. This module is that
-caller:
+resolve the pause and re-invoke. WHICH resolution is owed is carried by
+`state.pending_decision`, and this module handles both kinds:
 
-    run  ->  AWAITING_INPUT?  ->  ask the questions  ->  merge answers  ->  run
+  * CLARIFICATION — the clarifier asked questions. Collect answers, merge them
+    into `clarification_answers`, re-invoke; `_entry_route` sends the state back
+    to the clarifier, which re-judges with the new answers.
+  * CONTEXT_LOCK  — a Context Record is frozen and waiting for approval. This
+    one is resolved ENTIRELY OUTSIDE the graph (accept / edit / ask, see
+    `pipeline/agents/clarifier.py`); the orchestrator refuses to be entered
+    while it is still pending.
+
+One call therefore never finishes a run. This module is that caller:
+
+    run  ->  AWAITING_HUMAN?  ->  answer questions / approve the record  ->  run
               |                                                             |
               no                                                            |
               v                                                             |
       DONE / FAILED  ->  print everything            <----------------------+
+
+THE CONTEXT GATE IS OPT-IN HERE, AND HAS TO BE
+-----------------------------------------------
+`--approve-context` is off by default, so `python -m pipeline.run` keeps
+finishing unattended exactly as it did. The gate is a HUMAN pause: switching it
+on for every headless caller — this command, the eval harness, the test suite —
+would not have made those runs safer, it would have made them hang. With the
+flag off, the clarifier locks and advances, which is precisely the behaviour
+that existed before the gate, and the record still prints in full at the end.
+
+With `--approve-context --no-input` there is a gate and nobody to work it, so
+the run stops and says so rather than rubber-stamping its own ground truth.
 
 Two rules the loop keeps, both of which `ui.py` keeps too:
 
@@ -46,6 +66,10 @@ quits:
   3. A stop at any stage that is neither a pause nor terminal means the graph
      ended somewhere unwired. Re-running would end instantly at the same place,
      so we report it rather than loop.
+  4. `MAX_USER_ROUNDS` (refine_gate) caps total POST-LOCK re-judges — an edit at
+     the approval gate that reopens a gap. Answering questions and approving the
+     record do not spend it: that counter bounds user-initiated REFINEMENT of a
+     design, and rule 1 above is what bounds a clarifier that will not converge.
 
 `--answers` exists for REPRODUCIBILITY: the same scenario re-run identically,
 with no keyboard, for the report and for screenshots.
@@ -66,13 +90,21 @@ import textwrap
 from pathlib import Path
 from typing import Sequence
 
-from pipeline.orchestrator import run_pipeline_streaming
+from pipeline.agents import clarifier as clarifier_gate
+from pipeline.llm import LLMError
+from pipeline.orchestrator import MAX_STEPS, run_pipeline_streaming
+from pipeline.agents.clarifier import MAX_ASK_ROUNDS
+from pipeline.agents.reviewer import ADVISORY_CRITERIA
 from pipeline.persistence import runs_dir
+from pipeline.refine_gate import MAX_USER_ROUNDS, begin_user_round
 from pipeline.state import (
     ADR,
     ArchitectState,
     ComponentDescription,
+    ContextEdits,
     Feature,
+    NOT_APPLICABLE_REASONS,
+    PendingDecision,
     Stage,
     new_run,
 )
@@ -88,10 +120,20 @@ EXAMPLE_PROMPT = (
     "~50k concurrent users at peak. Repo: https://github.com/example/bugged-shop"
 )
 
-# How many times we will answer a pause before giving up. The clarifier is meant
-# to converge in one or two rounds; more than this means it is not converging,
-# and looping on it would burn tokens without ever finishing.
-MAX_CLARIFICATION_ROUNDS = 3
+# How many times THIS COMMAND will answer a pause before giving up.
+#
+# DERIVED, not chosen. The binding limit on asking belongs to the clarifier
+# (`MAX_ASK_ROUNDS`), which past its cap absorbs the remaining gaps as labelled
+# assumptions and locks a record — a designed, recoverable ending. This one is
+# the outer backstop for the case where that never happens: a pause this command
+# cannot attribute to the ask budget at all. It must therefore stay LOOSER than
+# the clarifier's cap, or it would fire first and turn every capped run into a
+# CLI error instead of the assumption path.
+#
+# Writing it as an expression rather than a number is what enforces that. The
+# two were 3 and 5 when this was hardcoded, so the backstop was the binding
+# constraint and the clarifier cap could never fire from the command line.
+MAX_CLARIFICATION_ROUNDS = MAX_ASK_ROUNDS + 3
 
 # Exit codes. Distinct on purpose: a run that failed is a different problem from
 # a run we could not even drive.
@@ -179,6 +221,21 @@ class AnswerSource:
             return None
         return self._from_stdin(label)
 
+    def line(self, label: str) -> str | None:
+        """One raw line from the keyboard, or None when there is nobody there.
+
+        The context gate reads through this rather than through `answer`, on
+        purpose: `--answers` holds replies to CLARIFYING QUESTIONS, matched by
+        text or consumed positionally, and letting a gate command eat one of them
+        would silently mis-answer a later question. The gate is therefore
+        interactive-only — with `--no-input` it reports that it cannot be worked
+        instead of approving the record on the human's behalf.
+        """
+        if not self._allow_stdin:
+            return None
+        reply = self._from_stdin(label)
+        return None if reply is None else reply[0]
+
     def _from_stdin(self, label: str) -> tuple[str, str] | None:
         """Read one answer from the keyboard. EOF (piped/closed stdin) = no answer.
 
@@ -208,7 +265,7 @@ def stream_once(state: ArchitectState, max_steps: int) -> ArchitectState:
     Mirrors what `ui.py:_run` does with the same generator: the LAST yielded
     state is the terminal one (identical to what `run_pipeline` would return),
     so we simply keep it. The pause/resume contract is untouched — what comes
-    back is what gets inspected for `AWAITING_INPUT`.
+    back is what gets inspected for `AWAITING_HUMAN`.
 
     `input_tokens` / `output_tokens` are reducer fields, so every snapshot
     already carries the run total so far; the cost line needs no accumulation
@@ -237,6 +294,224 @@ def stream_once(state: ArchitectState, max_steps: int) -> ArchitectState:
     return latest
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# The context gate: approve / edit / ask, before a research token is spent
+# ══════════════════════════════════════════════════════════════════════════
+# A tiny command grammar rather than a wizard. The UI can afford a form with a
+# checkbox per assumption; a terminal cannot, and a nine-question interrogation
+# every time somebody wants to approve an obviously-fine record would make the
+# gate the first thing people switch off. So: press Enter to accept, or type one
+# instruction. The same table is in --help, so --help IS the documentation.
+_GATE_HELP = """\
+  <Enter> or 'accept'      approve this record and continue to research
+  strike N[,N...]          reject assumption N (it will not come back)
+  set FIELD = value        replace a field (list fields: comma-separate)
+  recommend FIELD          "I do not know - you propose one, with a reason"
+  answer N text            answer open question N
+  ? your question          ask about the record; nothing is changed or resolved
+  quit                     stop here without approving"""
+
+
+class GateAbort(RuntimeError):
+    """The gate cannot be worked: no human on stdin, or the human asked to stop."""
+
+
+def print_context_gate(state: ArchitectState) -> None:
+    """Show the frozen record for approval, with its vetoable parts numbered.
+
+    Reuses `print_context_record` so the gate and the final report can never show
+    two different pictures of the same record; the numbering exists only because
+    `strike 2` needs something to point at.
+    """
+    record = state.context_record
+    print()
+    print("=" * _WIDTH)
+    print("CONTEXT LOCK - APPROVE BEFORE DESIGN BEGINS")
+    print("=" * _WIDTH)
+    print(
+        _wrap(
+            "This is the ground truth the whole design will be built on. "
+            "Everything below was either taken from your request or assumed on "
+            "your behalf. Nothing has been researched or designed yet."
+        )
+    )
+    print_context_record(state)
+
+    if record.assumptions:
+        _sub("Assumptions you can strike")
+        for index, assumption in enumerate(record.assumptions, start=1):
+            print(_wrap(f"{index}. {assumption}", "  "))
+    if record.open_questions:
+        _sub("Open questions you can answer")
+        for index, question in enumerate(record.open_questions, start=1):
+            print(_wrap(f"{index}. {question}", "  "))
+
+    _sub("What you can do")
+    print(_GATE_HELP)
+
+
+def _split_items(value: str) -> list[str]:
+    """A list field typed on one line -> its items. Comma-separated, blanks dropped."""
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _pick(numbers: str, population: Sequence[str], what: str) -> list[str]:
+    """Resolve '2' or '1,3' against a numbered list. Raises ValueError on a miss."""
+    chosen: list[str] = []
+    for token in numbers.replace(" ", "").split(","):
+        if not token:
+            continue
+        if not token.isdigit() or not 1 <= int(token) <= len(population):
+            raise ValueError(
+                f"'{token}' is not one of the {len(population)} {what} listed above."
+            )
+        chosen.append(population[int(token) - 1])
+    if not chosen:
+        raise ValueError(f"Name at least one of the {what} listed above, by number.")
+    return chosen
+
+
+def parse_gate_command(line: str, state: ArchitectState) -> tuple[str, object]:
+    """One typed instruction -> `(action, payload)`. Pure; raises ValueError on nonsense.
+
+    Actions: `accept` (payload None), `quit` (None), `ask` (the question text),
+    `edit` (a `ContextEdits`). Kept separate from the loop below so the grammar is
+    testable without a keyboard, which is the only way it stays trustworthy.
+    """
+    text = line.strip()
+    record = state.context_record
+    if not text or text.lower() == "accept":
+        return "accept", None
+    if text.lower() in {"quit", "exit"}:
+        return "quit", None
+    if text.startswith("?"):
+        question = text[1:].strip()
+        if not question:
+            raise ValueError("Type your question after the '?'.")
+        return "ask", question
+
+    verb, _, rest = text.partition(" ")
+    verb = verb.lower()
+    rest = rest.strip()
+    fields = clarifier_gate.EDITABLE_RECORD_FIELDS
+
+    if verb == "strike":
+        return "edit", ContextEdits(
+            struck_assumptions=_pick(rest, record.assumptions, "assumptions")
+        )
+    if verb == "recommend":
+        if rest not in fields:
+            raise ValueError(
+                f"'{rest}' is not a Context Record field. One of: {', '.join(fields)}."
+            )
+        return "edit", ContextEdits(recommend=[rest])
+    if verb == "set":
+        name, sep, value = rest.partition("=")
+        name = name.strip()
+        if not sep or not name:
+            raise ValueError("Use: set FIELD = value")
+        if name not in fields:
+            raise ValueError(
+                f"'{name}' is not a Context Record field. One of: {', '.join(fields)}."
+            )
+        is_list = isinstance(getattr(record, name), list)
+        parsed = _split_items(value) if is_list else value.strip()
+        return "edit", ContextEdits(fields={name: parsed})
+    if verb == "answer":
+        number, _, answer = rest.partition(" ")
+        question = _pick(number, record.open_questions, "open questions")[0]
+        if not answer.strip():
+            raise ValueError("Type your answer after the question number.")
+        return "edit", ContextEdits(answered_questions={question: answer.strip()})
+
+    raise ValueError(f"'{verb}' is not one of the actions listed above.")
+
+
+def resolve_context_gate(state: ArchitectState, answers: AnswerSource) -> bool:
+    """Work the gate until it is resolved. Returns True when a re-judge is needed.
+
+    False once the human has ACCEPTED: the pause is cleared and the caller
+    re-enters the graph, which routes straight to the researcher. True when an
+    edit opened a gap the clarifier has to re-judge; the caller re-enters the
+    graph and lands back here on the next lock.
+
+    Raises `GateAbort` when there is nobody on stdin or the human quits. Both are
+    honest dead ends, and neither is a reason to approve the record for them.
+
+    Advisory questions loop inside here WITHOUT resolving anything, which is the
+    entire point of them: they run outside the graph, change no artifact and no
+    stage, and the pause stays open across as many as you like.
+    """
+    print_context_gate(state)
+    while True:
+        line = answers.line("gate")
+        if line is None:
+            raise GateAbort(
+                "The context gate needs a human: --approve-context pauses the run "
+                "so the frozen Context Record can be approved, and stdin is closed "
+                "(--no-input, or a piped/EOF stdin). Drop --approve-context to let "
+                "the run auto-approve its own record, or run it interactively."
+            )
+        try:
+            action, payload = parse_gate_command(line, state)
+        except ValueError as exc:
+            print(_wrap(f"! {exc}", "  "))
+            continue
+
+        if action == "quit":
+            raise GateAbort(
+                "Stopped at the context gate without approving. The run is "
+                "checkpointed and can be resumed from the UI."
+            )
+
+        if action == "accept":
+            clarifier_gate.accept_context_lock(state)
+            print(_wrap("Approved. Continuing to research...", "  "))
+            return False
+
+        if action == "ask":
+            # OUTSIDE the graph: no routing decision, no stage change,
+            # pending_decision untouched. It costs tokens, so it lands in the
+            # trace under its own agent name - see clarifier.ask_advisor.
+            try:
+                print()
+                print(_wrap(clarifier_gate.ask_advisor(state, str(payload)), "  "))
+                print()
+            except LLMError as exc:
+                # A failed side question must never cost the human their gate.
+                print(_wrap(f"! Could not answer that: {exc}", "  "))
+            continue
+
+        # action == "edit"
+        try:
+            reasons = clarifier_gate.submit_context_edits(state, payload)
+        except ValueError as exc:
+            print(_wrap(f"! {exc}", "  "))
+            continue
+
+        if not reasons:
+            # Filling or replacing a value cannot open a gap, so the record
+            # re-froze with NO model call. Redraw and stay at the gate.
+            print(_wrap("Recorded. No re-judge needed (nothing was emptied).", "  "))
+            print_context_gate(state)
+            continue
+
+        print(_wrap("Re-judging, because " + "; ".join(reasons) + ".", "  "))
+        allowed, why = begin_user_round(state)
+        if not allowed:
+            print(
+                _wrap(
+                    f"! Out of user rounds ({why}). Your edit is kept, but the "
+                    f"clarifier will not re-judge it. Accept the record as it "
+                    f"stands, or quit.",
+                    "  ",
+                )
+            )
+            continue
+        clarifier_gate.open_for_rejudge(state)
+        return True
+
+
 def drive(
     state: ArchitectState,
     max_steps: int,
@@ -248,6 +523,10 @@ def drive(
     This is the whole reason the command exists: `run_pipeline` alone returns at
     the first pause, which is why a single call only ever printed a two-step
     trace and produced no artifact.
+
+    Both pause kinds land here and are told apart by `pending_decision`, not by
+    the stage: a CONTEXT_LOCK is resolved outside the graph by
+    `resolve_context_gate`, a CLARIFICATION by the answer loop below.
     """
     rounds = 0
     while True:
@@ -257,7 +536,7 @@ def drive(
             return state, EXIT_OK
         if state.stage is Stage.FAILED:
             return state, EXIT_RUN_FAILED
-        if state.stage is not Stage.AWAITING_INPUT:
+        if state.stage is not Stage.AWAITING_HUMAN:
             # Neither a pause nor terminal: the graph ended at a stage that is
             # not wired in STAGE_TO_NODE. Re-running would end instantly at the
             # same place, so stopping is the only non-spinning option.
@@ -268,6 +547,25 @@ def drive(
                 f"again. Nothing further to do."
             )
             return state, EXIT_CANNOT_CONTINUE
+
+        if state.pending_decision is PendingDecision.CONTEXT_LOCK:
+            # The record is frozen and waiting. Everything about resolving it
+            # happens OUTSIDE the graph, and `resolve_context_gate` does not
+            # return until it is resolved one way or the other — so there is no
+            # path from here back into the loop with the lock still pending,
+            # which is the state `_entry_route` refuses to be entered in.
+            try:
+                needs_rejudge = resolve_context_gate(state, answers)
+            except GateAbort as exc:
+                _problem(str(exc))
+                return state, EXIT_CANNOT_CONTINUE
+            # Approving costs no user round: it releases work that was already
+            # waiting rather than asking for any to be redone. Only an edit that
+            # sends the record back for re-judging is charged, inside
+            # `resolve_context_gate`. See `ArchitectState.user_rounds`.
+            print()
+            print("Resuming...")
+            continue
 
         rounds += 1
         if rounds > max_rounds:
@@ -337,6 +635,13 @@ def drive(
         # MERGE, never replace: the clarifier re-judges with the FULL history,
         # and this state already carries every earlier round. Same call ui.py makes.
         state.clarification_answers.update(collected)
+
+        # `max_rounds` above is the ONLY cap on this loop. Answering the
+        # clarifier does not spend a `user_rounds`: that counter bounds
+        # post-lock refinement, and a run that measured four rounds of questions
+        # here arrived at the architect with its whole refinement budget already
+        # gone. Two different failures, two different caps — see
+        # `ArchitectState.user_rounds`.
         print()
         print("Resuming...")
 
@@ -536,6 +841,8 @@ def print_blueprint(state: ArchitectState) -> None:
         + (f" | {blueprint.project_name}" if blueprint.project_name else "")
     )
     print()
+    # Shown to the human, never to the reviewer - see agents/reviewer.py.
+    _text("Revised this round", blueprint.revision_note)
     _text("Selected pattern", blueprint.selected_pattern)
     _text("Rationale", blueprint.rationale)
     drew_view = _text("Stakeholder view (business-facing)", blueprint.stakeholder_view)
@@ -647,14 +954,30 @@ def print_review(state: ArchitectState) -> None:
 
     print("LLM-owned judgments (binary; never summed into the verdict):")
     for field, label in _LLM_CHECKS:
-        passed = bool(getattr(review.rubric_scores, field, False))
-        print(f"  [{'PASS' if passed else 'FAIL'}] {label}")
+        # not_applicable FIRST. The stored boolean is true for such a criterion
+        # so nothing downstream breaks, so reading it first would render "no
+        # evidence existed" as a pass - which is the one thing this must not do.
+        if field in review.not_applicable:
+            why = NOT_APPLICABLE_REASONS.get(field, "not applicable")
+            print(f"  [ n/a] {label}  ({why}; excluded from the verdict)")
+        else:
+            passed = bool(getattr(review.rubric_scores, field, False))
+            # An advisory criterion is asked and shown but cannot decide
+            # anything, so a bare FAIL beside a PASS verdict would look like a
+            # contradiction rather than the deliberate choice it is.
+            note = "  (advisory; excluded from the verdict)" if (
+                field in ADVISORY_CRITERIA and not passed
+            ) else ""
+            print(f"  [{'PASS' if passed else 'FAIL'}] {label}{note}")
         reason = (getattr(review.judgment_reasons, field, "") or "").strip()
         print(_wrap(reason or "(no reason recorded)", "        "))
     print()
 
+    # "Blocking", not just "Issues". Advisory and not-applicable criteria are
+    # deliberately kept OUT of `issues` (see agents/reviewer.py), so a run can
+    # carry a real complaint and still print zero here.
     if review.issues:
-        print(f"Issues ({len(review.issues)}):")
+        print(f"Blocking issues ({len(review.issues)}):")
         for index, issue in enumerate(review.issues, start=1):
             print()
             print(
@@ -669,8 +992,27 @@ def print_review(state: ArchitectState) -> None:
                 f"{'yes' if issue.requires_refinement else 'no'}"
             )
     else:
-        print("Issues: none recorded.")
+        print("Blocking issues: none recorded.")
     print()
+
+    # ADVISORY FINDINGS. An excluded criterion still gets asked and still
+    # answers, and its answer can be substantive - in run
+    # 20260819T080216Z-f981f8ef `refinement_readiness` named the exact unlinked
+    # feature while the blocking list was empty. It raises no ReviewIssue by
+    # design, so without this the report looks like it found nothing.
+    advisory_findings = [
+        (label, (getattr(review.judgment_reasons, field, "") or "").strip())
+        for field, label in _LLM_CHECKS
+        if field in ADVISORY_CRITERIA
+        and not bool(getattr(review.rubric_scores, field, False))
+    ]
+    if advisory_findings:
+        print(f"Advisory findings ({len(advisory_findings)}); "
+              f"recorded, excluded from the verdict:")
+        for label, reason in advisory_findings:
+            print(f"  - {label}")
+            print(_wrap(reason or "(no reason recorded)", "      "))
+        print()
 
     print(f"refine_iterations : {state.refine_iterations}")
     print(
@@ -801,6 +1143,9 @@ def print_report(state: ArchitectState) -> None:
 # ══════════════════════════════════════════════════════════════════════════
 # CLI
 # ══════════════════════════════════════════════════════════════════════════
+# Indented one level for the epilog block it is quoted into.
+_GATE_HELP_EPILOG = "\n".join("  " + line for line in _GATE_HELP.splitlines())
+
 _EPILOG = f"""\
 the --answers file (two shapes, chosen by the JSON's own top-level type)
 -----------------------------------------------------------------------
@@ -823,8 +1168,30 @@ clarification rounds
 --------------------
   The clarifier can pause more than once; answers are MERGED across rounds so
   it re-judges with the full Q&A history. At most {MAX_CLARIFICATION_ROUNDS} rounds are answered
-  (MAX_CLARIFICATION_ROUNDS). A pause carrying no questions at all is a known
-  clarifier bug: it is reported and the command exits rather than spinning.
+  (MAX_CLARIFICATION_ROUNDS); answering them does not spend the separate
+  post-lock budget of {MAX_USER_ROUNDS} re-judges (refine_gate.MAX_USER_ROUNDS). A pause
+  carrying no questions at all is a known clarifier bug: it is reported and the
+  command exits rather than spinning.
+
+--approve-context (the context lock)
+------------------------------------
+  OFF by default, so this command finishes unattended exactly as before: the
+  clarifier locks the Context Record and goes straight on to research.
+
+  With the flag, the run PAUSES once the record is frozen and shows it for
+  approval before a single research, design or review token is spent on it:
+
+{_GATE_HELP_EPILOG}
+
+  'set' and 'answer' fill values in, which cannot open a gap, so they re-freeze
+  the record with NO model call. 'strike' on an architecture-critical value and
+  'recommend' DO open one, so the clarifier re-judges - and on a re-judge it may
+  no longer ask questions: the gap comes back as a labelled assumption plus an
+  open question, on the record you are already looking at.
+
+  The gate is interactive: with --no-input there is nobody to work it, and the
+  command stops rather than approving its own ground truth. Drop the flag for
+  unattended runs.
 
 the default prompt
 ------------------
@@ -838,7 +1205,8 @@ exit codes
   {EXIT_OK}  the run reached DONE
   {EXIT_RUN_FAILED}  the run reached FAILED
   {EXIT_CANNOT_CONTINUE}  the run could not be driven to a terminal stage (unanswerable
-     question, round cap exceeded, or a pause with no questions)
+     question, round cap exceeded, a pause with no questions, or a context
+     gate with nobody to work it)
 
 examples
 --------
@@ -846,6 +1214,7 @@ examples
   python -m pipeline.run "Design an event-driven order pipeline for 10k rps."
   python -m pipeline.run --repo-url https://github.com/pallets/flask
   python -m pipeline.run --answers answers.json --no-input > run.txt
+  python -m pipeline.run --approve-context
 """
 
 
@@ -890,12 +1259,21 @@ def build_parser() -> argparse.ArgumentParser:
              "run instead, so this can run unattended",
     )
     parser.add_argument(
+        "--approve-context",
+        action="store_true",
+        help="pause once the Context Record is locked and show it for approval "
+             "before any research or design happens; needs a terminal, so it "
+             "cannot be combined with --no-input (see below)",
+    )
+    parser.add_argument(
         "--max-steps",
         type=int,
-        default=20,
+        default=MAX_STEPS,
         metavar="N",
         help="hard cap on graph steps per invocation, passed to "
-             "run_pipeline_streaming (default: %(default)s)",
+             "run_pipeline_streaming. The default is DERIVED from the cost caps "
+             "in refine_gate.py (default: %(default)s), so raising a cap never "
+             "shows up as a recursion error",
     )
     return parser
 
@@ -926,7 +1304,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     answers = AnswerSource(mapping, queue, allow_stdin=not args.no_input)
 
-    state = new_run(raw_prompt=args.prompt, repo_url=args.repo_url)
+    state = new_run(
+        raw_prompt=args.prompt,
+        repo_url=args.repo_url,
+        require_context_approval=args.approve_context,
+    )
     print(_wrap(f"Prompt: {args.prompt}"))
     if args.repo_url:
         print(f"Repo:   {args.repo_url}")

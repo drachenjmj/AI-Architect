@@ -29,10 +29,30 @@ There is NO separate message list: the chat is DERIVED from the state object
 every time. One source of truth — same principle as the pipeline itself, and
 it means the UI would survive a state-on-disk reload for free.
 
-The pipeline pauses by RETURNING with stage == AWAITING_INPUT (see
+The pipeline pauses by RETURNING with stage == AWAITING_HUMAN (see
 orchestrator._route). This script is the "caller" from clarifier-design: it
-holds the state between calls, writes answers into
-`state.clarification_answers`, and calls run_pipeline(state) again to resume.
+holds the state between calls, resolves whatever `state.pending_decision` says
+is owed, and calls run_pipeline(state) again to resume.
+
+TWO PAUSES, ONE STAGE
+---------------------
+`pending_decision` says which one:
+
+  CLARIFICATION — the clarifier asked questions. Write the answers into
+                  `state.clarification_answers` and re-run; the entry route
+                  sends the state back to the clarifier.
+  CONTEXT_LOCK  — a Context Record is frozen and waiting to be approved. This
+                  pause is resolved ENTIRELY HERE, before the graph is entered
+                  again, and the orchestrator refuses to be entered while it is
+                  still pending. Three resolutions: approve, edit, or ask.
+
+This UI is the caller that sets `require_context_approval=True`, because it is
+the only one with a human in front of it. The CLI, the eval harness and the
+tests leave it off and keep running unattended (see pipeline/state.py).
+
+Nothing here writes to the `ContextRecord`. Approving, editing and asking all go
+through `pipeline.agents.clarifier`, which owns Maheen's schema — the panel in
+ui_sections.py only reports what the human asked for.
 
 THE FINISHED-RUN SCREEN (what the DONE branch shows)
 ----------------------------------------------------
@@ -77,16 +97,21 @@ import sys
 
 import streamlit as st
 
+from pipeline.agents import clarifier as clarifier_gate
+from pipeline.llm import LLMError
 from pipeline.orchestrator import run_pipeline_streaming
 from pipeline.persistence import CheckpointError, list_runs, load_state
+from pipeline.refine_gate import begin_user_round
 from pipeline.repo_analysis import is_repo_url
-from pipeline.state import ArchitectState, Stage, new_run
+from pipeline.state import ArchitectState, PendingDecision, Stage, new_run
 from ui_sections import (
     BCG_DARK as _BCG_DARK,
     BCG_GREEN as _BCG_GREEN,
     GREY as _GREY,
     RED as _RED,
     live_step_caption,
+    render_context_approval,
+    render_user_rounds,
     render_adrs,
     render_blueprint,
     render_components,
@@ -104,7 +129,7 @@ from ui_sections import (
 st.set_page_config(page_title="AI Architect", page_icon="🏛️", layout="wide")
 
 # The stages shown in the sidebar checklist, in pipeline order.
-# AWAITING_INPUT is not listed: it is a pause WITHIN clarifying, not a step.
+# AWAITING_HUMAN is not listed: it is a pause WITHIN clarifying, not a step.
 _CHECKLIST: list[tuple[Stage, str]] = [
     (Stage.INGESTING, "Ingest repo"),
     (Stage.CLARIFYING, "Clarify"),
@@ -116,7 +141,7 @@ _CHECKLIST: list[tuple[Stage, str]] = [
 # Rank of each stage so we can mark earlier ones as completed.
 _ORDER = {stage: i for i, (stage, _) in enumerate(_CHECKLIST)}
 # A pause happens inside the clarifying step.
-_ORDER[Stage.AWAITING_INPUT] = _ORDER[Stage.CLARIFYING]
+_ORDER[Stage.AWAITING_HUMAN] = _ORDER[Stage.CLARIFYING]
 _ORDER[Stage.CREATED] = -1
 _ORDER[Stage.REFINING] = _ORDER[Stage.REVIEWING]
 _ORDER[Stage.FAILED] = -1
@@ -124,9 +149,22 @@ _ORDER[Stage.FAILED] = -1
 # Human-readable label for each stage — drives the live status header in `_run`.
 _STAGE_LABELS: dict[Stage, str] = dict(_CHECKLIST)
 _STAGE_LABELS[Stage.CREATED] = "Starting"
-_STAGE_LABELS[Stage.AWAITING_INPUT] = "Clarifying"
+_STAGE_LABELS[Stage.AWAITING_HUMAN] = "Clarifying"
 _STAGE_LABELS[Stage.REFINING] = "Refining"
 _STAGE_LABELS[Stage.FAILED] = "Failed"
+
+
+def _stage_label(state: ArchitectState) -> str:
+    """The header line for a state — the stage, refined by what is pending.
+
+    `_STAGE_LABELS` is keyed by stage alone because the sidebar checklist is:
+    both pauses happen inside the "Clarify" step and neither is a step of its
+    own. The live header has room to be more specific, and "Clarifying…" over a
+    finished record that is waiting on a signature would be a small lie.
+    """
+    if state.pending_decision is PendingDecision.CONTEXT_LOCK:
+        return "Awaiting your approval"
+    return _STAGE_LABELS.get(state.stage, "Working")
 
 
 def _run(state: ArchitectState) -> None:
@@ -147,7 +185,7 @@ def _run(state: ArchitectState) -> None:
     with st.status("Pipeline running…", expanded=True) as status:
         for snapshot in run_pipeline_streaming(state):
             latest = snapshot
-            status.update(label=f"{_STAGE_LABELS.get(snapshot.stage, 'Working')}…")
+            status.update(label=f"{_stage_label(snapshot)}…")
             if snapshot.history:
                 step = snapshot.history[-1]
                 st.write(f"**{step.agent}** — {step.note or step.stage_out.value}")
@@ -259,7 +297,7 @@ with st.sidebar:
         elif rank < current_rank or (state and state.stage is Stage.DONE):
             mark, color = "✓", _BCG_DARK
         elif rank == current_rank:
-            mark = "⏸" if state.stage is Stage.AWAITING_INPUT else "●"
+            mark = "⏸" if state.stage is Stage.AWAITING_HUMAN else "●"  # either pause
             color = _BCG_GREEN
         else:
             mark, color = "○", _GREY
@@ -313,7 +351,10 @@ if state is None:
                 "or leave the field empty for a greenfield project."
             )
         else:
-            _run(new_run(prompt.strip(), clean_url))
+            # The ONE caller with a human attached, so the ONE caller that turns
+            # the context lock on. Everything headless leaves it off and keeps
+            # auto-approving, which is what it did before this existed.
+            _run(new_run(prompt.strip(), clean_url, require_context_approval=True))
 else:
     # 1. The original request — the ground truth of the run.
     with st.chat_message("user"):
@@ -326,8 +367,11 @@ else:
         with st.chat_message("user"):
             st.write(answer)
 
-    # 3. Paused? → show open questions as a form (Event 2 lives here).
-    if state.stage is Stage.AWAITING_INPUT:
+    # 3a. Paused on questions? → show them as a form (Event 2 lives here).
+    if (
+        state.stage is Stage.AWAITING_HUMAN
+        and state.pending_decision is not PendingDecision.CONTEXT_LOCK
+    ):
         with st.chat_message("assistant"):
             st.write("Before I can design safely, I need a few answers:")
             # st.form batches the inputs: nothing happens until Submit,
@@ -342,7 +386,68 @@ else:
                     state.clarification_answers.update(
                         {q: a.strip() for q, a in answers.items() if a.strip()}
                     )
-                    _run(state)  # resume: entry router sends us back to clarifier
+                    # No `begin_user_round` here. Answering the clarifier is the
+                    # pipeline working as designed, not the human asking it to
+                    # redo work — and charging for it drained the refinement
+                    # budget before design started. See state.user_rounds.
+                    _run(state)  # entry router sends us back to clarifier
+
+    # 3b. Paused at the context lock? → the veto panel. Resolved ENTIRELY here:
+    #     the graph is not entered until the human has accepted, or until an
+    #     edit has opened a gap that the clarifier has to re-judge.
+    elif state.stage is Stage.AWAITING_HUMAN:
+        with st.chat_message("assistant"):
+            render_user_rounds(state)
+            intent = render_context_approval(state)
+
+            if intent is not None:
+                action, payload = intent
+
+                if action == "accept":
+                    # Also free: approving RELEASES work that was already
+                    # waiting. Only an edit that sends the record back for
+                    # re-judging asks for work to be redone, and only that is
+                    # charged (below).
+                    clarifier_gate.accept_context_lock(state)
+                    _run(state)  # entry route: CLARIFYING → researcher
+
+                elif action == "ask":
+                    # OUTSIDE the graph: no routing decision, no stage change,
+                    # `pending_decision` untouched, no artifact written. The
+                    # pause stays open across any number of these. It does cost
+                    # tokens, so `ask_advisor` bills it to the trace under its
+                    # own agent name.
+                    try:
+                        clarifier_gate.ask_advisor(state, str(payload))
+                    except LLMError as exc:
+                        # A failed side question must never cost the human their
+                        # gate — report it and leave the pause exactly as it was.
+                        st.error(f"Could not answer that: {exc}")
+                    st.rerun()
+
+                else:  # "edit"
+                    try:
+                        reasons = clarifier_gate.submit_context_edits(state, payload)
+                    except ValueError as exc:
+                        st.error(str(exc))
+                        reasons = None
+
+                    if reasons == []:
+                        # Filling or replacing a value cannot open a gap, so the
+                        # record re-froze deterministically with NO model call.
+                        st.rerun()
+                    elif reasons:
+                        allowed, why = begin_user_round(state)
+                        if not allowed:
+                            st.warning(
+                                f"Out of human rounds ({why}), so the clarifier "
+                                f"will not re-judge this. Your edit is kept — "
+                                f"approve the record as it stands, or start over."
+                            )
+                        else:
+                            st.info("Re-judging, because " + "; ".join(reasons) + ".")
+                            clarifier_gate.open_for_rejudge(state)
+                            _run(state)
 
     # 4. Finished? → show what the run DID, then the design in full.
     #    Every section is a DRAW-only function in ui_sections.py taking this
@@ -380,10 +485,10 @@ else:
     #    Only reachable by RESUMING a checkpoint whose process died between
     #    stages (crash, closed tab, killed server). A live run never lands here:
     #    `_run` keeps control until the pipeline reaches a terminal stage or
-    #    pauses at AWAITING_INPUT.
+    #    pauses at AWAITING_HUMAN.
     else:
         with st.chat_message("assistant"):
-            label = _STAGE_LABELS.get(state.stage, state.stage.value)
+            label = _stage_label(state)
             st.info(f"This run was interrupted at **{label}**.")
             if st.button("▶ Continue run"):
                 _run(state)

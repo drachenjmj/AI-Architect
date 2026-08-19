@@ -5,7 +5,7 @@ canned response (the Clarifier / Architect / Reviewer mocks are reused from
 test_clarifier). Covers five things:
 
   1. Round-trip — save → load preserves the state, history included.
-  2. Resume — a run checkpointed at AWAITING_INPUT can be reloaded from disk,
+  2. Resume — a run checkpointed at AWAITING_HUMAN can be reloaded from disk,
      answered, and driven to completion in the SAME run directory.
   3. Robustness — a corrupt checkpoint is skipped by `list_runs` and reported
      clearly by `load_state`; it never takes the listing down with it.
@@ -44,8 +44,11 @@ from pipeline.persistence import (
 )
 from pipeline.state import (
     ArchitectState,
+    Blueprint,
     ContextRecord,
     KBChunk,
+    ReviewResult,
+    RubricScores,
     Stage,
     new_run,
 )
@@ -99,7 +102,7 @@ def _rich_state() -> ArchitectState:
     """A state with something in every layer, so a round-trip has work to do."""
     state = new_run(PROMPT, "https://github.com/example/bugged-shop")
     state.log_step("repo_ingestor", Stage.INGESTING, "ingested 4 partition(s)")
-    state.log_step("clarifier", Stage.AWAITING_INPUT, "missing 2 critical fact(s)")
+    state.log_step("clarifier", Stage.AWAITING_HUMAN, "missing 2 critical fact(s)")
     state.clarifying_questions = ["Expected peak users?", "Is GDPR in scope?"]
     state.clarification_answers = {"Expected peak users?": "about 50k"}
     state.context_record = ContextRecord(
@@ -132,7 +135,7 @@ def test_round_trip_preserves_state_and_history():
     # survived; the explicit checks below name what we care about most.
     assert loaded == state
     assert loaded.run_id == state.run_id
-    assert loaded.stage is Stage.AWAITING_INPUT
+    assert loaded.stage is Stage.AWAITING_HUMAN
     assert [(s.agent, s.stage_in, s.stage_out, s.note) for s in loaded.history] == [
         (s.agent, s.stage_in, s.stage_out, s.note) for s in state.history
     ]
@@ -157,14 +160,14 @@ def test_round_trip_preserves_state_and_history():
     assert excerpt.startswith("Our monolithic shop")
 
 
-# ── 2. resume from AWAITING_INPUT ────────────────────────────────────────
+# ── 2. resume from AWAITING_HUMAN ────────────────────────────────────────
 def test_resume_from_awaiting_input_continues():
     _isolate("resume")
     _install_llm_mocks()
 
     # First leg: run until the Clarifier pauses for the human.
     paused = orchestrator.run_pipeline(new_run(PROMPT))
-    assert paused.stage is Stage.AWAITING_INPUT
+    assert paused.stage is Stage.AWAITING_HUMAN
     assert paused.clarifying_questions
 
     run_id = paused.run_id
@@ -177,7 +180,7 @@ def test_resume_from_awaiting_input_continues():
     # rebuild the run from disk, exactly as the UI's resume picker does.
     del paused
     resumed = load_state(run_id)
-    assert resumed.stage is Stage.AWAITING_INPUT
+    assert resumed.stage is Stage.AWAITING_HUMAN
     assert resumed.run_id == run_id
     questions_before = list(resumed.clarifying_questions)
     history_before = len(resumed.history)
@@ -418,7 +421,7 @@ if __name__ == "__main__":
     print("PASS  save/load round-trip preserves state and history")
 
     test_resume_from_awaiting_input_continues()
-    print("PASS  resume from AWAITING_INPUT continues in the same run")
+    print("PASS  resume from AWAITING_HUMAN continues in the same run")
 
     test_corrupt_checkpoint_is_skipped_by_list_runs()
     print("PASS  corrupt checkpoint skipped by list_runs, raised by load_state")
@@ -433,3 +436,91 @@ if __name__ == "__main__":
     print("PASS  stream's last emission matches invoke field-for-field")
 
     print("\nALL PERSISTENCE TESTS PASSED")
+
+
+# ---------------------------------------------------------------------------
+# 6. `ReviewResult.not_applicable` — forward and backward compatible.
+#
+# The field records criteria that were asked but carry no verdict weight. It was
+# added after runs had already been recorded, so BOTH directions matter: a new
+# report must survive the round trip, and a checkpoint written before the field
+# existed must still load.
+# ---------------------------------------------------------------------------
+
+
+def test_not_applicable_survives_the_round_trip():
+    _isolate("not_applicable_round_trip")
+    state = new_run(PROMPT)
+    state.review = ReviewResult(
+        overall_status="pass",
+        rubric_scores=RubricScores(best_practice_grounding=True),
+        issues=[],
+        requires_refinement=False,
+        not_applicable=["best_practice_grounding"],
+    )
+
+    save_state(state)
+    loaded = load_state(state.run_id)
+
+    assert loaded.review.not_applicable == ["best_practice_grounding"]
+    assert loaded.review == state.review
+
+
+def test_checkpoint_written_before_the_field_existed_still_loads():
+    """An older checkpoint has no `not_applicable` key at all."""
+
+    _isolate("not_applicable_legacy")
+    state = new_run(PROMPT)
+    state.review = ReviewResult(overall_status="fail", requires_refinement=True)
+    path = save_state(state)
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    del payload["review"]["not_applicable"]
+    assert "not_applicable" not in payload["review"]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = load_state(state.run_id)
+
+    # Defaults to empty, which is exactly "nothing was excluded" - the rule that
+    # applied when the checkpoint was written.
+    assert loaded.review.not_applicable == []
+    assert loaded.review.overall_status == "fail"
+
+
+def test_revision_note_survives_the_round_trip():
+    _isolate("revision_note_round_trip")
+    state = new_run(PROMPT)
+    state.blueprint = Blueprint(
+        stakeholder_view="Customers keep shopping during peak sales.",
+        technical_view="Web tier offloads order writes to a queue.",
+        revision_note="Added FEAT-004 to the Data Governance Service.",
+    )
+
+    save_state(state)
+    loaded = load_state(state.run_id)
+
+    assert loaded.blueprint.revision_note == (
+        "Added FEAT-004 to the Data Governance Service."
+    )
+    assert loaded.blueprint == state.blueprint
+
+
+def test_checkpoint_without_revision_note_still_loads():
+    """Every run recorded before this field existed."""
+
+    _isolate("revision_note_legacy")
+    state = new_run(PROMPT)
+    state.blueprint = Blueprint(
+        stakeholder_view="A view.", technical_view="Another view."
+    )
+    path = save_state(state)
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    del payload["blueprint"]["revision_note"]
+    assert "revision_note" not in payload["blueprint"]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = load_state(state.run_id)
+
+    assert loaded.blueprint.revision_note == ""
+    assert loaded.blueprint.stakeholder_view == "A view."

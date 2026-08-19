@@ -7,6 +7,31 @@ Two-phase architecture design:
    repository context, and any Reviewer refinement instruction.
 
 The node returns structured Pydantic artifacts through ArchitectState.
+
+PHASE 1 RUNS ONCE PER RUN, NOT ONCE PER PASS
+--------------------------------------------
+On a REFINE pass the features are REUSED, not re-derived, and only phase 2
+runs. This is not an optimisation that happens to save a call — it is what makes
+the refine loop able to close a finding at all.
+
+Measured, on run `20260818T074835Z-1925fbd7`: every design-quality judgment
+passed on the first attempt, and the single substantive finding was the same one
+in all three rounds — "Feature(s) have no implementing component: FEAT-005",
+with the instruction "Assign FEAT-005 to a component". But phase 1 re-derived
+the feature set from the Context Record on every pass, producing 5 features,
+then 4, then 5. The IDs are positional, so `FEAT-005` on round 2 was a different
+feature from `FEAT-005` on round 1, and on the round that produced only four it
+did not exist at all. The loop was being asked to fix a reference to a thing it
+re-randomised each iteration; ~55k tokens went into that.
+
+Reusing `state.features` makes the IDs stable by construction, so the reviewer's
+instruction still refers to something real on the next pass. Removing one LLM
+call per refine round is the side benefit, not the reason.
+
+Only FEATURES are stabilised. ADR and component IDs are still regenerated every
+pass and have the same drift, which is a real (unfixed) problem — features come
+first because the traceability rubric check keys on feature IDs, so they are
+what the loop is currently unable to converge on.
 """
 
 from __future__ import annotations
@@ -75,6 +100,10 @@ Rules:
 - Detect and address the architectural flaw described by the context or repository.
 - The Blueprint must contain both stakeholder and technical views.
 - Every component must reference at least one related feature ID.
+- Every feature must be implemented: each FEAT-nnn must appear in at least one
+  component's related feature IDs, and in the Blueprint's addressed feature IDs.
+  Check the full feature list before returning — a feature with no
+  implementing component is an incomplete design.
 - Every component must reference at least one related ADR ID where a major
   technical choice justifies it.
 - ADR titles must follow the exact format: ADR-<number>: <decision>.
@@ -83,6 +112,16 @@ Rules:
 - Address cloud, budget, scalability, compliance, and migration constraints
   whenever they are present.
 - Clearly label assumptions and open risks.
+- When <current_design> is present you are REVISING that design, not creating a
+  new one. Keep component names, ADR IDs, the selected pattern, and every
+  decision the findings do not mention EXACTLY as they are. Change only what the
+  refinement instruction requires. Renaming or replacing parts the review did
+  not object to discards work that was already correct.
+- That rule yields to the findings, it does not override them. If a finding
+  requires a structural change to the architecture itself, make it and say so.
+  Never preserve a design the review says is wrong.
+- On a revision, set the Blueprint's revision_note to a brief statement of what
+  you changed and why. Leave it empty on the initial design.
 - Return only the structured output requested by the response schema.
 """.strip()
 
@@ -154,7 +193,7 @@ def _build_architecture_prompt(
 {features_json}
 </derived_features>
 
-<refinement_instruction>
+{_format_current_design(state)}<refinement_instruction>
 {refinement_instruction or "None — create the initial architecture design."}
 </refinement_instruction>
 
@@ -162,36 +201,103 @@ Create the structured Architecture Blueprint, ADRs, and Component Descriptions.
 """.strip()
 
 
+def _format_current_design(state: ArchitectState) -> str:
+    """The previous round's artifacts, for a refine pass to revise. Pure.
+
+    Returns "" when the block does not belong in the prompt, so the caller can
+    interpolate it unconditionally. Two reasons it can be absent:
+
+    * this is the INITIAL design, so there is nothing to revise; or
+    * a refine pass somehow has no artifacts to show. That is a bug upstream -
+      the reviewer only reaches REFINING after judging a design - but the
+      response is to omit the block and let the architect build from the
+      context, exactly as `_reuses_features` re-derives features rather than
+      failing the run over an inconsistency it did not create.
+
+    Emitting EMPTY tags instead would be worse than omitting them: it reads as
+    "the previous design was blank" rather than "there was not one".
+    """
+
+    if not _reuses_features(state):
+        return ""
+    if state.blueprint is None or not state.adrs or not state.components:
+        return ""
+
+    blueprint_json = state.blueprint.model_dump_json(indent=2)
+    adr_json = "[\n" + ",\n".join(
+        adr.model_dump_json(indent=2) for adr in state.adrs
+    ) + "\n]"
+    component_json = "[\n" + ",\n".join(
+        component.model_dump_json(indent=2) for component in state.components
+    ) + "\n]"
+    return (
+        "<current_design>\n"
+        f"BLUEPRINT:\n{blueprint_json}\n\n"
+        f"ADRS:\n{adr_json}\n\n"
+        f"COMPONENTS:\n{component_json}\n"
+        "</current_design>\n\n"
+    )
+
+
+def _reuses_features(state: ArchitectState) -> bool:
+    """Is this a refine pass that already has a feature set to keep? Pure code.
+
+    Two conditions, and the second one is the defensive half. A refine pass with
+    an EMPTY `state.features` is a bug somewhere upstream — the reviewer only
+    reaches `REFINING` after a design that had features — but the response to
+    that is to re-derive them and carry on, not to fail the run over an
+    inconsistency this node did not create.
+    """
+    refining = state.review is not None and state.review.requires_refinement
+    return refining and bool(state.features)
+
+
 @node("architect")
 def architect_node(state: ArchitectState) -> dict:
-    """Run feature derivation first, then architecture design."""
+    """Run feature derivation first, then architecture design.
 
-    # This node is the only one that calls the LLM TWICE, so it reports the SUM
-    # of both phases. `usages` collects them as they happen rather than at the
-    # end, because every validation below can raise between the two calls — the
-    # except clause then hands the already-billed phase-1 tokens to `@node`
-    # instead of losing them. See pipeline/llm.py for the mechanism.
+    TWO LLM calls on the INITIAL design, ONE on a refine pass — see the module
+    docstring for why phase 1 is skipped when refining. Either way this node
+    reports the SUM of the calls it made, so `usages` is what the step and the
+    returned totals are built from rather than a hard-coded count of two.
+
+    `usages` collects each call as it happens rather than at the end, because
+    every validation below can raise between the two calls — the except clause
+    then hands the already-billed phase-1 tokens to `@node` instead of losing
+    them. See pipeline/llm.py for the mechanism.
+    """
     usages: list[LLMUsage] = []
     try:
-        # Phase 1 — feature-first design
-        feature_result: FeatureDesign
-        feature_result, phase1_usage = llm_call(
-            state,
-            _build_feature_prompt(state),
-            system=FEATURE_SYSTEM_PROMPT,
-            model=ARCHITECT_MODEL,
-            response_schema=FeatureDesign,
-        )
-        usages.append(phase1_usage)
+        reuse_features = _reuses_features(state)
 
-        if not feature_result.features:
-            raise ValueError("Architect produced no features.")
+        if reuse_features:
+            # Phase 1 SKIPPED. The IDs the reviewer's instruction names have to
+            # still exist when the architect acts on it, and the only way to
+            # guarantee that is not to regenerate them.
+            features = list(state.features)
+        else:
+            # Phase 1 — feature-first design
+            feature_result: FeatureDesign
+            feature_result, phase1_usage = llm_call(
+                state,
+                _build_feature_prompt(state),
+                system=FEATURE_SYSTEM_PROMPT,
+                model=ARCHITECT_MODEL,
+                response_schema=FeatureDesign,
+            )
+            usages.append(phase1_usage)
+
+            # Only meaningful when phase 1 actually ran: on a refine pass the
+            # features come from a phase 1 that already passed this check.
+            if not feature_result.features:
+                raise ValueError("Architect produced no features.")
+            features = feature_result.features
 
         # Phase 2 — architecture derived from those features
         design_result: ArchitectureDesign
         design_result, phase2_usage = llm_call(
             state,
-            _build_architecture_prompt(state, feature_result.features),
+            _build_architecture_prompt(state, features),
             system=ARCHITECTURE_SYSTEM_PROMPT,
             model=ARCHITECT_MODEL,
             response_schema=ArchitectureDesign,
@@ -204,21 +310,21 @@ def architect_node(state: ArchitectState) -> dict:
         if not design_result.components:
             raise ValueError("Architect produced no Component Descriptions.")
 
-        usage = sum_usage(usages)  # BOTH phases, reported as one per-node total
+        usage = sum_usage(usages)  # every phase THIS pass ran, as one node total
+        verb = "reused" if reuse_features else "derived"
         step = make_step(
             "architect",
             state.stage,
             Stage.DESIGNING,
             (
-                f"derived {len(feature_result.features)} feature(s); "
+                f"{verb} {len(features)} feature(s); "
                 f"generated blueprint, {len(design_result.adrs)} ADR(s), "
                 f"and {len(design_result.components)} component(s)"
             ),
             usage,
         )
 
-        return {
-            "features": feature_result.features,
+        update = {
             "blueprint": design_result.blueprint,
             "adrs": design_result.adrs,
             "components": design_result.components,
@@ -227,6 +333,13 @@ def architect_node(state: ArchitectState) -> dict:
             "input_tokens": usage.input_tokens,
             "output_tokens": usage.output_tokens,
         }
+        if not reuse_features:
+            # Deliberately ABSENT on a refine pass. `features` is a plain
+            # LastValue channel, so leaving the key out is what keeps the
+            # existing list — writing it back would be a no-op today and a trap
+            # the day anything in this function starts copying or re-ordering it.
+            update["features"] = features
+        return update
     except Exception as e:
         if usages:
             attach_usage(e, sum_usage(usages))

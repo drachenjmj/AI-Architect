@@ -15,6 +15,15 @@ mutates the state, or reaches for a second source of truth — so re-running any
 of them against the same state produces the same screen. That is the same
 property that lets a checkpoint reload replay a whole run for free.
 
+`render_context_approval` is the one INTERACTIVE panel in the file, and it keeps
+the rule rather than bending it: it draws the frozen record from the state and
+RETURNS what the human asked for as a plain value. It writes nothing. Every
+write — the edit, the accept, the advisory call — happens in ui.py, which owns
+the REACT half, and lands in the pipeline through `pipeline.agents.clarifier`,
+which is the only writer of a `ContextRecord`. The panel is not allowed to touch
+the record for the same reason the UI is not: there would then be two writers of
+Maheen's schema and no way to tell which one produced a given field.
+
 WHAT IT MAKES VISIBLE (and why that is the point)
 -------------------------------------------------
 The pipeline demonstrates five agentic behaviours, and a behaviour nobody can
@@ -53,10 +62,24 @@ from typing import Sequence
 import streamlit as st
 import streamlit.components.v1 as components
 
+from pipeline.agents.clarifier import (
+    CLARIFIER_LABEL,
+    EDITABLE_RECORD_FIELDS,
+)
+from pipeline.agents.reviewer import ADVISORY_CRITERIA
 from pipeline.llm import PRICING_USD_PER_MTOK
 from pipeline.persistence import runs_dir
-from pipeline.refine_gate import MAX_REFINE_ITERATIONS
-from pipeline.state import ADR, ArchitectState, ComponentDescription, Feature, StepLog
+from pipeline.refine_gate import MAX_REFINE_ITERATIONS, MAX_USER_ROUNDS
+from pipeline.state import (
+    ADR,
+    ArchitectState,
+    ComponentDescription,
+    ContextEdits,
+    ContextRecord,
+    Feature,
+    NOT_APPLICABLE_REASONS,
+    StepLog,
+)
 
 # ── BCG brand palette (widget theme lives in .streamlit/config.toml) ──────
 # Defined here rather than in ui.py so the spine and the sections share one
@@ -650,7 +673,11 @@ def render_review_report(state: ArchitectState) -> None:
 
     verdict = "PASS" if review.overall_status == "pass" else "FAIL"
     with st.expander(
-        f"⚖️  Review report — {verdict}, {len(review.issues)} issue"
+        # "blocking", not "issue". Advisory and not-applicable criteria are
+        # deliberately kept OUT of `issues` (see agents/reviewer.py), so a run
+        # can carry a real complaint and still show zero here. Saying "0 issues"
+        # beside a FAIL, or beside an advisory finding, reads as a contradiction.
+        f"⚖️  Review report — {verdict}, {len(review.issues)} blocking issue"
         f"{'s' if len(review.issues) != 1 else ''}  ·  iteration + quality gate",
         expanded=False,
     ):
@@ -680,18 +707,35 @@ def render_review_report(state: ArchitectState) -> None:
             )
             st.write("")
             for field, label in _LLM_CHECKS:
-                passed = bool(getattr(review.rubric_scores, field, False))
-                mark, color = ("✓", BCG_GREEN) if passed else ("✕", RED)
-                st.markdown(
-                    f"{_tag(mark, color)} &nbsp; {html.escape(label)}",
-                    unsafe_allow_html=True,
-                )
+                # not_applicable FIRST - see the same guard in pipeline/run.py.
+                # The stored boolean is true for these, so checking it first
+                # would paint "no evidence existed" as a green tick.
+                if field in review.not_applicable:
+                    why = NOT_APPLICABLE_REASONS.get(field, "not applicable")
+                    st.markdown(
+                        f"{_tag('n/a', GREY)} &nbsp; {html.escape(label)} &nbsp; "
+                        f"{_tag(html.escape(why) + ' · excluded from verdict', GREY)}",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    passed = bool(getattr(review.rubric_scores, field, False))
+                    mark, color = ("✓", BCG_GREEN) if passed else ("✕", RED)
+                    # See the same note in pipeline/run.py: an advisory ✕ beside
+                    # a PASS verdict needs to say why it did not block.
+                    advisory = (
+                        f" &nbsp; {_tag('advisory · excluded from verdict', GREY)}"
+                        if field in ADVISORY_CRITERIA and not passed else ""
+                    )
+                    st.markdown(
+                        f"{_tag(mark, color)} &nbsp; {html.escape(label)}{advisory}",
+                        unsafe_allow_html=True,
+                    )
                 reason = getattr(review.judgment_reasons, field, "") or ""
                 st.caption(reason.strip() or "_no reason recorded_")
 
         st.divider()
         if review.issues:
-            st.markdown(f"**Issues** — {len(review.issues)}")
+            st.markdown(f"**Blocking issues** — {len(review.issues)}")
             # `st.table`, NOT `st.dataframe`. The interactive grid clips every
             # cell to one line — `column_config` has no wrap option — so the
             # findings, evidence and fixes were unreadable without scrolling
@@ -715,7 +759,29 @@ def render_review_report(state: ArchitectState) -> None:
                 ]
             )
         else:
-            st.caption("No issues were recorded.")
+            st.caption("No blocking issues were recorded.")
+
+        # ADVISORY FINDINGS. A criterion excluded from the verdict still gets
+        # asked and still answers, and its answer can be substantive - in run
+        # 20260819T080216Z-f981f8ef `refinement_readiness` named the exact
+        # unlinked feature while the blocking-issue list was empty. It raises no
+        # ReviewIssue by design, so without this block that finding is visible
+        # only as a red cross in the column above, and the report looks like it
+        # found nothing. Shown, and shown as NOT counting.
+        advisory_findings = [
+            (label, (getattr(review.judgment_reasons, field, "") or "").strip())
+            for field, label in _LLM_CHECKS
+            if field in ADVISORY_CRITERIA
+            and not bool(getattr(review.rubric_scores, field, False))
+        ]
+        if advisory_findings:
+            st.markdown(
+                f"**Advisory findings** — {len(advisory_findings)} &nbsp; "
+                f"{_tag('recorded, excluded from the verdict', GREY)}",
+                unsafe_allow_html=True,
+            )
+            for label, reason in advisory_findings:
+                st.caption(f"**{html.escape(label)}** — {reason or '_no reason recorded_'}")
 
         st.divider()
         st.markdown(
@@ -737,6 +803,220 @@ def render_review_report(state: ArchitectState) -> None:
 # ══════════════════════════════════════════════════════════════════════════
 # H. Full artifact detail
 # ══════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════
+# The context lock — the human's veto, before anything is spent on the record
+# ══════════════════════════════════════════════════════════════════════════
+# Field name -> the words a person would use for it. Only the ones that need
+# rewording are listed; anything else falls back to its own name, title-cased,
+# so adding a field to `ContextRecord` shows up here without a second edit.
+_FIELD_LABELS: dict[str, str] = {
+    "project_name": "Project name",
+    "business_goal": "Business goal",
+    "problem_statement": "Problem statement",
+    "users": "Users and stakeholders",
+    "functional_requirements": "Functional requirements",
+    "non_functional_requirements": "Non-functional requirements (scale, availability)",
+    "cloud_provider": "Cloud provider",
+    "budget": "Budget",
+    "compliance_requirements": "Compliance requirements",
+    "existing_systems": "Existing systems",
+}
+
+# A list field is edited as a textarea, ONE ITEM PER LINE. That is this caller's
+# convention, not the schema's (`ContextEdits` deliberately takes real lists) —
+# the CLI, which has one line to work with, comma-separates instead.
+_LIST_HELP = "One per line."
+
+
+def _field_label(name: str) -> str:
+    return _FIELD_LABELS.get(name, name.replace("_", " ").capitalize())
+
+
+def _record_nonce(record: ContextRecord) -> str:
+    """A short id that changes whenever the record does. Used only in widget keys.
+
+    Streamlit remembers a widget by its key and ignores the `value=` you pass on
+    later reruns, so a stable key would keep showing the text a field held BEFORE
+    the clarifier re-judged it — the human would strike a value, watch the panel
+    redraw, and see the struck value still sitting in the box. Rotating the keys
+    with the record's content is what makes the panel show the record rather than
+    a memory of it.
+    """
+    return f"{abs(hash(record.model_dump_json())):x}"
+
+
+def _render_advisory_thread(state: ArchitectState) -> None:
+    """Replay the read-only questions asked at this gate, oldest first.
+
+    Drawn from `state.advisory_turns`, not from a UI session variable, which is
+    why it survives a rerun, a page refresh and a checkpoint reload — the same
+    reason the rest of the conversation is derived from the state object.
+    """
+    for turn in state.advisory_turns:
+        with st.chat_message("user"):
+            st.write(turn.question)
+        with st.chat_message("assistant"):
+            st.write(turn.answer)
+
+
+def render_context_approval(state: ArchitectState) -> tuple[str, object] | None:
+    """The approval panel. Returns the human's intent, or None if they did nothing.
+
+    One of:
+        ("accept", None)            approve the record as it stands
+        ("edit",   ContextEdits)    a veto pass — fields, strikes, answers, "you recommend"
+        ("ask",    "question")      a read-only question; resolves nothing
+        None                        this rerun carried no submission
+
+    Returning the intent instead of acting on it is what keeps this file
+    DRAW-only (see the module docstring): ui.py performs every write, and every
+    write goes through `pipeline.agents.clarifier`.
+
+    The edits and the question are two separate forms on purpose. Batching an
+    edit is right — nothing should fire until the whole veto pass is submitted —
+    but batching a QUESTION with it would mean you could not ask what a field
+    means without also submitting your changes to it.
+    """
+    record = state.context_record
+    if record is None:  # defensive: the gate is only reachable with a record
+        _missing("Context Lock", "no record was locked, so there is nothing to approve.")
+        return None
+
+    nonce = _record_nonce(record)
+    st.markdown("#### Approve the ground truth before any design work starts")
+    st.caption(
+        "Everything below was either taken from your request or assumed on your "
+        "behalf. Nothing has been researched, designed or reviewed yet — so a "
+        "correction here costs nothing, and the same correction after the design "
+        "costs the whole run. Change what is wrong, strike what you do not "
+        "accept, then approve."
+    )
+
+    with st.form(f"context_gate_{nonce}"):
+        st.markdown("**The record**")
+        edited: dict[str, str | list[str]] = {}
+        for name in EDITABLE_RECORD_FIELDS:
+            current = getattr(record, name)
+            label = _field_label(name)
+            if isinstance(current, list):
+                text = st.text_area(
+                    label,
+                    value="\n".join(str(v) for v in current),
+                    help=_LIST_HELP,
+                    height=90,
+                    key=f"cg_field_{name}_{nonce}",
+                )
+                edited[name] = [line.strip() for line in text.splitlines() if line.strip()]
+            else:
+                edited[name] = st.text_input(
+                    label,
+                    value=str(current),
+                    key=f"cg_field_{name}_{nonce}",
+                ).strip()
+
+        recommend = st.multiselect(
+            "I do not know — you recommend",
+            options=list(EDITABLE_RECORD_FIELDS),
+            format_func=_field_label,
+            help=(
+                "The clarifier proposes a value with a one-line reason, recorded "
+                "as its own labelled assumption. It comes back here for you to "
+                "accept or override — the same veto, in the other direction."
+            ),
+            key=f"cg_recommend_{nonce}",
+        )
+
+        struck: list[str] = []
+        if record.assumptions:
+            st.markdown("**Assumptions — tick anything you do not accept**")
+            st.caption(
+                f"`{CLARIFIER_LABEL}` marks a value the clarifier filled in "
+                f"instead of asking you. A struck assumption stays struck: it "
+                f"will not be proposed again later in this run."
+            )
+            for assumption in record.assumptions:
+                if st.checkbox(assumption, key=f"cg_strike_{assumption}_{nonce}"):
+                    struck.append(assumption)
+
+        answered: dict[str, str] = {}
+        if record.open_questions:
+            st.markdown("**Open questions — answer any you can**")
+            st.caption(
+                "These travel with the record to the Architect. Answering one "
+                "resolves it and adds your answer to the run's Q&A."
+            )
+            for question in record.open_questions:
+                reply = st.text_input(question, key=f"cg_oq_{question}_{nonce}")
+                if reply.strip():
+                    answered[question] = reply.strip()
+
+        left, right = st.columns(2)
+        with left:
+            save = st.form_submit_button("Save changes", use_container_width=True)
+        with right:
+            accept = st.form_submit_button(
+                "✓ Approve and continue", type="primary", use_container_width=True
+            )
+
+    if accept:
+        return "accept", None
+    if save:
+        # Only fields that ACTUALLY changed are sent. An untouched box is not an
+        # edit, and passing it as one would make every save look like a rewrite
+        # of the whole record in the trace.
+        changed = {
+            name: value
+            for name, value in edited.items()
+            if value != getattr(record, name)
+        }
+        edits = ContextEdits(
+            fields=changed,
+            struck_assumptions=struck,
+            answered_questions=answered,
+            recommend=list(recommend),
+        )
+        return None if edits.is_empty() else ("edit", edits)
+
+    st.divider()
+    st.markdown("**Ask about this record**")
+    st.caption(
+        "Read-only. It does not enter the pipeline, change the record or resolve "
+        "this approval — ask as many as you like. It does spend tokens, so it is "
+        "billed to the run trace under its own agent."
+    )
+    _render_advisory_thread(state)
+    with st.form(f"context_gate_ask_{nonce}", clear_on_submit=True):
+        question = st.text_input(
+            "Your question",
+            placeholder="e.g. why does expected scale matter here? what do teams usually pick?",
+            label_visibility="collapsed",
+        )
+        asked = st.form_submit_button("Ask")
+    if asked and question.strip():
+        return "ask", question.strip()
+    return None
+
+
+def render_user_rounds(state: ArchitectState) -> None:
+    """How much of the re-judge budget is left. Silent until any of it is spent.
+
+    The same honesty rule the cost figures follow: a cap the user cannot see is
+    a cap that surprises them at the worst moment.
+
+    Only ONE action spends this — an edit that reopens a gap and sends the
+    record back to the clarifier. Answering questions, approving the record and
+    asking about it are all free, so a run that never edits never sees this line
+    at all (see `ArchitectState.user_rounds`).
+    """
+    if not state.user_rounds:
+        return
+    left = max(MAX_USER_ROUNDS - state.user_rounds, 0)
+    st.caption(
+        f"Re-judges used: {state.user_rounds} of {MAX_USER_ROUNDS} ({left} left). "
+        f"Only an edit that reopens a gap costs one — approving and asking are free."
+    )
+
+
 def render_context_record(state: ArchitectState) -> None:
     """The frozen context — every field, not just the one-line summary."""
     record = state.context_record
@@ -811,6 +1091,9 @@ def render_blueprint(state: ArchitectState) -> None:
             f"{blueprint.blueprint_id} · v{blueprint.version}"
             + (f" · {blueprint.project_name}" if blueprint.project_name else "")
         )
+        # Shown to the human, never to the reviewer - see agents/reviewer.py.
+        if blueprint.revision_note.strip():
+            st.info(f"**Revised this round** — {blueprint.revision_note.strip()}")
         _text("Selected pattern", blueprint.selected_pattern)
         _text("Rationale", blueprint.rationale)
 

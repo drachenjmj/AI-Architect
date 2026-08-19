@@ -10,6 +10,9 @@ Rubric v2 keeps the decision boundary explicit:
 """
 from __future__ import annotations
 
+import re
+from typing import Sequence
+
 from pydantic import BaseModel, Field
 
 from pipeline.agents.base import make_step, node
@@ -18,6 +21,7 @@ from pipeline.review_checks import DeterministicChecks, run_deterministic_checks
 from pipeline.state import (
     ArchitectState,
     JudgmentReasons,
+    NOT_APPLICABLE_REASONS,
     ReviewIssue,
     ReviewResult,
     RubricScores,
@@ -134,14 +138,140 @@ _CRITERION_ISSUES = {
 }
 
 
+# REFINEMENT-INSTRUCTION ASSEMBLY. This string is the only channel by which a
+# review reaches the next architect pass, so it has to carry the EVIDENCE and
+# not merely the fix. Run 20260818T194159Z-107ff26e is the case this shape
+# exists to prevent. Its one high-severity issue found "Constraint group(s) not
+# addressed in the design: budget", but the instruction was assembled from
+# `suggested_fix` alone, so what the architect actually received was the
+# generic default: "Address each stated constraint explicitly in the Blueprint,
+# ADRs, or Component Descriptions." It was never told WHICH constraint was
+# missing, could not close the gap, and `constraint_coverage` stayed at 1 for
+# all three rounds.
+#
+# The same run also lost its single most useful instruction to FILTERING. The
+# old `[high] or issues` expression dropped every medium whenever any high
+# existed, discarding an LLM-written medium that read "justify the
+# cost-effectiveness of the proposed AWS services (SQS, RDS Replicas) relative
+# to the 'Medium' budget constraint" — specific, actionable, and thrown away in
+# favour of boilerplate. So this assembler RANKS by severity and drops nothing
+# except past a stated cap.
+_MAX_INSTRUCTION_ISSUES = 8
+_SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+_FINDING_LIMIT = 200
+_FIX_LIMIT = 240
+_EVIDENCE_LIMIT = 200
+
+# The instruction is interpolated into a `<refinement_instruction>` block in the
+# architect prompt (see agents/architect.py), and `finding` / `evidence` /
+# `suggested_fix` are partly LLM-authored text. A stray delimiter in that text
+# would close the block early and hand the model whatever followed as prompt
+# rather than as data. Stripped rather than escaped: the tag carries no meaning
+# worth preserving inside a finding.
+_INSTRUCTION_TAG_RE = re.compile(r"</?\s*refinement_instruction\s*>", re.IGNORECASE)
+
+
+def _clean(text: str) -> str:
+    """Strip block delimiters and collapse whitespace. Pure."""
+
+    return " ".join(_INSTRUCTION_TAG_RE.sub("", text or "").split())
+
+
+def _clip(text: str, limit: int) -> str:
+    """Truncate on a word boundary. Pure.
+
+    Per-field truncation is what keeps the instruction small enough to sit in
+    every refine prompt without crowding out the artifacts it is judging.
+    """
+
+    if len(text) <= limit:
+        return text
+    return text[:limit].rsplit(" ", 1)[0].rstrip(" ,;:.") + "..."
+
+
+def _restates_finding(evidence: str, finding: str) -> bool:
+    """Would this evidence just repeat the finding? Pure."""
+
+    left = evidence.lower().rstrip(".")
+    right = finding.lower().rstrip(".")
+    if not left:
+        return True
+    return left in right or right in left
+
+
+def _build_refinement_instruction(issues: list[ReviewIssue]) -> str:
+    """Assemble the architect's instruction from the issue list. Pure.
+
+    Deterministic by construction: the sort is stable and keyed ONLY on
+    severity, so issues of equal severity keep their original list order and
+    the same `ReviewResult` always yields a byte-identical string.
+    """
+
+    if not issues:
+        # The review can fail with no issues attached — a code score below 2
+        # with every judgment passing does it. Never hand the architect an
+        # empty instruction on a failing review.
+        return "Address the listed issues and resubmit the design."
+
+    rendered: list[list[str]] = []
+    seen: set[tuple[str, str]] = set()
+    for issue in sorted(
+        issues, key=lambda issue: _SEVERITY_ORDER.get(issue.severity, 2)
+    ):
+        finding = _clip(_clean(issue.finding), _FINDING_LIMIT)
+        fix = _clip(_clean(issue.suggested_fix), _FIX_LIMIT)
+        # Deduplicate on the RENDERED pair rather than the raw one, so that no
+        # two visible entries can read identically.
+        key = (finding, fix)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        lines = [f"[{issue.severity}] {finding or 'Unspecified issue.'}"]
+        # Evidence on highs only. That is where the reviewer's reasoning lives
+        # and where the architect most needs it; on mediums it is bulk paid for
+        # in every subsequent prompt.
+        if issue.severity == "high":
+            evidence = _clip(_clean(issue.evidence), _EVIDENCE_LIMIT)
+            if not _restates_finding(evidence, finding):
+                lines.append(f"Evidence: {evidence}")
+        if fix:
+            lines.append(f"Fix: {fix}")
+        rendered.append(lines)
+
+    kept = rendered[:_MAX_INSTRUCTION_ISSUES]
+    omitted = len(rendered) - len(kept)
+
+    body: list[str] = []
+    for number, lines in enumerate(kept, start=1):
+        body.append(f"{number}. {lines[0]}")
+        body.extend(f"   {line}" for line in lines[1:])
+
+    text = (
+        f"The review found {len(rendered)} issue(s). "
+        "Address them in priority order.\n\n" + "\n".join(body)
+    )
+    if omitted:
+        # Say so. A silent cap reads as "that was everything" when it wasn't.
+        text += f"\n\n({omitted} further lower-severity issue(s) omitted.)"
+    return text
+
+
 def _format_artifacts(state: ArchitectState) -> str:
     """Serialize only the generated artifacts the qualitative review needs."""
 
     feature_json = "[\n" + ",\n".join(
         feature.model_dump_json(indent=2) for feature in state.features
     ) + "\n]"
+    # `revision_note` is EXCLUDED, deliberately. It is the architect's own
+    # account of what it just changed and why, written on a refine pass. Feeding
+    # it to the judge that grades the result would let the design argue its own
+    # case: a model that states it addressed a finding tends to be believed,
+    # and the whole point of this reviewer is that the artifacts are checked
+    # rather than taken at their word. The note is still persisted and still
+    # shown to a human - it just is not evidence.
     blueprint_json = (
-        state.blueprint.model_dump_json(indent=2)
+        state.blueprint.model_dump_json(indent=2, exclude={"revision_note"})
         if state.blueprint is not None
         else "null"
     )
@@ -194,11 +324,97 @@ def _judgment_items(judgments: LLMJudgments):
         yield name, getattr(judgments, name)
 
 
+# The four code-owned scores, every one of which must be 2. Named here so the
+# verdict rule reads as a list of criteria rather than a hand-written `and`.
+_CODE_SCORES = (
+    "all_artifacts_present",
+    "constraint_coverage",
+    "traceability",
+    "adr_presence",
+)
+
+# The judgments that CAN block the verdict. `refinement_readiness` is absent by
+# design - see ADVISORY_CRITERIA below.
+_VERDICT_JUDGMENTS = (
+    "repo_grounding",
+    "flaw_detection",
+    "adr_soundness",
+    "best_practice_grounding",
+)
+
+# ASKED, RECORDED, AND ADVISORY. This is the fallback the old comment at this
+# spot agreed to in advance, now taken, and the evidence that triggered it is
+# run 20260818T194159Z-107ff26e: `refinement_readiness` answered NO with the
+# reason "The deterministic checks identify that the 'Medium' budget constraint
+# remains unaddressed" - it failed BECAUSE another check had failed, then raised
+# its own issue about that same failure. Circular, and as the fifth term of an
+# AND it could veto a design nothing else objected to.
+#
+# So it is still asked, and its answer and reason still appear in
+# `rubric_scores` and `judgment_reasons`, because a judgment that disagrees with
+# its own instruction is evidence about the judge and hiding it loses that. It
+# is simply no longer allowed to decide anything, and no longer generates a
+# ReviewIssue - the issue it raised was always a duplicate of the finding that
+# provoked it.
+#
+# NOT fixed by softening its prompt, and NOT removed from the schema. If it ever
+# starts agreeing with the other four, that agreement is worth having on record.
+ADVISORY_CRITERIA = ("refinement_readiness",)
+
+
+def derive_verdict(
+    rubric_scores: RubricScores,
+    issues: list[ReviewIssue],
+    not_applicable: Sequence[str] = (),
+) -> tuple[bool, list[str]]:
+    """The pass/fail rule, pure and inspectable. Returns (passed, blocking).
+
+    `blocking` names every criterion that failed, so a report can say WHY the
+    verdict was no. Order is fixed - code scores, then judgments, then the
+    severity gate - so the same report always yields the same list.
+
+    Kept free of `DeterministicChecks` and of the LLM reply on purpose: a stored
+    `ReviewResult` carries everything this needs, which is what lets
+    eval/replay_reviews.py re-derive historical verdicts off disk.
+    """
+
+    blocking: list[str] = []
+
+    for name in _CODE_SCORES:
+        if getattr(rubric_scores, name, 0) != 2:
+            blocking.append(name)
+
+    for name in _VERDICT_JUDGMENTS:
+        if name in not_applicable:
+            # No evidence existed for this judgment to be ABOUT, so it is not a
+            # pass and not a fail. See ReviewResult.not_applicable.
+            continue
+        if not getattr(rubric_scores, name, False):
+            blocking.append(name)
+
+    if any(issue.severity == "high" for issue in issues):
+        blocking.append("high_severity_issue")
+
+    return not blocking, blocking
+
+
 def _assemble_report(
     judgments: LLMJudgments,
     checks: DeterministicChecks,
+    knowledge_retrieved: bool,
 ) -> ReviewResult:
     """Build the complete report and verdict in deterministic Python."""
+
+    # NOT APPLICABLE, not passed. With `retrieved_knowledge` empty there is
+    # nothing for `best_practice_grounding` to be a judgment ABOUT, and the
+    # answer proved it: across two runs with an equally empty knowledge base it
+    # came back false in one and true in the other. Same absent evidence,
+    # opposite verdicts - the criterion is unanchored, not merely strict. It is
+    # still asked (the schema is unchanged) and its reason is still recorded;
+    # its ANSWER is what gets ignored.
+    not_applicable: list[str] = []
+    if not knowledge_retrieved:
+        not_applicable.append("best_practice_grounding")
 
     rubric = RubricScores(
         all_artifacts_present=checks.score_all_artifacts_present,
@@ -208,7 +424,13 @@ def _assemble_report(
         repo_grounding=judgments.repo_grounding.passed,
         flaw_detection=judgments.flaw_detection.passed,
         adr_soundness=judgments.adr_soundness.passed,
-        best_practice_grounding=judgments.best_practice_grounding.passed,
+        # True so that nothing reading this boolean breaks. `not_applicable` is
+        # what keeps it honest, and every renderer consults that FIRST.
+        best_practice_grounding=(
+            True
+            if "best_practice_grounding" in not_applicable
+            else judgments.best_practice_grounding.passed
+        ),
         refinement_readiness=judgments.refinement_readiness.passed,
     )
     reasons = JudgmentReasons(
@@ -221,6 +443,12 @@ def _assemble_report(
     qualitative_issues: list[ReviewIssue] = []
     for name, judgment in _judgment_items(judgments):
         if judgment.passed:
+            continue
+        if name in ADVISORY_CRITERIA or name in not_applicable:
+            # Recorded in the rubric above, but never raised as a finding. An
+            # advisory criterion's issue only ever restated the failure that
+            # provoked it, and a not-applicable one has no evidence to base a
+            # finding on.
             continue
         severity, category, finding, default_fix = _CRITERION_ISSUES[name]
         qualitative_issues.append(
@@ -236,29 +464,16 @@ def _assemble_report(
         )
 
     issues = checks.issues + qualitative_issues
-    code_items_full = all(
-        score == 2
-        for score in (
-            rubric.all_artifacts_present,
-            rubric.constraint_coverage,
-            rubric.traceability,
-            rubric.adr_presence,
-        )
-    )
-    judged_items_pass = all(
-        judgment.passed
-        for _, judgment in _judgment_items(judgments)
-    )
-    has_high_severity_issue = any(issue.severity == "high" for issue in issues)
-    passed = code_items_full and judged_items_pass and not has_high_severity_issue
+    # The rule itself lives in derive_verdict: pure, and reachable from a stored
+    # ReviewResult alone, which is what lets eval/replay_reviews.py re-derive
+    # historical verdicts without an LLM. `blocking` is recomputed there rather
+    # than stored - it is a function of what is already in the report.
+    passed, _blocking = derive_verdict(rubric, issues, not_applicable)
 
     if passed:
         instruction = ""
     else:
-        prioritized = [issue for issue in issues if issue.severity == "high"] or issues
-        instruction = " ".join(
-            issue.suggested_fix for issue in prioritized[:3]
-        ).strip() or "Address the listed issues and resubmit the design."
+        instruction = _build_refinement_instruction(issues)
 
     return ReviewResult(
         overall_status="pass" if passed else "fail",
@@ -267,6 +482,7 @@ def _assemble_report(
         issues=issues,
         requires_refinement=not passed,
         refinement_instruction=instruction,
+        not_applicable=not_applicable,
     )
 
 
@@ -288,7 +504,9 @@ def reviewer_node(state: ArchitectState) -> dict:
             model=REVIEWER_MODEL,
             response_schema=LLMJudgments,
         )
-        report = _assemble_report(judgments, checks)
+        report = _assemble_report(
+            judgments, checks, knowledge_retrieved=bool(state.retrieved_knowledge)
+        )
         stage_out = Stage.REFINING if report.requires_refinement else Stage.DONE
         step = make_step(
             "reviewer",

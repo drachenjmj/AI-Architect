@@ -249,7 +249,7 @@ if __name__ == "__main__":
 
     s = new_run("We need an event-driven redesign of our checkout.")
     print("saved:", save_state(s))
-    s.log_step("clarifier", Stage.AWAITING_INPUT, "asked 2 questions")
+    s.log_step("clarifier", Stage.AWAITING_HUMAN, "asked 2 questions")
     print("saved:", save_state(s))
 
     assert load_state(s.run_id) == s
