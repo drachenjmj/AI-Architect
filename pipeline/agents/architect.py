@@ -32,6 +32,23 @@ Only FEATURES are stabilised. ADR and component IDs are still regenerated every
 pass and have the same drift, which is a real (unfixed) problem — features come
 first because the traceability rubric check keys on feature IDs, so they are
 what the loop is currently unable to converge on.
+
+TWO INSTRUCTION BLOCKS, RANKED (feature A)
+-------------------------------------------
+A refine pass can now carry `<user_directive>` as well as
+`<refinement_instruction>`. They are kept apart in the prompt and apart in the
+state: the reviewer is the only writer of `review.refinement_instruction`, so
+everything in that field is a finding, and everything in the directive block is
+a person. Overloading one field with both would have been the smaller change and
+would have cost the trail its ability to answer "who asked for this?", which is
+the question the trail exists for.
+
+The ranking needed a matching change to the PRESERVATION rule, or it would have
+been ranking with no effect. That rule tells the architect to keep component
+names, ADR IDs and every decision the findings do not mention — and a user
+directive is not a finding, so as written it would have faithfully preserved the
+exact thing the human asked to change. The rule now has three exits: the
+findings, structural necessity, and the user's direction.
 """
 
 from __future__ import annotations
@@ -120,6 +137,12 @@ Rules:
 - That rule yields to the findings, it does not override them. If a finding
   requires a structural change to the architecture itself, make it and say so.
   Never preserve a design the review says is wrong.
+- It also yields to <user_directive>. Anything the user names there is a licence
+  to change: revise it as instructed even though no finding mentions it.
+  Everything the user did NOT mention still keeps its names, IDs and decisions.
+- <user_directive> is the human who owns this system speaking, and it OUTRANKS
+  <refinement_instruction>. Follow both wherever they are compatible; where they
+  conflict, do what the user asked and say so in the revision_note.
 - On a revision, set the Blueprint's revision_note to a brief statement of what
   you changed and why. Leave it empty on the initial design.
 - Return only the structured output requested by the response schema.
@@ -176,6 +199,21 @@ def _build_architecture_prompt(
     if state.review is not None and state.review.requires_refinement:
         refinement_instruction = state.review.refinement_instruction
 
+    # The two instruction blocks are SEPARATE and stay that way. Folding the
+    # user's words into `review.refinement_instruction` would be the cheaper
+    # edit and would destroy the one thing the trail exists to answer: who asked
+    # for this change? That field has a single writer — the reviewer — so
+    # everything in it is a finding, and everything here is a person.
+    directives = state.pending_feedback("design")
+    user_directive = "\n\n".join(entry.text for entry in directives)
+
+    current_design = _format_current_design(state)
+    no_instruction = (
+        "None — revise the design above only as <user_directive> asks."
+        if current_design
+        else "None — create the initial architecture design."
+    )
+
     return f"""
 <context_record>
 {context_json}
@@ -193,8 +231,12 @@ def _build_architecture_prompt(
 {features_json}
 </derived_features>
 
-{_format_current_design(state)}<refinement_instruction>
-{refinement_instruction or "None — create the initial architecture design."}
+{current_design}<user_directive>
+{user_directive or "None — no direction from the user this pass."}
+</user_directive>
+
+<refinement_instruction>
+{refinement_instruction or no_instruction}
 </refinement_instruction>
 
 Create the structured Architecture Blueprint, ADRs, and Component Descriptions.
@@ -205,9 +247,12 @@ def _format_current_design(state: ArchitectState) -> str:
     """The previous round's artifacts, for a refine pass to revise. Pure.
 
     Returns "" when the block does not belong in the prompt, so the caller can
-    interpolate it unconditionally. Two reasons it can be absent:
+    interpolate it unconditionally. Three reasons it can be absent:
 
-    * this is the INITIAL design, so there is nothing to revise; or
+    * this is the INITIAL design, so there is nothing to revise;
+    * a user correction superseded the Context Record, so the design that exists
+      answers a question that has changed and is not a thing to revise. The
+      cleared `state.features` is what says so - see pipeline/user_feedback.py; or
     * a refine pass somehow has no artifacts to show. That is a bug upstream -
       the reviewer only reaches REFINING after judging a design - but the
       response is to omit the block and let the architect build from the
@@ -239,17 +284,41 @@ def _format_current_design(state: ArchitectState) -> str:
     )
 
 
-def _reuses_features(state: ArchitectState) -> bool:
-    """Is this a refine pass that already has a feature set to keep? Pure code.
+def _is_revision(state: ArchitectState) -> bool:
+    """Is this pass REVISING an existing design, rather than creating one?
 
-    Two conditions, and the second one is the defensive half. A refine pass with
-    an EMPTY `state.features` is a bug somewhere upstream — the reviewer only
+    Two ways to be, and neither is a judgment about the text:
+
+      * the reviewer failed the design and asked for changes; or
+      * the human sent a design directive from the finished-run screen. This
+        one matters most when the review PASSED: the run reached DONE cleanly,
+        the person read the design and asked for one thing to change, and
+        without this the architect would treat their directive as a blank-page
+        brief and rebuild from the Context Record — throwing away the very
+        design they were commenting on. A directive is a request to change one
+        thing, which presupposes keeping the rest.
+    """
+    return (
+        (state.review is not None and state.review.requires_refinement)
+        or bool(state.pending_feedback("design"))
+    )
+
+
+def _reuses_features(state: ArchitectState) -> bool:
+    """Is this a revision that already has a feature set to keep? Pure code.
+
+    Two conditions, and the second one is the defensive half. A revision pass
+    with an EMPTY `state.features` is normally a bug upstream — the reviewer only
     reaches `REFINING` after a design that had features — but the response to
     that is to re-derive them and carry on, not to fail the run over an
     inconsistency this node did not create.
+
+    It is also the deliberate signal on one path: a requirements correction
+    clears `state.features` precisely BECAUSE the record they were derived from
+    has been superseded (see pipeline/user_feedback.py). Re-deriving them is then
+    the correct answer, not a fallback.
     """
-    refining = state.review is not None and state.review.requires_refinement
-    return refining and bool(state.features)
+    return _is_revision(state) and bool(state.features)
 
 
 @node("architect")
@@ -269,6 +338,11 @@ def architect_node(state: ArchitectState) -> dict:
     usages: list[LLMUsage] = []
     try:
         reuse_features = _reuses_features(state)
+        # Read BEFORE the calls, marked applied only after they all succeed. A
+        # pass that raises leaves the directive `pending`, so the next architect
+        # pass still carries it — text the human typed is never consumed by a
+        # design that does not exist.
+        directives = state.pending_feedback("design")
 
         if reuse_features:
             # Phase 1 SKIPPED. The IDs the reviewer's instruction names have to
@@ -312,15 +386,18 @@ def architect_node(state: ArchitectState) -> dict:
 
         usage = sum_usage(usages)  # every phase THIS pass ran, as one node total
         verb = "reused" if reuse_features else "derived"
+        note = (
+            f"{verb} {len(features)} feature(s); "
+            f"generated blueprint, {len(design_result.adrs)} ADR(s), "
+            f"and {len(design_result.components)} component(s)"
+        )
+        if directives:
+            note += f"; applied {len(directives)} user directive(s)"
         step = make_step(
             "architect",
             state.stage,
             Stage.DESIGNING,
-            (
-                f"{verb} {len(features)} feature(s); "
-                f"generated blueprint, {len(design_result.adrs)} ADR(s), "
-                f"and {len(design_result.components)} component(s)"
-            ),
+            note,
             usage,
         )
 
@@ -339,6 +416,12 @@ def architect_node(state: ArchitectState) -> dict:
             # existing list — writing it back would be a no-op today and a trap
             # the day anything in this function starts copying or re-ordering it.
             update["features"] = features
+        if directives:
+            # The receipt for the directive, written on the same update as the
+            # design that carries it out. Also a LastValue channel, so this is
+            # the whole list with those entries flipped — see
+            # `ArchitectState.feedback_marked_applied`.
+            update["user_feedback"] = state.feedback_marked_applied(directives)
         return update
     except Exception as e:
         if usages:

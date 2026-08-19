@@ -52,6 +52,17 @@ record goes through `apply_user_edits` here; nothing outside this file ever
 assigns to a `ContextRecord` field. That is what keeps "the clarifier owns
 Maheen's schema" true now that the record is editable.
 
+Feature A (user feedback at DONE) tested that rule and did not bend it. A
+requirements correction typed on the finished-run screen is NOT written into the
+record by the UI: `pipeline/user_feedback.py` files it as a clarification answer
+and sends the run back HERE, and this node re-judges and re-freezes. What comes
+out is a new VERSION of the record — `version` bumped, `revision_reason` set
+from the human's own words, and the outgoing record pushed onto
+`state.context_history` rather than overwritten. The record stays frozen per
+version, which is the property that lets the trail say "the v1 design was
+correct given what we knew at v1" instead of quietly rewriting history so that
+every past decision looks wrong.
+
 WHEN THE MODEL RUNS AGAIN, AND WHEN IT MUST NOT
 ------------------------------------------------
 An edit only needs re-judging if it OPENS A GAP. Filling or replacing a value
@@ -332,6 +343,8 @@ def _freeze_context_record(
     *,
     absorbed_gaps: Sequence[str] = (),
     vetoed_assumptions: Sequence[str] = (),
+    previous: ContextRecord | None = None,
+    revision_reason: str = "",
 ) -> ContextRecord:
     """Distil the completed clarification into Maheen's frozen ContextRecord.
 
@@ -351,6 +364,14 @@ def _freeze_context_record(
     `vetoed_assumptions` are struck verbatim. A model re-proposing something the
     human just rejected is the ordinary case, not the exotic one, and the prompt
     asking it not to is not a guarantee.
+
+    `previous` is the record this one SUPERSEDES, when there is one, and it makes
+    the new record the next VERSION rather than a silent replacement — with
+    `revision_reason` saying why it exists, in the human's own words where they
+    supplied them. A record is frozen per version, which is what lets the audit
+    trail say "the v1 design was correct given what we knew at v1"; the caller
+    (the node) is what keeps the outgoing version by pushing it onto
+    `context_history`.
     """
     c = result.captured
     vetoed = set(vetoed_assumptions)
@@ -390,6 +411,10 @@ def _freeze_context_record(
         assumptions=assumptions,
         open_questions=open_questions,
         summary=_summary_line(c),
+        version=(previous.version + 1) if previous is not None else 1,
+        # Only a revision has a reason to give. On a first freeze there is
+        # nothing being revised, so an explanation here would be fiction.
+        revision_reason=revision_reason if previous is not None else "",
     )
     return record
 
@@ -678,6 +703,21 @@ def _may_ask(state: ArchitectState) -> bool:
     return state.context_record is None and state.ask_rounds < MAX_ASK_ROUNDS
 
 
+def _revision_reason(state: ArchitectState) -> str:
+    """Why the record is being re-frozen, in the human's words where there are any.
+
+    A re-judge has exactly two causes, and both are the human: a correction typed
+    into the requirements box at DONE (feature A), or an edit at the context gate
+    that emptied a critical field. The first one carries its own text, so the
+    reason IS that text; the second one has no text to carry, so it gets a plain
+    statement of what happened rather than a guess at a motive.
+    """
+    corrections = state.pending_feedback("requirements")
+    if corrections:
+        return "\n\n".join(entry.text for entry in corrections)
+    return "Re-judged after the record was reopened by an edit at the context gate."
+
+
 def _can_ask(state: ArchitectState, result: ClarificationResult) -> bool:
     """May this turn pause, AND is there anything to pause with?
 
@@ -740,11 +780,35 @@ def clarifier_node(state: ArchitectState) -> dict:
         # remaining gaps become labelled assumptions the human can see and veto
         # rather than questions nobody will answer. Either way: LOCK.
         absorbed = list(result.missing_critical)
+        superseded = state.context_record
+        corrections = state.pending_feedback("requirements")
         context_record = _freeze_context_record(
             result,
             absorbed_gaps=absorbed,
             vetoed_assumptions=state.vetoed_assumptions,
+            previous=superseded,
+            revision_reason=_revision_reason(state),
         )
+
+        # Everything a re-freeze owes the trail, assembled once and returned by
+        # BOTH lock branches below — the record's own history, and the receipt
+        # for any correction that caused it. Empty on a first freeze, so the
+        # branches interpolate it unconditionally.
+        revision_update: dict = {}
+        if superseded is not None:
+            # The outgoing version is KEPT, not overwritten: the artifacts of
+            # the last round were built against it, and a trail that cannot show
+            # what was believed at the time cannot defend what was decided then.
+            revision_update["context_history"] = [*state.context_history, superseded]
+            note_suffix = f"; record v{context_record.version} supersedes v{superseded.version}"
+        else:
+            note_suffix = ""
+        if corrections:
+            # Consumed here and nowhere else: the correction is IN this record
+            # now. Marking it applied in the returned update means an entry can
+            # only ever be marked by the pass that actually landed it.
+            revision_update["user_feedback"] = state.feedback_marked_applied(corrections)
+            note_suffix += f"; applied {len(corrections)} user correction(s)"
 
         # 3. THE GATE. Approval required → stop and let the human veto before a
         # single research/design/review token is spent on this ground truth.
@@ -753,7 +817,9 @@ def clarifier_node(state: ArchitectState) -> dict:
             note = f"context locked for approval; {len(context_record.assumptions)} assumption(s)"
             if absorbed:
                 note += f", {len(absorbed)} gap(s) assumed rather than asked"
-            step = make_step("clarifier", state.stage, Stage.AWAITING_HUMAN, note, usage)
+            step = make_step(
+                "clarifier", state.stage, Stage.AWAITING_HUMAN, note + note_suffix, usage
+            )
             return {
                 "context_record": context_record,
                 "clarifying_questions": [],  # clear any stale questions from a prior pause
@@ -762,12 +828,15 @@ def clarifier_node(state: ArchitectState) -> dict:
                 "history": [step],
                 "input_tokens": usage.input_tokens,
                 "output_tokens": usage.output_tokens,
+                **revision_update,
             }
 
         note = f"context locked; {len(context_record.assumptions)} assumption(s) recorded"
         if absorbed:
             note += f"; {len(absorbed)} gap(s) assumed rather than asked"
-        step = make_step("clarifier", state.stage, Stage.CLARIFYING, note, usage)
+        step = make_step(
+            "clarifier", state.stage, Stage.CLARIFYING, note + note_suffix, usage
+        )
         return {
             "context_record": context_record,
             "clarifying_questions": [],
@@ -776,6 +845,7 @@ def clarifier_node(state: ArchitectState) -> dict:
             "history": [step],
             "input_tokens": usage.input_tokens,
             "output_tokens": usage.output_tokens,
+            **revision_update,
         }
     except Exception as e:
         if usage is not None:

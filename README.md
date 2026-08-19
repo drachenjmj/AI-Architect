@@ -20,6 +20,15 @@ the agents. This keeps the system auditable and deterministic wherever it can be
 - **Architect** — derives features and writes the Blueprint, ADRs, and Components.
 - **Reviewer** — checks quality and can send work back for refinement.
 
+The human is in the loop at three points, and none of them adds a routing
+decision an LLM makes: the Clarifier's questions, the Context Record approval
+gate, and — on the finished run — two feedback boxes. A correction typed into
+the requirements box re-opens the record as a new *version*; a directive typed
+into the design box goes to the Architect ranked above the Reviewer's own
+instruction. Which box the text was typed into IS the route, so no classifier
+stands between a person and what they asked for
+(`pipeline/user_feedback.py`).
+
 ## Reviewer quality gate
 
 Reviewer rubric v2 separates checks by who can evaluate them reliably:
@@ -64,6 +73,9 @@ pipeline/
   orchestrator.py  deterministic router (stage -> agent)
   llm.py           single door for all LLM calls (see LLM_MODULE.md)
   review_checks.py deterministic Reviewer checks
+  refine_gate.py   cost-cap gate: loop-vs-stop, best-so-far, human-round budget
+  user_feedback.py caller-side write path for feedback on a finished run
+  persistence.py   state on disk: a checkpoint per transition, resume any run
   run.py           CLI entry point: answer loop + full plain-text report
   agents/          base class + one file per agent
 eval/              development-only labeled evaluation harness

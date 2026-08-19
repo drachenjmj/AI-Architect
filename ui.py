@@ -81,6 +81,24 @@ cost is labelled as the list-price equivalent on a free-tier key, never as
 money spent (`ui_sections` prints "unknown" rather than a confident $0.0000
 when a step used a model we have no verified price for).
 
+FEEDBACK AT DONE — THE THIRD PLACE A HUMAN CAN CHANGE THE RUN
+--------------------------------------------------------------
+The finished screen is not the end of the conversation. It carries TWO boxes,
+each under what it acts on: a requirements box in the Context Record section,
+and a design box below the Blueprint / ADRs / Components. Which box the text is
+typed into is what routes the run — there is no classifier, so the graph stays
+100% deterministically routed even with a human steering it.
+
+Both are on screen at once, deliberately. Hiding one behind a tab is what makes
+people put everything in the first one, and the requirements box carries the
+warning that it re-opens the record and re-runs research BEFORE the click,
+because that is the expensive path. Fill in both and one round is charged, the
+correction lands first, and the design directive waits for the architect pass
+that follows.
+
+Everything either box does to the state happens in `pipeline.user_feedback`;
+this file only reports a refused round. Same division as the context gate.
+
 RESUMING ACROSS SESSIONS
 ------------------------
 `st.session_state` dies with the browser tab, but the orchestrator checkpoints
@@ -104,6 +122,7 @@ from pipeline.persistence import CheckpointError, list_runs, load_state
 from pipeline.refine_gate import begin_user_round
 from pipeline.repo_analysis import is_repo_url
 from pipeline.state import ArchitectState, PendingDecision, Stage, new_run
+from pipeline import user_feedback
 from ui_sections import (
     BCG_DARK as _BCG_DARK,
     BCG_GREEN as _BCG_GREEN,
@@ -111,6 +130,7 @@ from ui_sections import (
     RED as _RED,
     live_step_caption,
     render_context_approval,
+    render_feedback_box,
     render_user_rounds,
     render_adrs,
     render_blueprint,
@@ -192,6 +212,33 @@ def _run(state: ArchitectState) -> None:
                 st.caption(live_step_caption(snapshot))
         st.session_state["state"] = latest
     st.rerun()  # restart the script so the DRAW section shows the new state
+
+
+def _submit_feedback(state: ArchitectState, requirements: str, design: str) -> None:
+    """REACT half of the finished-run feedback: record it, then re-run.
+
+    Every write lives in `pipeline.user_feedback` — the stage, the routing, the
+    round charge, the reset of the fields a stale cap would otherwise use to
+    turn this into a silent no-op. This function only reports a refusal and
+    hands control back to `_run`, which is the same division the context gate
+    already uses: ui_sections returns intent, ui.py performs it, the pipeline
+    owns what it means.
+
+    A refusal is the interesting case. `submit_feedback` records NOTHING when
+    the round budget is spent, so the warning below is the whole outcome — the
+    text is still in the box, and nothing about the run has changed.
+    """
+    accepted, why = user_feedback.submit_feedback(
+        state, requirements=requirements, design=design
+    )
+    if not accepted:
+        st.warning(
+            f"Out of refinement rounds ({why}), so this was not submitted. "
+            f"The artifacts above are what this run produced — start a new run "
+            f"to take it further."
+        )
+        return
+    _run(state)
 
 
 # The first option is a sentinel, not a run: it is what keeps "start a new run"
@@ -460,6 +507,7 @@ else:
         with st.chat_message("assistant"):
             render_run_status(state)    # honest verdict — never a false success
             render_status_strip(state)  # the run's shape at a glance
+            render_user_rounds(state)   # what refinement has cost so far
 
             # What the system DID — one expander per agentic behaviour.
             render_run_trace(state)      # multi-step reasoning
@@ -467,12 +515,25 @@ else:
             render_repo_analysis(state)  # tool use
             render_review_report(state)  # iteration + quality gate
 
-            # What the system PRODUCED — the artifacts, in full.
+            # What the system PRODUCED — the artifacts, in full, each followed
+            # by the box that acts on it. The two feedback boxes are BOTH here,
+            # both visible, and neither is a tab: which one the text goes into
+            # is what routes the run (see pipeline/user_feedback.py), so the
+            # choice has to be in front of the person while they read the thing
+            # they want changed.
             render_context_record(state)
+            feedback = render_feedback_box(state, "requirements")
+
             render_features(state)
             render_blueprint(state)
             render_adrs(state)
             render_components(state)
+            # Either button submits BOTH boxes, so whichever fired is the one
+            # that carries the pair. `or` keeps the non-None one.
+            feedback = render_feedback_box(state, "design") or feedback
+
+            if feedback is not None:
+                _submit_feedback(state, *feedback)
 
     # 5. Failed? → say so plainly, with the recorded errors.
     elif state.stage is Stage.FAILED:

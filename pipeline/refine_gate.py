@@ -69,9 +69,9 @@ without weakening the limit — `recursion_limit` keeps its real job, which is
 catching a mis-wired route, and it still does that just as loudly.
 
 None of this makes a routing decision or calls a model. The gate node stays
-pure; the two helpers marked "caller-side" below run OUTSIDE the graph, in
-ui.py and run.py, and are here so those two callers cannot drift apart on
-policy.
+pure; the helpers marked "caller-side" below run OUTSIDE the graph — in ui.py,
+run.py and user_feedback.py — and are here so those callers cannot drift apart
+on policy.
 """
 from __future__ import annotations
 
@@ -180,11 +180,16 @@ def derive_max_steps(
 
 
 # ── Caller-side: the human-round budget ───────────────────────────────────
-# These two run OUTSIDE the graph, in ui.py and pipeline/run.py, before a
-# user-initiated re-entry that asks the pipeline to REDO work. They are here,
-# not there, so the two callers share one policy instead of each inventing their
-# own — and so the "post-lock only" rule is enforced in one place rather than
-# remembered at three call sites.
+# These run OUTSIDE the graph, in ui.py, pipeline/run.py and
+# pipeline/user_feedback.py, before a user-initiated re-entry that asks the
+# pipeline to REDO work. They are here, not there, so every caller shares one
+# policy instead of each inventing its own — and so the "post-lock only" rule is
+# enforced in one place rather than remembered at four call sites.
+#
+# `reopen_for_user_round` is the third of them and the reason the other two are
+# worth reading together: re-entering after feedback on a FINISHED run has to
+# clear this module's own stop signals as well as charge the round, or the gate
+# stops the run again on a cap that belongs to the work already done.
 def evaluate_user_rounds(state: ArchitectState) -> tuple[bool, str]:
     """Pure decision function: has the human spent their round budget?
 
@@ -227,6 +232,50 @@ def begin_user_round(state: ArchitectState) -> tuple[bool, str]:
     if exhausted:
         return False, reason
     state.user_rounds += 1
+    return True, ""
+
+
+def reopen_for_user_round(state: ArchitectState) -> tuple[bool, str]:
+    """Charge one round AND clear the four fields that would silently eat it.
+
+    Returns ``(allowed, reason)`` — the same shape as `begin_user_round`, which
+    it delegates the charge to, so `user_rounds` keeps exactly one writer and
+    the cap keeps exactly one copy. A refusal changes NOTHING: the caller must
+    surface `reason` and record no feedback, or it will have accepted text it is
+    about to drop.
+
+    THE FOUR RESETS, and why every one of them is load-bearing:
+
+      * `stopped_on_cap` and `refine_iterations` are the defect that makes "just
+        set REFINING and re-run" a silent no-op. A run that ended on the cap
+        re-enters at the gate, the gate re-trips the same cap, and the state
+        goes straight back to DONE with the human's text unread and no error
+        anywhere. The feedback is a new budget, so it starts with a fresh one.
+      * `best_design` and `selected_round` are cleared because feedback
+        REDEFINES WHAT BEST MEANS, so rounds scored before it are no longer
+        comparable. Concretely, on the design path: the user says "use SQS
+        instead of Kafka", the new round scores a point lower, the cap trips,
+        and the gate hands back the incumbent — silently reverting the very
+        change that was asked for. On the requirements path the incumbent was
+        scored against a record that has since been superseded. Same clearing on
+        both paths: the reason differs, the answer does not.
+
+    Clearing the incumbent loses nothing recoverable. Every round's artifacts
+    are already on disk in that round's `NNN_designing.json` checkpoint, which
+    is why there is no `design_archive` field — one would re-serialise every
+    past design into every future checkpoint to store what the run already has.
+
+    Caller-side, like `begin_user_round`: it mutates the caller's own state
+    before the graph is entered. The gate NODE stays pure.
+    """
+    allowed, reason = begin_user_round(state)
+    if not allowed:
+        return False, reason
+
+    state.stopped_on_cap = False
+    state.refine_iterations = 0
+    state.best_design = None
+    state.selected_round = 0
     return True, ""
 
 
@@ -345,7 +394,17 @@ def refine_gate_node(state: ArchitectState) -> dict:
     # in practice. Tolerated rather than asserted: failing the run over a
     # missing review would trade a graceful stop for a FAILED one, and the point
     # of this node is to end well.
-    if state.review is None:
+    #
+    # ONE VISIT DOES NOT follow a verdict: the first one after design feedback
+    # re-enters the graph here (REFINING → refine_gate), so the artifacts on the
+    # state are the ones the human just objected to and the review is the stale
+    # verdict on them. Clearing `best_design` at the door is not enough on its
+    # own — without this the gate would immediately re-nominate that same design
+    # as the incumbent and could hand it back two rounds later, reverting the
+    # directive it was meant to serve. A pending directive is the signal, not the
+    # visit count: it is true exactly while a design nobody has yet redirected is
+    # sitting on the state, and false again the moment the architect applies it.
+    if state.review is None or state.pending_feedback("design"):
         best, took_lead = incumbent, False
     elif incumbent is None or score_round(state.review) > score_round(incumbent.review):
         # Strict `>`: an equal later round does not displace the incumbent.

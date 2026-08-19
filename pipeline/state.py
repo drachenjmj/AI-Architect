@@ -214,6 +214,21 @@ class ContextRecord(BaseModel):
         default="",
         description="Human-readable summary retained for backward compatibility.",
     )
+    # A record is FROZEN PER VERSION, and that is the point: it is what lets the
+    # audit trail say "the v1 design was correct given what we knew at v1". A
+    # user correction after design does not edit v1 — it supersedes it with a v2,
+    # and v1 is pushed onto `ArchitectState.context_history` intact.
+    #
+    # Defaults to 1 (not 0) so a checkpoint written before this field existed
+    # loads as the first version of its record, which is exactly what it is.
+    version: int = Field(
+        default=1,
+        description="1-based version of this record; a correction supersedes it with the next.",
+    )
+    revision_reason: str = Field(
+        default="",
+        description="Why this version exists — the user's own words. Empty on v1.",
+    )
 
 
 class Feature(BaseModel):
@@ -574,8 +589,14 @@ class PendingDecision(str, Enum):
         the graph is never entered with this pending, and `_entry_route` says so
         out loud rather than routing on a half-resolved pause.
 
-    Feature A (user feedback at DONE) adds its own member here, not its own
-    stage.
+    Feature A (user feedback at DONE) was expected to add a member here. It
+    added neither a member nor a stage in the end, which is the stronger
+    outcome: a requirements correction re-opens the run as an ordinary
+    CLARIFICATION (the clarifier re-judges and re-freezes, exactly as it does
+    after an edit at the lock), and a design directive is not a pause at all —
+    it sets `stage = REFINING` and re-enters the loop that already exists. The
+    route is decided by WHICH box the person typed into, so it is known before
+    any model runs. See pipeline/user_feedback.py.
     """
 
     CLARIFICATION = "clarification"
@@ -649,6 +670,40 @@ class AdvisoryTurn(BaseModel):
     question: str
     answer: str = ""
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class UserFeedback(BaseModel):
+    """One thing a human asked for at DONE, and what became of it.
+
+    THE ROUTE IS THE BOX, NOT A CLASSIFIER. `kind` is not inferred from the
+    text: it records WHICH of the two boxes on the finished-run screen the
+    person typed into. That is what keeps the graph 100% deterministically
+    routed with a human in the loop — the requirements box re-opens the Context
+    Record, the design box re-enters the refine loop, and no model is asked to
+    guess which one was meant.
+
+    `status` is the consumption receipt. `pending` means the text has been
+    recorded but no agent has acted on it yet; `applied` is written by the agent
+    that consumed it — the clarifier for a requirements correction, the
+    architect for a design directive. Two agents write this field, but never the
+    same entry, because `kind` decides which one owns it.
+
+    `round` is the `user_rounds` value this submission was charged (see
+    `refine_gate.begin_user_round`), so the trail can say how much of the budget
+    each piece of feedback cost.
+    """
+
+    text: str = Field(..., description="What the human typed, verbatim.")
+    kind: Literal["requirements", "design"] = Field(
+        ...,
+        description="Which box it came from — the route, not a judgment about the text.",
+    )
+    status: Literal["pending", "applied"] = Field(
+        "pending",
+        description="'applied' once the owning agent has consumed it.",
+    )
+    submitted_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    round: int = Field(0, description="The `user_rounds` value this submission was charged.")
 
 
 # ── Clarifier output (Kati owns) ─────────────────────────────────────────
@@ -760,6 +815,16 @@ class ArchitectState(BaseModel):
     # --- 2. Artifacts produced along the way (start empty) ----------------
     repo_representation: Optional[RepoRepresentation] = None
     context_record: Optional[ContextRecord] = None
+    # Every SUPERSEDED Context Record, oldest first — the record's own history.
+    # `context_record` is always the current version; a correction after design
+    # pushes the outgoing one here rather than overwriting it, so an artifact set
+    # can still be read against the ground truth it was actually built on.
+    #
+    # A plain list, not a reducer: the clarifier returns the whole list it wants
+    # (it is the only writer of a ContextRecord and therefore the only thing that
+    # can supersede one), and an `operator.add` channel would append a second
+    # copy of every past version on each re-freeze.
+    context_history: list[ContextRecord] = Field(default_factory=list)
     blueprint: Optional[Blueprint] = None
     adrs: list[ADR] = Field(default_factory=list)
     components: list[ComponentDescription] = Field(default_factory=list)
@@ -778,6 +843,19 @@ class ArchitectState(BaseModel):
     # only by `clarifier.ask_advisor`, outside the graph. Not a reducer: no node
     # returns it, so LangGraph carries the input value through untouched.
     advisory_turns: list[AdvisoryTurn] = Field(default_factory=list)
+    # Every piece of feedback a human submitted at DONE, oldest first (feature
+    # A). APPEND-ONLY BY CONVENTION, never replaced: the run's value as an audit
+    # trail is that it says what was asked and when, so a second correction must
+    # not overwrite the first — the same failure the unique key on
+    # `clarification_answers` exists to prevent.
+    #
+    # A plain list rather than an `operator.add` reducer, unlike `history`. The
+    # append happens CALLER-SIDE, outside the graph (see
+    # pipeline/user_feedback.py), and the agent that consumes an entry returns
+    # the whole list with that entry's `status` flipped to "applied". Under a
+    # reducer that return would append a duplicate of every entry instead of
+    # updating one.
+    user_feedback: list[UserFeedback] = Field(default_factory=list)
     retrieved_knowledge: list[KBChunk] = Field(default_factory=list)
     features: list[Feature] = Field(default_factory=list)
     # Drill-down cache (Malte): the Architect appends one DeepDive whenever it
@@ -891,6 +969,51 @@ class ArchitectState(BaseModel):
             StepLog(agent=agent, stage_in=self.stage, stage_out=stage_out, note=note)
         )
         self.stage = stage_out
+
+    def pending_feedback(
+        self, kind: Literal["requirements", "design"]
+    ) -> list[UserFeedback]:
+        """Feedback of one kind that no agent has consumed yet, oldest first.
+
+        READ-ONLY and pure — it returns the entries themselves, not copies, but
+        writing `status` is the consuming agent's job and happens through its
+        returned state update, never through this list.
+
+        It lives here rather than in the agent that reads it because THREE
+        readers need the same answer and must not each invent it: the architect
+        (does a directive belong in this prompt?), the clarifier (is this
+        re-freeze a user correction, and what is its reason?), and the refine
+        gate (is the design on the state one the user has already redirected?).
+        """
+        return [
+            entry
+            for entry in self.user_feedback
+            if entry.kind == kind and entry.status == "pending"
+        ]
+
+    def feedback_marked_applied(
+        self, consumed: list[UserFeedback]
+    ) -> list[UserFeedback]:
+        """The WHOLE feedback list with `consumed` flipped to "applied". Pure.
+
+        Returns a new list of new objects and mutates nothing, because a node
+        must not write into the state it was handed — LangGraph persists only
+        what a node RETURNS, so a consuming agent returns this list under
+        `user_feedback` and the flip lands with the rest of its update or not at
+        all. An entry that never reaches its agent therefore stays `pending`,
+        which is the honest outcome: nothing acted on it.
+
+        Matching is by identity, on the objects `pending_feedback` handed back
+        from this same state. Two submissions can carry identical text and both
+        must be tracked separately, so equality would mark the wrong one.
+        """
+        consumed_ids = {id(entry) for entry in consumed}
+        return [
+            entry.model_copy(update={"status": "applied"})
+            if id(entry) in consumed_ids
+            else entry.model_copy()
+            for entry in self.user_feedback
+        ]
 
     def bump_retry(self, agent: str) -> int:
         """Increment and return this agent's retry counter (for retry caps later)."""

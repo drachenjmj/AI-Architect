@@ -69,7 +69,11 @@ from pipeline.agents.clarifier import (
 from pipeline.agents.reviewer import ADVISORY_CRITERIA
 from pipeline.llm import PRICING_USD_PER_MTOK
 from pipeline.persistence import runs_dir
-from pipeline.refine_gate import MAX_REFINE_ITERATIONS, MAX_USER_ROUNDS
+from pipeline.refine_gate import (
+    MAX_REFINE_ITERATIONS,
+    MAX_USER_ROUNDS,
+    evaluate_user_rounds,
+)
 from pipeline.state import (
     ADR,
     ArchitectState,
@@ -998,22 +1002,24 @@ def render_context_approval(state: ArchitectState) -> tuple[str, object] | None:
 
 
 def render_user_rounds(state: ArchitectState) -> None:
-    """How much of the re-judge budget is left. Silent until any of it is spent.
+    """How much of the human-round budget is left. Silent until any is spent.
 
     The same honesty rule the cost figures follow: a cap the user cannot see is
     a cap that surprises them at the worst moment.
 
-    Only ONE action spends this — an edit that reopens a gap and sends the
-    record back to the clarifier. Answering questions, approving the record and
-    asking about it are all free, so a run that never edits never sees this line
-    at all (see `ArchitectState.user_rounds`).
+    TWO actions spend it, and both ask for work to be REDONE: an edit at the
+    context gate that reopens a gap, and feedback on a finished run. Answering
+    clarifying questions, approving the record and asking about it are all free,
+    so a run that does neither never sees this line at all (see
+    `ArchitectState.user_rounds`).
     """
     if not state.user_rounds:
         return
     left = max(MAX_USER_ROUNDS - state.user_rounds, 0)
     st.caption(
-        f"Re-judges used: {state.user_rounds} of {MAX_USER_ROUNDS} ({left} left). "
-        f"Only an edit that reopens a gap costs one — approving and asking are free."
+        f"Refinement rounds used: {state.user_rounds} of {MAX_USER_ROUNDS} "
+        f"({left} left). An edit that reopens a gap costs one, and so does "
+        f"feedback on a finished run — answering, approving and asking are free."
     )
 
 
@@ -1028,7 +1034,23 @@ def render_context_record(state: ArchitectState) -> None:
         return
 
     title = record.project_name or "Context Record"
-    with st.expander(f"📋  Context Record — {title}  ·  locked after clarification"):
+    locked = (
+        "locked after clarification"
+        if record.version <= 1
+        else f"v{record.version} · revised after your feedback"
+    )
+    with st.expander(f"📋  Context Record — {title}  ·  {locked}"):
+        if record.revision_reason.strip():
+            # WHY this version exists, in the words that caused it. The earlier
+            # versions are not shown but are not lost either — they are on the
+            # state, and every one of them is in this run's checkpoints.
+            superseded = ", ".join(
+                f"v{old.version}" for old in state.context_history
+            ) or "the previous version"
+            st.info(
+                f"**Revised — supersedes {superseded}.** You asked for: "
+                f"{record.revision_reason.strip()}"
+            )
         drawn = [
             _text("Business goal", record.business_goal),
             _text("Problem statement", record.problem_statement),
@@ -1047,6 +1069,142 @@ def render_context_record(state: ArchitectState) -> None:
         ]
         if not any(drawn):
             st.caption("The context record exists but every field is empty.")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# The two feedback boxes at DONE — iterative refinement, human-driven
+# ══════════════════════════════════════════════════════════════════════════
+# BOTH ARE ALWAYS ON SCREEN, never tabs and never one-at-a-time. Which box the
+# text is typed into IS the route (see pipeline/user_feedback.py), so hiding one
+# is what makes people put everything in the other — and a design directive
+# filed as a requirements correction re-opens the record and re-runs the whole
+# pipeline for nothing. Two visible boxes are the cheapest possible classifier
+# and the only one that cannot be wrong about what the person meant.
+_FEEDBACK_COPY: dict[str, dict[str, str]] = {
+    "requirements": {
+        "heading": "✏️  Is anything above wrong or missing?",
+        "label": "Correct the requirements",
+        "placeholder": (
+            "e.g. peak load is 500k users, not 50k — and we are on Azure, not AWS."
+        ),
+        "help": (
+            "Facts about what the system must do or must respect: scale, cloud, "
+            "budget, compliance, existing systems."
+        ),
+        # The warning is here, before the click, because this is the expensive
+        # path: it re-opens the record and re-runs research, design and review.
+        "note": (
+            "Submitting this **re-opens the Context Record**. The clarifier "
+            "re-judges it, you approve the revised version, and then research, "
+            "design and review all run again — because everything below is "
+            "derived from this record. For a change to the architecture itself, "
+            "use the design box further down instead."
+        ),
+    },
+    "design": {
+        "heading": "✏️  Want the architecture changed?",
+        "label": "Direct the architect",
+        "placeholder": (
+            "e.g. use SQS instead of Kafka — we have no team to run a broker."
+        ),
+        "help": (
+            "Changes to the design itself: a technology, a component, a pattern, "
+            "a decision you disagree with."
+        ),
+        "note": (
+            "This goes straight to the architect, ranked **above** the reviewer's "
+            "own instruction, and only what you name is changed — the rest of the "
+            "design keeps its components, IDs and decisions. It spends one "
+            "refinement round and one iteration of the refine budget."
+        ),
+    },
+}
+
+
+def _feedback_key(kind: str, state: ArchitectState) -> str:
+    """Widget key for one box, rotated by the round the run is on.
+
+    The same trick as `_record_nonce`, for the same Streamlit reason: a widget is
+    remembered by its key, so a stable key would leave the text a person just
+    submitted sitting in the box afterwards, looking unsent. `user_rounds` ticks
+    on every accepted submission, so the next screen gets fresh, empty boxes.
+
+    Both boxes share the round, which is also how either one's button can read
+    what was typed into the other: one submission, two boxes, one round charged.
+    """
+    return f"fb_{kind}_{state.user_rounds}"
+
+
+def _render_feedback_history(state: ArchitectState, kind: str) -> None:
+    """What was already asked for on this axis, and whether it landed."""
+    entries = [entry for entry in state.user_feedback if entry.kind == kind]
+    for entry in entries:
+        mark = "✓ applied" if entry.status == "applied" else "◷ pending"
+        st.caption(f"{mark} · round {entry.round} · you asked: {entry.text}")
+
+
+def render_feedback_box(
+    state: ArchitectState, kind: str
+) -> tuple[str, str] | None:
+    """Draw ONE feedback box. Returns BOTH boxes' text when it is submitted.
+
+    Returns `(requirements, design)` — whatever is in both boxes at the moment a
+    button is pressed — or None if this rerun carried no submission. DRAW-only
+    like everything else here: it writes nothing and decides nothing, ui.py does
+    that through `pipeline.user_feedback`.
+
+    Returning both is what makes "fill in both, submit once" work from either
+    button. The other box's text is read from `st.session_state` under its
+    rotating key, which is where Streamlit is already keeping it — so a person
+    who types a requirements correction at the top and an architecture change at
+    the bottom gets one round charged, not two, and the record lands before the
+    design is redone.
+
+    At the cap the boxes are DISABLED and say why. Never accept text and quietly
+    drop it: a box that takes a paragraph and does nothing with it is worse than
+    a box that is visibly closed.
+    """
+    copy = _FEEDBACK_COPY[kind]
+    exhausted, why = evaluate_user_rounds(state)
+
+    st.markdown(f"##### {copy['heading']}")
+    _render_feedback_history(state, kind)
+    if exhausted:
+        st.caption(
+            f"Feedback is closed for this run: {why} reached. Every round of "
+            f"human-driven refinement has been spent. Start a new run to keep "
+            f"going — the artifacts above are what this one produced."
+        )
+    else:
+        st.caption(copy["note"])
+
+    st.text_area(
+        copy["label"],
+        key=_feedback_key(kind, state),
+        placeholder=copy["placeholder"],
+        help=copy["help"],
+        height=90,
+        disabled=exhausted,
+        label_visibility="collapsed",
+    )
+    submitted = st.button(
+        "Submit feedback",
+        key=f"fb_submit_{kind}_{state.user_rounds}",
+        disabled=exhausted,
+        help="Sends whatever you have typed in EITHER box — both are submitted "
+             "together, and cost one round between them.",
+    )
+    if not submitted:
+        return None
+
+    requirements = str(
+        st.session_state.get(_feedback_key("requirements", state), "")
+    ).strip()
+    design = str(st.session_state.get(_feedback_key("design", state), "")).strip()
+    if not requirements and not design:
+        st.warning("Type what you would like changed first.")
+        return None
+    return requirements, design
 
 
 def render_features(state: ArchitectState) -> None:
