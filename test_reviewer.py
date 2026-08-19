@@ -1,4 +1,4 @@
-"""Offline unit tests for the Reviewer and rubric v2."""
+"""Offline unit tests for the Reviewer and generalized rubric v3."""
 from __future__ import annotations
 
 import json
@@ -36,7 +36,9 @@ def _good_design_state():
     state = new_run(UC1_PROMPT)
     state.context_record = ContextRecord(
         project_name="Seasonal Shop",
+        business_goal="Customers complete purchases during seasonal peaks.",
         problem_statement="The monolithic shop crashes during sale peaks.",
+        functional_requirements=["Customers complete purchases"],
         non_functional_requirements=["Handle 50k concurrent users"],
         cloud_provider="AWS",
         budget="medium",
@@ -58,11 +60,13 @@ def _good_design_state():
             id="FEAT-001",
             name="Survive seasonal peak load",
             scenario="Checkout remains responsive for 50k concurrent users.",
+            acceptance_criteria=["Peak checkout remains available."],
         ),
         Feature(
             id="FEAT-002",
             name="Protect EU order data",
             scenario="EU order data remains encrypted and resident in the EU.",
+            acceptance_criteria=["EU order data stays encrypted in an EU region."],
         ),
     ]
     state.blueprint = Blueprint(
@@ -286,7 +290,9 @@ def test_code_assembles_pass_when_every_gate_passes():
     assert report.requires_refinement is False
     assert report.refinement_instruction == ""
     assert report.rubric_scores.adr_presence == 2
+    assert report.rubric_scores.source_integrity == 2
     assert report.rubric_scores.flaw_detection is True
+    assert report.rubric_version == "3.0"
     assert output["stage"] is Stage.DONE
 
 
@@ -334,6 +340,95 @@ def test_reviewer_requests_only_the_binary_judgment_schema():
     rev.reviewer_node(_good_design_state())
 
     assert captured["response_schema"] is rev.LLMJudgments
+
+
+def test_reviewer_prompt_is_derived_from_the_current_run(monkeypatch):
+    from eval.scenarios import sound_healthcare_state
+
+    captured = {}
+
+    def _capture(_state, prompt, **_kwargs):
+        captured["prompt"] = prompt
+        return _all_pass_judgments(), tc.fake_usage()
+
+    monkeypatch.setattr(rev, "llm_call", _capture)
+    rev.reviewer_node(sound_healthcare_state())
+
+    prompt = captured["prompt"].lower()
+    assert "appointment platform" in prompt
+    assert "seasonal shop" not in prompt
+    assert "<ground_truth_flaw>" not in prompt
+    assert not hasattr(rev, "GROUND_TRUTH_FLAW")
+
+
+def test_yes_without_an_evidence_backed_reason_cannot_pass(monkeypatch):
+    def _blank_reason(*_args, **_kwargs):
+        judgments = _all_pass_judgments()
+        judgments.best_practice_grounding = rev.CriterionJudgment(
+            passed=True,
+            reason="",
+            suggested_fix="",
+        )
+        return judgments, tc.fake_usage()
+
+    monkeypatch.setattr(rev, "llm_call", _blank_reason)
+    output = rev.reviewer_node(_good_design_state())
+
+    assert output["review"].overall_status == "fail"
+    assert output["review"].rubric_scores.best_practice_grounding is False
+    assert output["stage"] is Stage.REFINING
+
+
+def test_requested_repository_cannot_be_treated_as_greenfield(monkeypatch):
+    state = _good_design_state()
+    state.initial_request.repo_url = "https://example.invalid/missing-repo"
+    monkeypatch.setattr(rev, "llm_call", _as_llm_call(_all_pass_judgments))
+
+    output = rev.reviewer_node(state)
+
+    assert output["review"].overall_status == "fail"
+    assert "repo_grounding" not in output["review"].not_applicable
+    assert any(
+        issue.category == "repo_alignment"
+        for issue in output["review"].issues
+    )
+
+
+def test_fabricated_source_references_fail_in_code(monkeypatch):
+    state = _good_design_state()
+    for adr in state.adrs:
+        adr.source_references = ["fabricated-source.pdf"]
+    monkeypatch.setattr(rev, "llm_call", _as_llm_call(_all_pass_judgments))
+
+    output = rev.reviewer_node(state)
+
+    assert output["review"].rubric_scores.source_integrity == 0
+    assert output["review"].overall_status == "fail"
+    assert any(issue.category == "evidence" for issue in output["review"].issues)
+
+
+def test_wrong_provider_budget_and_regulation_do_not_count_as_coverage():
+    state = _good_design_state()
+    state.context_record.cloud_provider = "Azure"
+    state.context_record.budget = "low"
+    state.context_record.compliance_requirements = ["HIPAA"]
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.constraints_covered["cloud"] is False
+    assert checks.constraints_covered["budget"] is False
+    assert checks.constraints_covered["compliance"] is False
+    assert checks.score_constraint_coverage < 2
+
+
+def test_features_are_a_required_artifact():
+    state = _good_design_state()
+    state.features = []
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.artifacts_present["features"] is False
+    assert checks.score_all_artifacts_present == 0
 
 
 # --- refinement-instruction assembly --------------------------------------
@@ -595,6 +690,8 @@ def _judgments_failing(name: str, reason: str):
 def _no_knowledge_state():
     state = _good_design_state()
     state.retrieved_knowledge = []
+    for adr in state.adrs:
+        adr.source_references = []
     return state
 
 
@@ -619,8 +716,8 @@ def test_empty_knowledge_makes_best_practice_grounding_not_applicable():
     )
     report = rev.reviewer_node(_no_knowledge_state())["review"]
 
-    assert report.not_applicable == ["best_practice_grounding"]
-    assert not [i for i in report.issues if "retrieved knowledge" in i.finding]
+    assert report.not_applicable == ["repo_grounding", "best_practice_grounding"]
+    assert not [i for i in report.issues if i.category == "evidence"]
     assert report.overall_status == "pass"
     # True ONLY so downstream readers keep working; not_applicable is the truth,
     # and every renderer consults it first.
@@ -633,10 +730,10 @@ def test_retrieved_knowledge_restores_the_original_behaviour():
     )
     report = rev.reviewer_node(_good_design_state())["review"]  # HAS knowledge
 
-    assert report.not_applicable == []
+    assert report.not_applicable == ["repo_grounding"]
     assert report.rubric_scores.best_practice_grounding is False
     assert report.overall_status == "fail"
-    assert [i for i in report.issues if "retrieved knowledge" in i.finding]
+    assert [i for i in report.issues if i.category == "evidence"]
 
 
 # --- the reviewer must not read the architect's own account of its changes ---

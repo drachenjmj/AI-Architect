@@ -1,10 +1,11 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Reviewer Report",
-  "description": "Rubric v2 report assembled in code from deterministic scores and binary LLM judgments.",
+  "description": "Versioned Reviewer report assembled in code from deterministic scores and binary LLM judgments.",
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "rubric_version",
     "overall_status",
     "rubric_scores",
     "judgment_reasons",
@@ -14,6 +15,10 @@
     "not_applicable"
   ],
   "properties": {
+    "rubric_version": {
+      "type": "string",
+      "enum": ["2.0", "3.0"]
+    },
     "overall_status": {
       "type": "string",
       "enum": ["pass", "fail"]
@@ -26,6 +31,7 @@
         "constraint_coverage",
         "traceability",
         "adr_presence",
+        "source_integrity",
         "repo_grounding",
         "flaw_detection",
         "adr_soundness",
@@ -37,6 +43,7 @@
         "constraint_coverage": { "type": "integer", "minimum": 0, "maximum": 2 },
         "traceability": { "type": "integer", "minimum": 0, "maximum": 2 },
         "adr_presence": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "source_integrity": { "type": "integer", "minimum": 0, "maximum": 2 },
         "repo_grounding": { "type": "boolean" },
         "flaw_detection": { "type": "boolean" },
         "adr_soundness": { "type": "boolean" },
@@ -88,6 +95,7 @@
               "traceability",
               "adr",
               "repo_alignment",
+              "evidence",
               "safety"
             ]
           },

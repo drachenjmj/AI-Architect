@@ -7,12 +7,12 @@ Covered rubric items:
 
 1. Artifact completeness
 2. Constraint coverage
-5. Feature → Component → ADR traceability
-6. ADR presence and numbering
+3. Feature → Component → ADR traceability
+4. ADR presence and structure
+5. Source-reference integrity
 
-The checks prefer the frozen structured schemas owned by Maheen. A limited
-legacy fallback remains for older fixtures and modules that still express
-traceability inside prose.
+The checks use the frozen structured schemas owned by Maheen. A limited legacy
+fallback exists only when callers explicitly enable it for old fixtures.
 """
 
 from __future__ import annotations
@@ -28,50 +28,23 @@ from pipeline.state import ArchitectState, ReviewIssue
 # Constraint detection
 # ─────────────────────────────────────────────────────────────────────────
 
-CONSTRAINT_KEYWORDS: dict[str, list[str]] = {
-    "cloud": [
-        "aws",
-        "azure",
-        "gcp",
-        "google cloud",
-        "on-prem",
-        "on premise",
-        "cloud",
-    ],
-    "budget": [
-        "budget",
-        "cost",
-        "pricing",
-        "free tier",
-        "managed service",
-    ],
-    "scalability": [
-        "scal",
-        "concurrent",
-        "peak",
-        "load",
-        "throughput",
-        "autoscaling",
-        "horizontal",
-    ],
-    "compliance": [
-        "gdpr",
-        "compliance",
-        "pci",
-        "hipaa",
-        "encrypt",
-        "privacy",
-        "data residency",
-    ],
-    "existing_system": [
-        "monolith",
-        "brownfield",
-        "greenfield",
-        "legacy",
-        "existing",
-        "migration",
-        "modernization",
-    ],
+CONSTRAINT_GROUPS = (
+    "functional",
+    "cloud",
+    "budget",
+    "non_functional",
+    "compliance",
+    "existing_system",
+)
+
+CONSTRAINT_ALIASES: dict[str, tuple[str, ...]] = {
+    "aws": ("amazon web services",),
+    "amazon web services": ("aws",),
+    "gcp": ("google cloud",),
+    "google cloud": ("gcp",),
+    "microsoft azure": ("azure",),
+    "on premises": ("on premise", "on-prem", "on-premises"),
+    "on premise": ("on premises", "on-prem", "on-premises"),
 }
 
 
@@ -100,7 +73,12 @@ class DeterministicChecks(BaseModel):
     adrs_without_component: list[str] = Field(default_factory=list)
 
     malformed_adr_titles: list[str] = Field(default_factory=list)
+    incomplete_adr_ids: list[str] = Field(default_factory=list)
     duplicate_adr_numbers: list[int] = Field(default_factory=list)
+
+    repository_expected: bool = False
+    repository_available: bool = False
+    invalid_source_references: dict[str, list[str]] = Field(default_factory=dict)
 
     constraints_applicable: dict[str, bool] = Field(default_factory=dict)
     constraints_covered: dict[str, bool] = Field(default_factory=dict)
@@ -109,6 +87,7 @@ class DeterministicChecks(BaseModel):
     score_constraint_coverage: int = Field(0, ge=0, le=2)
     score_traceability: int = Field(0, ge=0, le=2)
     score_adr_presence: int = Field(0, ge=0, le=2)
+    score_source_integrity: int = Field(0, ge=0, le=2)
 
     issues: list[ReviewIssue] = Field(default_factory=list)
 
@@ -125,32 +104,6 @@ def _non_empty(values: list[str]) -> list[str]:
         for value in values
         if isinstance(value, str) and value.strip()
     ]
-
-
-def _context_text(state: ArchitectState) -> str:
-    """Render the locked Context Record only, to identify applicable constraints."""
-
-    parts: list[str] = []
-
-    if state.context_record is not None:
-        context = state.context_record
-        parts.extend(
-            [
-                context.summary,
-                context.project_name,
-                context.business_goal,
-                context.problem_statement,
-                context.cloud_provider,
-                context.budget,
-            ]
-        )
-        parts.extend(context.functional_requirements)
-        parts.extend(context.non_functional_requirements)
-        parts.extend(context.compliance_requirements)
-        parts.extend(context.existing_systems)
-        parts.extend(context.assumptions)
-
-    return "\n".join(_non_empty(parts)).lower()
 
 
 def _design_text(state: ArchitectState) -> str:
@@ -237,6 +190,7 @@ def _check_artifacts(
 
     present = {
         "context_record": state.context_record is not None,
+        "features": bool(state.features),
         "blueprint": state.blueprint is not None,
         "adrs": bool(state.adrs),
         "components": bool(state.components),
@@ -245,8 +199,16 @@ def _check_artifacts(
     missing: list[str] = []
 
     if state.context_record is not None:
-        if not state.context_record.summary.strip():
-            missing.append("context_record.summary")
+        context = state.context_record
+        if not any(
+            value.strip()
+            for value in (
+                context.summary,
+                context.business_goal,
+                context.problem_statement,
+            )
+        ):
+            missing.append("context_record.problem_definition")
 
     if state.blueprint is not None:
         if not state.blueprint.stakeholder_view.strip():
@@ -262,12 +224,30 @@ def _check_artifacts(
         if not adr.decision.strip():
             missing.append(f"adrs[{index}].decision")
 
+        if not adr.context.strip():
+            missing.append(f"adrs[{index}].context")
+
+        if not adr.rationale.strip():
+            missing.append(f"adrs[{index}].rationale")
+
+        if not _non_empty(adr.alternatives_considered):
+            missing.append(f"adrs[{index}].alternatives_considered")
+
+        if not _non_empty(adr.positive_consequences):
+            missing.append(f"adrs[{index}].positive_consequences")
+
+        if not _non_empty(adr.negative_consequences):
+            missing.append(f"adrs[{index}].negative_consequences")
+
     for index, component in enumerate(state.components):
         if not component.name.strip():
             missing.append(f"components[{index}].name")
 
         if not component.description.strip():
             missing.append(f"components[{index}].description")
+
+        if not component.purpose.strip():
+            missing.append(f"components[{index}].purpose")
 
     for index, feature in enumerate(state.features):
         if not feature.id.strip():
@@ -278,6 +258,9 @@ def _check_artifacts(
 
         if not feature.scenario.strip():
             missing.append(f"features[{index}].scenario")
+
+        if not _non_empty(feature.acceptance_criteria):
+            missing.append(f"features[{index}].acceptance_criteria")
 
     return present, missing
 
@@ -585,10 +568,11 @@ def _check_traceability(
 
 def _check_adrs(
     state: ArchitectState,
-) -> tuple[list[str], list[int]]:
+) -> tuple[list[str], list[str], list[int]]:
     """Check ADR title format, decisions, and unique title numbers."""
 
     malformed: list[str] = []
+    incomplete: list[str] = []
     numbers: list[int] = []
 
     for adr in state.adrs:
@@ -603,6 +587,17 @@ def _check_adrs(
 
         numbers.append(int(match.group(1)))
 
+        if not all(
+            (
+                adr.context.strip(),
+                adr.rationale.strip(),
+                _non_empty(adr.alternatives_considered),
+                _non_empty(adr.positive_consequences),
+                _non_empty(adr.negative_consequences),
+            )
+        ):
+            incomplete.append(adr.id or title)
+
     duplicates = sorted(
         {
             number
@@ -611,7 +606,55 @@ def _check_adrs(
         }
     )
 
-    return malformed, duplicates
+    return malformed, sorted(incomplete), duplicates
+
+
+def _normalise_source(value: str) -> str:
+    """Normalise a source label while retaining useful path information."""
+
+    return value.strip().replace("\\", "/").lower()
+
+
+def _check_source_integrity(
+    state: ArchitectState,
+) -> tuple[dict[str, list[str]], int]:
+    """Reject ADR citations that do not resolve to evidence supplied this run."""
+
+    kb_sources = {
+        _normalise_source(chunk.source)
+        for chunk in state.retrieved_knowledge
+        if chunk.source.strip()
+    }
+    kb_basenames = {source.rsplit("/", 1)[-1] for source in kb_sources}
+    repository_text = ""
+    if state.repo_representation is not None:
+        repository_text = state.repo_representation.model_dump_json().lower()
+
+    invalid: dict[str, list[str]] = {}
+    total_references = 0
+    valid_references = 0
+    for adr in state.adrs:
+        for reference in _non_empty(adr.source_references):
+            total_references += 1
+            normalised = _normalise_source(reference)
+            basename = normalised.rsplit("/", 1)[-1]
+            resolves = (
+                normalised in kb_sources
+                or basename in kb_basenames
+                or bool(repository_text and normalised in repository_text)
+            )
+            if resolves:
+                valid_references += 1
+            else:
+                invalid.setdefault(adr.id or adr.title, []).append(reference)
+
+    if not total_references or not invalid:
+        score = 2
+    elif valid_references:
+        score = 1
+    else:
+        score = 0
+    return invalid, score
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -623,22 +666,72 @@ def _check_constraints(
 ) -> tuple[dict[str, bool], dict[str, bool]]:
     """Identify stated constraints and check only design artifacts for evidence."""
 
-    context_text = _context_text(state)
+    context = state.context_record
     design_text = _design_text(state)
 
-    applicable = {
-        group: any(
-            keyword in context_text
-            for keyword in keywords
+    requirements: dict[str, list[str]] = {
+        group: [] for group in CONSTRAINT_GROUPS
+    }
+    if context is not None:
+        requirements["functional"] = _non_empty(context.functional_requirements)
+        requirements["cloud"] = _non_empty([context.cloud_provider])
+        requirements["budget"] = _non_empty([context.budget])
+        requirements["non_functional"] = _non_empty(
+            context.non_functional_requirements
         )
-        for group, keywords in CONSTRAINT_KEYWORDS.items()
+        requirements["compliance"] = _non_empty(
+            context.compliance_requirements
+        )
+        requirements["existing_system"] = _non_empty(context.existing_systems)
+
+    stopwords = {
+        "and", "the", "for", "with", "must", "should", "system", "support",
+        "provide", "users", "user", "existing", "application", "service",
+        "can", "requirement", "requirements", "constraint", "constraints",
+        "cloud", "budget", "compliance", "compliant", "solution", "handle",
+    }
+
+    def contains_term(term: str) -> bool:
+        """Match a requirement term without accepting incidental substrings."""
+
+        return re.search(
+            rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])",
+            design_text,
+        ) is not None
+
+    def evidenced(requirement: str) -> bool:
+        normalised = requirement.strip().lower()
+        if not normalised:
+            return False
+        if contains_term(normalised):
+            return True
+        if any(
+            contains_term(alias)
+            for alias in CONSTRAINT_ALIASES.get(normalised, ())
+        ):
+            return True
+        tokens = [
+            token
+            for token in re.findall(r"[a-z0-9][a-z0-9+.#]*", normalised)
+            if token not in stopwords
+            and (len(token) >= 3 or any(character.isdigit() for character in token))
+        ]
+        if tokens:
+            matches = sum(contains_term(token) for token in tokens)
+            if matches / len(tokens) >= 0.5:
+                return True
+        return False
+
+    applicable = {
+        group: bool(values)
+        for group, values in requirements.items()
     }
     covered = {
-        group: any(
-            keyword in design_text
-            for keyword in keywords
+        group: bool(values) and all(
+            evidenced(requirement)
+            for requirement in values
         )
-        for group, keywords in CONSTRAINT_KEYWORDS.items()
+        for group, values in requirements.items()
     }
     return applicable, covered
 
@@ -664,8 +757,11 @@ def run_deterministic_checks(
     components_without_feature = traceability["components_without_feature"]
     components_without_adr = traceability["components_without_adr"]
 
-    malformed_adrs, duplicate_numbers = _check_adrs(state)
+    malformed_adrs, incomplete_adrs, duplicate_numbers = _check_adrs(state)
     constraints_applicable, constraints_covered = _check_constraints(state)
+    invalid_sources, score_source_integrity = _check_source_integrity(state)
+    repository_expected = bool(state.initial_request.repo_url.strip())
+    repository_available = state.repo_representation is not None
 
     # ── Artifact completeness score ──────────────────────────────────────
     if not all(present.values()):
@@ -719,6 +815,7 @@ def run_deterministic_checks(
         score_adr = 0
     elif (
         malformed_adrs
+        or incomplete_adrs
         or duplicate_numbers
         or components_without_adr
     ):
@@ -765,7 +862,7 @@ def run_deterministic_checks(
             f"artifacts_present={present}",
             (
                 "Produce every required artifact: Context Record, "
-                "Blueprint, ADRs, and Component Descriptions."
+                "Features, Blueprint, ADRs, and Component Descriptions."
             ),
         )
 
@@ -800,6 +897,15 @@ def run_deterministic_checks(
                 "Address each stated constraint explicitly in the Blueprint, "
                 "ADRs, or Component Descriptions."
             ),
+        )
+
+    if repository_expected and not repository_available:
+        add_issue(
+            "high",
+            "repo_alignment",
+            "A repository was requested but no repository representation is available.",
+            f"repo_url={state.initial_request.repo_url}",
+            "Ingest the requested repository successfully before reviewing the design.",
         )
 
     if features_without_component:
@@ -896,6 +1002,15 @@ def run_deterministic_checks(
             ),
         )
 
+    if incomplete_adrs:
+        add_issue(
+            "medium",
+            "adr",
+            f"ADR(s) omit required decision evidence: {', '.join(incomplete_adrs)}.",
+            "Each ADR needs context, rationale, alternatives, and positive and negative consequences.",
+            "Complete every ADR's context, rationale, alternatives, and trade-offs.",
+        )
+
     if duplicate_numbers:
         add_issue(
             "medium",
@@ -903,6 +1018,15 @@ def run_deterministic_checks(
             f"Duplicate ADR number(s): {duplicate_numbers}.",
             f"duplicate_adr_numbers={duplicate_numbers}",
             "Renumber ADRs so that every ADR number is unique.",
+        )
+
+    if invalid_sources:
+        add_issue(
+            "high",
+            "evidence",
+            "One or more ADR source references do not resolve to supplied evidence.",
+            str(invalid_sources),
+            "Use only source names present in retrieved KB chunks or repository evidence.",
         )
 
     return DeterministicChecks(
@@ -920,12 +1044,17 @@ def run_deterministic_checks(
         adrs_without_feature=traceability["adrs_without_feature"],
         adrs_without_component=traceability["adrs_without_component"],
         malformed_adr_titles=malformed_adrs,
+        incomplete_adr_ids=incomplete_adrs,
         duplicate_adr_numbers=duplicate_numbers,
+        repository_expected=repository_expected,
+        repository_available=repository_available,
+        invalid_source_references=invalid_sources,
         constraints_applicable=constraints_applicable,
         constraints_covered=constraints_covered,
         score_all_artifacts_present=score_artifacts,
         score_constraint_coverage=score_constraints,
         score_traceability=score_traceability,
         score_adr_presence=score_adr,
+        score_source_integrity=score_source_integrity,
         issues=issues,
     )

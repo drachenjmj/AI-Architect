@@ -76,7 +76,14 @@ policy.
 from __future__ import annotations
 
 from pipeline.agents.base import make_step, node
-from pipeline.state import ArchitectState, DesignSnapshot, ReviewResult, Stage
+from pipeline.state import (
+    ArchitectState,
+    DesignSnapshot,
+    REVIEW_CODE_SCORE_FIELDS,
+    REVIEW_JUDGMENT_FIELDS,
+    ReviewResult,
+    Stage,
+)
 
 
 # ── Cost-cap policy ───────────────────────────────────────────────────────
@@ -246,23 +253,10 @@ def evaluate_caps(state: ArchitectState) -> tuple[bool, str]:
 
 
 # ── Best-so-far selection ─────────────────────────────────────────────────
-# The five LLM-judged rubric fields, so "how many judgments passed" is counted
-# from one list rather than re-spelled at the call site. `RubricScores` mixes
-# 0-2 code scores and booleans in one model, so they cannot be told apart by
-# introspection without this.
-_CODE_SCORE_FIELDS = (
-    "all_artifacts_present",
-    "constraint_coverage",
-    "traceability",
-    "adr_presence",
-)
-_JUDGED_FIELDS = (
-    "repo_grounding",
-    "flaw_detection",
-    "adr_soundness",
-    "best_practice_grounding",
-    "refinement_readiness",
-)
+# Kept in state.py beside RubricScores so the Reviewer, eval harness, and
+# best-so-far selector cannot silently drift onto different field sets.
+_CODE_SCORE_FIELDS = REVIEW_CODE_SCORE_FIELDS
+_JUDGED_FIELDS = REVIEW_JUDGMENT_FIELDS
 
 
 def score_round(review: ReviewResult) -> tuple:
@@ -273,7 +267,7 @@ def score_round(review: ReviewResult) -> tuple:
 
       1. a PASS beats any fail.
       2. fewer HIGH-severity issues.
-      3. higher sum of the four code-owned rubric scores (0-8).
+      3. higher sum of the five code-owned rubric scores (0-10).
       4. more of the five LLM judgments passing.
       5. fewer issues in total.
 
