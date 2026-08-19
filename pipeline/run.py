@@ -93,6 +93,7 @@ from typing import Sequence
 from pipeline.agents import clarifier as clarifier_gate
 from pipeline.llm import LLMError
 from pipeline.orchestrator import MAX_STEPS, run_pipeline_streaming
+from pipeline.agents.clarifier import MAX_ASK_ROUNDS
 from pipeline.agents.reviewer import ADVISORY_CRITERIA
 from pipeline.persistence import runs_dir
 from pipeline.refine_gate import MAX_USER_ROUNDS, begin_user_round
@@ -119,10 +120,20 @@ EXAMPLE_PROMPT = (
     "~50k concurrent users at peak. Repo: https://github.com/example/bugged-shop"
 )
 
-# How many times we will answer a pause before giving up. The clarifier is meant
-# to converge in one or two rounds; more than this means it is not converging,
-# and looping on it would burn tokens without ever finishing.
-MAX_CLARIFICATION_ROUNDS = 3
+# How many times THIS COMMAND will answer a pause before giving up.
+#
+# DERIVED, not chosen. The binding limit on asking belongs to the clarifier
+# (`MAX_ASK_ROUNDS`), which past its cap absorbs the remaining gaps as labelled
+# assumptions and locks a record — a designed, recoverable ending. This one is
+# the outer backstop for the case where that never happens: a pause this command
+# cannot attribute to the ask budget at all. It must therefore stay LOOSER than
+# the clarifier's cap, or it would fire first and turn every capped run into a
+# CLI error instead of the assumption path.
+#
+# Writing it as an expression rather than a number is what enforces that. The
+# two were 3 and 5 when this was hardcoded, so the backstop was the binding
+# constraint and the clarifier cap could never fire from the command line.
+MAX_CLARIFICATION_ROUNDS = MAX_ASK_ROUNDS + 3
 
 # Exit codes. Distinct on purpose: a run that failed is a different problem from
 # a run we could not even drive.

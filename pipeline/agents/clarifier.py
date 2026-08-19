@@ -97,7 +97,26 @@ from pipeline.state import (
 # The clarifier's judgment sets the quality of everything downstream, so it uses
 # the stronger model rather than the cheap default.
 CLARIFIER_MODEL = "flash-lite"
-MAX_ASK_ROUNDS = 5
+# How many times the clarifier may PAUSE TO ASK before it must lock a record.
+#
+# Run 20260819T083025Z-00c6557a is why this exists: 14 pause rounds before
+# design started, each answer surfacing two fresh "critical" gaps. The model
+# will always find another question; nothing in its instruction tells it when
+# the marginal answer stops being worth a round trip.
+#
+# 3 rather than a larger number because ASSUMING IS SAFE HERE, and that is the
+# whole argument. Past the cap the remaining gaps are not dropped - they are
+# absorbed as LABELLED assumptions on the Context Record, which the human sees
+# and can veto at the context gate before a single research or design token is
+# spent (see `require_context_approval` and the gate in run.py / the UI). So the
+# cost of assuming too early is one veto, while the cost of asking too long is
+# unbounded rounds and a person who stops reading. Three rounds is enough to
+# converge on the facts a design genuinely cannot proceed without.
+#
+# Retune from a transcript where three rounds demonstrably was not enough, not
+# from taste - and if you raise it, raise run.MAX_CLARIFICATION_ROUNDS with it,
+# which is derived from this constant precisely so it cannot silently invert.
+MAX_ASK_ROUNDS = 3
 
 # ── ContextRecord field policy (deterministic, code-owned) ───────────────
 # WHICH fields are architecture-critical. This list mirrors the enumeration in
@@ -641,8 +660,12 @@ def ask_advisor(state: ArchitectState, question: str) -> str:
 # ══════════════════════════════════════════════════════════════════════════
 # The node
 # ══════════════════════════════════════════════════════════════════════════
-def _can_ask(state: ArchitectState, result: ClarificationResult) -> bool:
-    """May this turn pause with questions? Deterministic, and it is the invariant.
+def _may_ask(state: ArchitectState) -> bool:
+    """Is this turn still allowed to pause with questions? Deterministic.
+
+    THE single definition of "asking is still on the table". Both the prompt
+    selection and the routing gate defer to it, so the cap cannot be written
+    twice in opposite polarity and drift apart.
 
     Two independent reasons it may not, both of them code:
 
@@ -650,11 +673,20 @@ def _can_ask(state: ArchitectState, result: ClarificationResult) -> bool:
         context and is the one who sent it back. Asking again would be a new
         round of questions in front of a person already holding the answer sheet
         — hence "ask once, then assume".
-      * The model reported gaps but produced no questions. That is the known
-        clarifier bug, and there is literally nothing to put on screen; pausing
-        would park the run somewhere no answer can reach it.
+      * The ask budget is spent. See MAX_ASK_ROUNDS for why running out is safe.
     """
-    return state.context_record is None and bool(result.questions)
+    return state.context_record is None and state.ask_rounds < MAX_ASK_ROUNDS
+
+
+def _can_ask(state: ArchitectState, result: ClarificationResult) -> bool:
+    """May this turn pause, AND is there anything to pause with?
+
+    `_may_ask` is permission; this adds the one thing that is about the reply
+    rather than the run: the model reported gaps but produced no questions. That
+    is the known clarifier bug, and there is literally nothing to put on screen;
+    pausing would park the run somewhere no answer can reach it.
+    """
+    return _may_ask(state) and bool(result.questions)
 
 
 @node("clarifier")
@@ -668,7 +700,7 @@ def clarifier_node(state: ArchitectState) -> dict:
         # A re-judge has a record; a first pass does not. That one fact selects
         # the mode, so the flag cannot drift out of sync with reality — there is
         # no second copy of it to forget to update.
-        assume_only = state.context_record is not None or state.ask_rounds >= MAX_ASK_ROUNDS
+        assume_only = not _may_ask(state)
 
         # 1. LLM JUDGES — returns a validated ClarificationResult (no manual parsing).
         result: ClarificationResult
@@ -683,7 +715,6 @@ def clarifier_node(state: ArchitectState) -> dict:
         # 2. CODE ROUTES — the deterministic gate.
         if result.missing_critical and _can_ask(state, result):
             # Something architecture-critical is still unknown → pause and ask.
-            # TODO(W3): retry cap via state.bump_retry to clamp re-ask rounds.
             questions = [q.question for q in result.questions]
             step = make_step(
                 "clarifier",
@@ -694,6 +725,10 @@ def clarifier_node(state: ArchitectState) -> dict:
             )
             return {
                 "clarifying_questions": questions,
+                # ABSOLUTE, not a delta: `ask_rounds` is a plain field, so
+                # LangGraph overwrites it. Counted here and nowhere else, so
+                # what costs a round is one line.
+                "ask_rounds": state.ask_rounds + 1,
                 "stage": Stage.AWAITING_HUMAN,
                 "pending_decision": PendingDecision.CLARIFICATION,
                 "history": [step],

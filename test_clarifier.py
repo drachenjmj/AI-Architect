@@ -483,3 +483,97 @@ if __name__ == "__main__":
     print("PASS  a struck assumption stays struck")
 
     print("\nALL CLARIFIER TESTS PASSED")
+
+
+# ── the ask-round cap ────────────────────────────────────────────────────
+#
+# Run 20260819T083025Z-00c6557a spent 14 pause rounds before design started,
+# each answer surfacing two fresh "critical" gaps. `MAX_ASK_ROUNDS` stops that.
+# The point of these tests is that stopping is not the same as giving up: the
+# gaps still reach the human, as assumptions they can veto at the context gate.
+
+
+def test_the_cap_converts_remaining_gaps_into_assumptions_not_silence():
+    """THE guarantee. Past the cap a critical gap must still be visible.
+
+    `_missing` reports two critical gaps AND two questions, so under the cap
+    this pauses. At the cap it must lock instead — and both gaps have to survive
+    into the record as labelled assumptions plus open questions. Dropping them
+    would make the cap a data-loss bug rather than a budget.
+    """
+
+    state = new_run(PROMPT)
+    state.ask_rounds = clar.MAX_ASK_ROUNDS
+    clar.llm_call = _missing
+
+    output = clar.clarifier_node(state)
+
+    assert output["stage"] is not Stage.AWAITING_HUMAN
+    assert output["pending_decision"] is None
+    record = output["context_record"]
+    assert record is not None
+
+    for gap in ("expected scale", "compliance"):
+        assert any(gap.lower() in a.lower() for a in record.assumptions), gap
+        assert any(gap.lower() in q.lower() for q in record.open_questions), gap
+    # Labelled, so the human can tell what they are being asked to veto.
+    assert all(
+        a.startswith(clar.CLARIFIER_LABEL)
+        for a in record.assumptions
+        if "filled without confirmation" in a
+    )
+
+
+def test_asking_is_still_allowed_below_the_cap():
+    state = new_run(PROMPT)
+    state.ask_rounds = clar.MAX_ASK_ROUNDS - 1
+    clar.llm_call = _missing
+
+    output = clar.clarifier_node(state)
+
+    assert output["stage"] is Stage.AWAITING_HUMAN
+    assert output["clarifying_questions"]
+    # And the round is counted, absolutely rather than as a delta.
+    assert output["ask_rounds"] == clar.MAX_ASK_ROUNDS
+
+
+def test_each_pause_costs_exactly_one_ask_round():
+    state = new_run(PROMPT)
+    clar.llm_call = _missing
+
+    assert clar.clarifier_node(state)["ask_rounds"] == 1
+    state.ask_rounds = 1
+    assert clar.clarifier_node(state)["ask_rounds"] == 2
+
+
+def test_locking_does_not_spend_an_ask_round():
+    """Only PAUSING costs. A pass that locks is the pipeline working."""
+
+    state = new_run(PROMPT)
+    clar.llm_call = _complete
+
+    assert "ask_rounds" not in clar.clarifier_node(state)
+
+
+def test_one_predicate_governs_both_the_prompt_and_the_routing():
+    """`assume_only` and `_can_ask` must not drift into opposite polarity."""
+
+    state = new_run(PROMPT)
+    assert clar._may_ask(state) is True
+
+    state.ask_rounds = clar.MAX_ASK_ROUNDS
+    assert clar._may_ask(state) is False
+
+    # A locked record closes asking regardless of the budget.
+    spent = new_run(PROMPT)
+    spent.context_record = ContextRecord(business_goal="Sell sneakers online")
+    assert clar._may_ask(spent) is False
+
+
+def test_the_cli_backstop_stays_looser_than_the_ask_cap():
+    """If these invert, the CLI errors out where the clarifier would have
+    assumed and carried on — the capped path would become unreachable."""
+
+    from pipeline.run import MAX_CLARIFICATION_ROUNDS
+
+    assert MAX_CLARIFICATION_ROUNDS > clar.MAX_ASK_ROUNDS

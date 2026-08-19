@@ -835,6 +835,18 @@ class ArchitectState(BaseModel):
     history: Annotated[list[StepLog], operator.add] = Field(default_factory=list)
     retry_counts: dict[str, int] = Field(default_factory=dict)
     refine_iterations: int = 0
+    # How many times the clarifier has PAUSED TO ASK, before any context lock.
+    # Bounded by `clarifier.MAX_ASK_ROUNDS`. Distinct from `user_rounds`, and the
+    # boundary is the lock: this counts the pipeline gathering the ground truth,
+    # `user_rounds` counts a human sending finished work back to be redone. They
+    # were one counter once, and four clarifying rounds spent the whole redo
+    # budget before the architect had run - see refine_gate.MAX_USER_ROUNDS.
+    #
+    # A PLAIN int, not an operator.add reducer: the clarifier returns the
+    # absolute value it wants (`state.ask_rounds + 1`), so LangGraph overwrites
+    # rather than accumulates. A reducer here would double-count every replay of
+    # a resumed run.
+    ask_rounds: int = 0
     # Set True by the refine gate when the reviewer→refine loop stops on a cap
     # (max iterations or token budget) rather than on a clean reviewer pass.
     # An honest "finished best-effort, not perfect" signal for the UI/report;
