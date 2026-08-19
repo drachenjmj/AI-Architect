@@ -72,7 +72,12 @@ from pipeline.persistence import runs_dir
 from pipeline.refine_gate import (
     MAX_REFINE_ITERATIONS,
     MAX_USER_ROUNDS,
-    evaluate_user_rounds,
+)
+from pipeline.sign_off import (
+    feedback_is_closed,
+    open_findings,
+    requires_deliberate_confirmation,
+    unapplied_feedback,
 )
 from pipeline.state import (
     ADR,
@@ -82,6 +87,7 @@ from pipeline.state import (
     ContextRecord,
     Feature,
     NOT_APPLICABLE_REASONS,
+    Stage,
     StepLog,
 )
 
@@ -216,6 +222,19 @@ def _clock(timestamp: str) -> str:
     """HH:MM:SS from an ISO timestamp; the raw value if it will not parse."""
     try:
         return datetime.fromisoformat(timestamp).strftime("%H:%M:%S")
+    except (TypeError, ValueError):
+        return str(timestamp or "")
+
+
+def _datestamp(timestamp: str) -> str:
+    """Date AND time from an ISO timestamp; the raw value if it will not parse.
+
+    `_clock` drops the date, which is right for a trace where every step
+    happened in the same sitting. A sign-off is read weeks later by someone
+    asking WHEN this was decided, and "14:32:10" does not answer that.
+    """
+    try:
+        return datetime.fromisoformat(timestamp).strftime("%Y-%m-%d %H:%M UTC")
     except (TypeError, ValueError):
         return str(timestamp or "")
 
@@ -849,14 +868,21 @@ def _record_nonce(record: ContextRecord) -> str:
     return f"{abs(hash(record.model_dump_json())):x}"
 
 
-def _render_advisory_thread(state: ArchitectState) -> None:
-    """Replay the read-only questions asked at this gate, oldest first.
+def _render_advisory_thread(
+    state: ArchitectState, subject: str = "context_record"
+) -> None:
+    """Replay the read-only questions asked about one subject, oldest first.
 
     Drawn from `state.advisory_turns`, not from a UI session variable, which is
     why it survives a rerun, a page refresh and a checkpoint reload — the same
     reason the rest of the conversation is derived from the state object.
+
+    Filtered by `subject` for the same reason the prompt is: the questions asked
+    over the frozen record and the questions asked over the finished design are
+    two conversations about two different objects, and showing them as one would
+    make each answer look like a reply to the wrong question.
     """
-    for turn in state.advisory_turns:
+    for turn in [t for t in state.advisory_turns if t.subject == subject]:
         with st.chat_message("user"):
             st.write(turn.question)
         with st.chat_message("assistant"):
@@ -1135,11 +1161,23 @@ def _feedback_key(kind: str, state: ArchitectState) -> str:
     return f"fb_{kind}_{state.user_rounds}"
 
 
+# What each `UserFeedback.status` looks like in the history line under a box.
+# Every value gets its own mark, because the whole point of the status field is
+# that "we did it", "we did something near it", "you dropped it" and "nothing
+# has happened yet" are four different answers to the same question.
+_STATUS_MARKS: dict[str, str] = {
+    "applied": "✓ applied",
+    "objected": "⚠ applied with an objection",
+    "abandoned": "✕ abandoned at sign-off",
+    "pending": "◷ pending",
+}
+
+
 def _render_feedback_history(state: ArchitectState, kind: str) -> None:
-    """What was already asked for on this axis, and whether it landed."""
+    """What was already asked for on this axis, and what became of it."""
     entries = [entry for entry in state.user_feedback if entry.kind == kind]
     for entry in entries:
-        mark = "✓ applied" if entry.status == "applied" else "◷ pending"
+        mark = _STATUS_MARKS.get(entry.status, entry.status)
         st.caption(f"{mark} · round {entry.round} · you asked: {entry.text}")
 
 
@@ -1162,18 +1200,21 @@ def render_feedback_box(
 
     At the cap the boxes are DISABLED and say why. Never accept text and quietly
     drop it: a box that takes a paragraph and does nothing with it is worse than
-    a box that is visibly closed.
+    a box that is visibly closed. AFTER SIGN-OFF they are disabled for a second
+    reason — the design was taken, so changing it would leave the thing on
+    screen different from the thing that was accepted. `feedback_is_closed`
+    knows about both, so this call site does not have to.
     """
     copy = _FEEDBACK_COPY[kind]
-    exhausted, why = evaluate_user_rounds(state)
+    closed, why = feedback_is_closed(state)
 
     st.markdown(f"##### {copy['heading']}")
     _render_feedback_history(state, kind)
-    if exhausted:
+    if closed:
         st.caption(
-            f"Feedback is closed for this run: {why} reached. Every round of "
-            f"human-driven refinement has been spent. Start a new run to keep "
-            f"going — the artifacts above are what this one produced."
+            f"Feedback is closed for this run: {why}. Start a new run to keep "
+            f"going — the artifacts above are what this one produced. You can "
+            f"still ask questions about the design; that changes nothing."
         )
     else:
         st.caption(copy["note"])
@@ -1184,13 +1225,13 @@ def render_feedback_box(
         placeholder=copy["placeholder"],
         help=copy["help"],
         height=90,
-        disabled=exhausted,
+        disabled=closed,
         label_visibility="collapsed",
     )
     submitted = st.button(
         "Submit feedback",
         key=f"fb_submit_{kind}_{state.user_rounds}",
-        disabled=exhausted,
+        disabled=closed,
         help="Sends whatever you have typed in EITHER box — both are submitted "
              "together, and cost one round between them.",
     )
@@ -1205,6 +1246,231 @@ def render_feedback_box(
         st.warning("Type what you would like changed first.")
         return None
     return requirements, design
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Close-out at DONE — objections, the advisory turn, the sign-off, the waiver
+# ══════════════════════════════════════════════════════════════════════════
+# Everything below is DRAW-only like the rest of this file: the panels RETURN
+# what the human asked for and ui.py performs it through `pipeline.sign_off` /
+# `pipeline.agents.clarifier`. Nothing here waives anything or accepts anything.
+_SEVERITY_COLORS: dict[str, str] = {"high": RED, "medium": "#B9770E", "low": GREY}
+
+
+def render_objections(state: ArchitectState) -> None:
+    """Where the design DEVIATES from what the user asked for, and why.
+
+    Silent unless the architect recorded an objection. When it did, this is the
+    single most important thing on the screen: the person told the system to do
+    something, the system did something adjacent instead, and every other
+    section would render exactly as if it had complied. Placed against the
+    artifacts rather than in the trace expander for that reason — an objection
+    inside a collapsed section is an objection nobody reads.
+    """
+    objections = [entry for entry in state.user_feedback if entry.objection.strip()]
+    if not objections:
+        return
+
+    st.error(
+        f"**The design deviates from {len(objections)} thing"
+        f"{'s' if len(objections) != 1 else ''} you asked for.** The architect "
+        f"built the closest version it could and said why — read this before "
+        f"anything below it."
+    )
+    for entry in objections:
+        st.markdown(
+            f"{_tag('YOU ASKED', BCG_DARK)} &nbsp; {html.escape(entry.text)}",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"{_tag('THE ARCHITECT', RED)} &nbsp; {html.escape(entry.objection.strip())}",
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            f"round {entry.round} · recorded against your directive, never fed "
+            f"back to the architect — objecting is a voice, not a way out."
+        )
+
+
+def render_design_advisory(state: ArchitectState) -> str | None:
+    """Ask a question about the finished design. Returns the question, or None.
+
+    THE CHEAP HALF OF THE FEEDBACK PAIR, and it sits beside the expensive one on
+    purpose. Most people's first reaction to a finished design is a question,
+    not an instruction — and with only a directive box in front of them, the
+    question gets typed as an instruction and costs a full refine round
+    (~75k tokens) to answer something one flash-lite call would have. Asking
+    costs that one call, changes nothing, and the directive they write
+    afterwards is a better directive.
+
+    Works at ACCEPTED as well as DONE: reading an accepted design is not
+    changing one, which is exactly why this is not disabled with the boxes.
+    """
+    st.markdown("##### 💬  Want to understand something first?")
+    st.caption(
+        "Read-only. It does not change the design, spend a refinement round, or "
+        "re-run anything — ask as many as you like. It does spend tokens, so it "
+        "is billed to the run trace under its own agent."
+    )
+    _render_advisory_thread(state, subject="design")
+    with st.form("design_ask", clear_on_submit=True):
+        question = st.text_input(
+            "Your question",
+            placeholder="e.g. why did it pick this pattern? what breaks if we drop the cache?",
+            label_visibility="collapsed",
+        )
+        asked = st.form_submit_button("Ask")
+    return question.strip() if asked and question.strip() else None
+
+
+def _render_open_findings(state: ArchitectState) -> list:
+    """The findings a sign-off would accept, highest severity first. Returns them."""
+    findings = open_findings(state)
+    if not findings:
+        st.success(
+            "**Nothing outstanding.** The review recorded no blocking findings, "
+            "so accepting this records no waiver."
+        )
+        return findings
+
+    st.markdown(
+        f"**You would be accepting {len(findings)} open finding"
+        f"{'s' if len(findings) != 1 else ''}** — these do not go away, they get "
+        f"recorded as accepted:"
+    )
+    for issue in findings:
+        color = _SEVERITY_COLORS.get(issue.severity, GREY)
+        st.markdown(
+            f"{_tag(issue.severity.upper(), color)} &nbsp; "
+            f"`{html.escape(issue.id or '—')}` &nbsp; {html.escape(issue.finding)}",
+            unsafe_allow_html=True,
+        )
+        if issue.suggested_fix.strip():
+            st.caption(f"suggested fix: {issue.suggested_fix.strip()}")
+    return findings
+
+
+def render_sign_off(state: ArchitectState) -> tuple[str, str] | None:
+    """The sign-off panel. Returns ("accept", note) when confirmed, else None.
+
+    DONE means the pipeline stopped. This button is the only thing in the system
+    that can say a HUMAN TOOK THE DESIGN, and the panel exists to make sure that
+    what they took is in front of them when they take it:
+
+      * every open finding, highest severity first, ABOVE the button;
+      * any change they typed and never re-ran, which acceptance will abandon;
+      * an optional note, which stays optional — a mandatory justification field
+        produces "n/a" and then means nothing.
+
+    A HIGH-severity finding requires a second, deliberate confirmation; a medium
+    or low one does not. That asymmetry is the point: a confirmation everything
+    triggers is a confirmation nobody reads. The rule itself is
+    `sign_off.requires_deliberate_confirmation`, not a property of this widget.
+
+    Nothing here BLOCKS. Not the findings — most runs end capped, and a sign-off
+    that required a pass could never close them — and not the unapplied change,
+    which would force a whole refine round to close out a run the person has
+    already decided to take.
+
+    Returns None once the run is ACCEPTED: the decision has been made and this
+    panel has nothing left to ask. `render_acceptance` shows what was decided.
+    """
+    if state.stage is Stage.ACCEPTED:
+        return None
+
+    st.markdown("##### ✍️  Take this design")
+    st.caption(
+        "This run is finished, which is not the same as accepted. Signing off "
+        "records that a person took this design — and, if the review still has "
+        "findings open, exactly which ones they took it with."
+    )
+
+    findings = _render_open_findings(state)
+    unapplied = unapplied_feedback(state)
+    if unapplied:
+        # The same category as an open finding — a known thing being accepted
+        # despite — so it is shown on the same screen rather than behind a
+        # second one. Accepting abandons it; that is stated before the click,
+        # never discovered after it.
+        st.warning(
+            f"**You have {len(unapplied)} unapplied change"
+            f"{'s' if len(unapplied) != 1 else ''}.** Accepting drops "
+            f"{'them' if len(unapplied) != 1 else 'it'} — the run closes with "
+            f"the design as it stands. To apply "
+            f"{'them' if len(unapplied) != 1 else 'it'} instead, submit the box "
+            f"above first and sign off after the run."
+        )
+        for entry in unapplied:
+            st.caption(f"· “{entry.text}” ({entry.kind} box, round {entry.round})")
+
+    note = ""
+    if findings:
+        note = st.text_input(
+            "Note (optional)",
+            key="sign_off_note",
+            placeholder="e.g. accepted for the pilot, tracked in JIRA-123",
+            help="Recorded on the waiver. Optional — leave it empty if you have "
+                 "nothing to add.",
+        ).strip()
+
+    deliberate = True
+    if requires_deliberate_confirmation(state):
+        high = sum(1 for issue in findings if issue.severity == "high")
+        deliberate = st.checkbox(
+            f"I am accepting {high} HIGH-severity finding"
+            f"{'s' if high != 1 else ''} in this design.",
+            key="sign_off_high_ack",
+        )
+
+    accepted = st.button(
+        "✓ Accept this design",
+        type="primary",
+        disabled=not deliberate,
+        help="Records the sign-off and closes the run. The artifacts stay "
+             "exactly as they are; nothing re-runs.",
+    )
+    return ("accept", note) if accepted else None
+
+
+def render_acceptance(state: ArchitectState) -> None:
+    """The sign-off, once it exists: when it happened and what it was made against.
+
+    Silent on a run nobody has taken — most of them — so it costs an unaccepted
+    run nothing.
+
+    NO SIGNER. `accepted_at` is a timestamp because there is no user identity in
+    this system, and a governance record that invented one would be worse than
+    no record at all.
+    """
+    if not state.accepted_at:
+        return
+
+    waiver = state.waiver
+    if waiver is None:
+        st.success(
+            f"**Accepted — {_datestamp(state.accepted_at)}.** The review left no "
+            f"open findings, so nothing was waived."
+        )
+        return
+
+    counts = waiver.severity_counts()
+    breakdown = ", ".join(
+        f"{counts[name]} {name}" for name in ("high", "medium", "low") if name in counts
+    )
+    st.warning(
+        f"**Accepted with a waiver — {_datestamp(waiver.accepted_at)}.** "
+        f"{len(waiver.finding_ids)} open finding"
+        f"{'s' if len(waiver.finding_ids) != 1 else ''} ({breakdown}) were "
+        f"accepted, against a review that said **{waiver.review_status or 'nothing'}**."
+    )
+    for finding_id, severity in zip(waiver.finding_ids, waiver.severities):
+        st.markdown(
+            f"{_tag(severity.upper(), _SEVERITY_COLORS.get(severity, GREY))} &nbsp; "
+            f"`{html.escape(finding_id or '—')}`",
+            unsafe_allow_html=True,
+        )
+    if waiver.note:
+        st.caption(f"Note: {waiver.note}")
 
 
 def render_features(state: ArchitectState) -> None:

@@ -99,6 +99,29 @@ that follows.
 Everything either box does to the state happens in `pipeline.user_feedback`;
 this file only reports a refused round. Same division as the context gate.
 
+CLOSING A RUN OUT — ASK, DIRECT, ACCEPT
+----------------------------------------
+Under the artifacts sit three actions, in ascending cost, and the order is the
+design:
+
+    ask     — one flash-lite call. Changes nothing, spends no round, works at
+              ACCEPTED too. It is FIRST because most first reactions to a
+              finished design are questions, and with only a directive box on
+              screen the question gets typed as an instruction and costs a full
+              refine round to answer.
+    direct  — the design box above. One user round, one refine iteration.
+    accept  — the sign-off. `DONE` says the pipeline stopped; `ACCEPTED` says a
+              person took the design, and only the second is a fact anyone
+              downstream can act on. It is terminal, it is never reached by an
+              agent, and it records what was accepted DESPITE — every open
+              finding, as a waiver, plus anything the person typed and never
+              re-ran (see pipeline/sign_off.py).
+
+The finished-run branch renders at DONE **and** at ACCEPTED. After sign-off the
+same screen redraws with the boxes disabled and the acceptance on it: the
+artifacts do not change, because the whole value of the record is that what is
+on screen is what was signed.
+
 RESUMING ACROSS SESSIONS
 ------------------------
 `st.session_state` dies with the browser tab, but the orchestrator checkpoints
@@ -118,19 +141,23 @@ import streamlit as st
 from pipeline.agents import clarifier as clarifier_gate
 from pipeline.llm import LLMError
 from pipeline.orchestrator import run_pipeline_streaming
-from pipeline.persistence import CheckpointError, list_runs, load_state
+from pipeline.persistence import CheckpointError, list_runs, load_state, save_state
 from pipeline.refine_gate import begin_user_round
 from pipeline.repo_analysis import is_repo_url
 from pipeline.state import ArchitectState, PendingDecision, Stage, new_run
-from pipeline import user_feedback
+from pipeline import sign_off, user_feedback
 from ui_sections import (
     BCG_DARK as _BCG_DARK,
     BCG_GREEN as _BCG_GREEN,
     GREY as _GREY,
     RED as _RED,
     live_step_caption,
+    render_acceptance,
     render_context_approval,
+    render_design_advisory,
     render_feedback_box,
+    render_objections,
+    render_sign_off,
     render_user_rounds,
     render_adrs,
     render_blueprint,
@@ -165,13 +192,23 @@ _ORDER[Stage.AWAITING_HUMAN] = _ORDER[Stage.CLARIFYING]
 _ORDER[Stage.CREATED] = -1
 _ORDER[Stage.REFINING] = _ORDER[Stage.REVIEWING]
 _ORDER[Stage.FAILED] = -1
+# ACCEPTED is NOT a seventh checklist row. The checklist is what the PIPELINE
+# did, and the pipeline did not do this one — a person did, after it stopped. It
+# ranks with DONE so every step above it still reads as complete.
+_ORDER[Stage.ACCEPTED] = _ORDER[Stage.DONE]
 
 # Human-readable label for each stage — drives the live status header in `_run`.
 _STAGE_LABELS: dict[Stage, str] = dict(_CHECKLIST)
 _STAGE_LABELS[Stage.CREATED] = "Starting"
 _STAGE_LABELS[Stage.AWAITING_HUMAN] = "Clarifying"
 _STAGE_LABELS[Stage.REFINING] = "Refining"
+_STAGE_LABELS[Stage.ACCEPTED] = "Accepted"
 _STAGE_LABELS[Stage.FAILED] = "Failed"
+
+# The two terminal stages that carry a finished design. Named once because four
+# places ask the same question — is there a design on screen? — and DONE alone
+# was the answer until a run could be closed out.
+_FINISHED = (Stage.DONE, Stage.ACCEPTED)
 
 
 def _stage_label(state: ArchitectState) -> str:
@@ -239,6 +276,28 @@ def _submit_feedback(state: ArchitectState, requirements: str, design: str) -> N
         )
         return
     _run(state)
+
+
+def _sign_off(state: ArchitectState, note: str) -> None:
+    """REACT half of the sign-off: record the decision, then redraw.
+
+    Every write lives in `pipeline.sign_off` — the stage, the timestamp, the
+    waiver, the abandonment of anything still pending. The same division the
+    context gate and the feedback boxes already use: ui_sections returns intent,
+    ui.py performs it, the pipeline owns what it means.
+
+    NO `_run` HERE, and that is the whole difference from `_submit_feedback`.
+    Feedback sends the run back into the graph; a sign-off ends it. There is
+    nothing to stream, no node to visit and no token to spend — the state is
+    checkpointed and the page simply redraws in its accepted form.
+    """
+    sign_off.accept_design(state, note=note)
+    # The pipeline checkpoints on every graph transition, and this is not one.
+    # Saving here is what makes the sign-off survive the tab being closed — an
+    # acceptance that only existed in `st.session_state` would be the one fact
+    # in the run that a refresh could erase.
+    save_state(state)
+    st.rerun()
 
 
 # The first option is a sentinel, not a run: it is what keeps "start a new run"
@@ -341,7 +400,7 @@ with st.sidebar:
         rank = _ORDER[stage]
         if state and state.stage is Stage.FAILED:
             mark, color = "✕", _RED
-        elif rank < current_rank or (state and state.stage is Stage.DONE):
+        elif rank < current_rank or (state and state.stage in _FINISHED):
             mark, color = "✓", _BCG_DARK
         elif rank == current_rank:
             mark = "⏸" if state.stage is Stage.AWAITING_HUMAN else "●"  # either pause
@@ -503,9 +562,10 @@ else:
     #    missing either omits itself or says why it is empty, so a thin run
     #    (greenfield, no KB results, no review) renders honestly rather than
     #    leaving empty headings behind.
-    elif state.stage is Stage.DONE:
+    elif state.stage in _FINISHED:
         with st.chat_message("assistant"):
             render_run_status(state)    # honest verdict — never a false success
+            render_acceptance(state)    # and, separately, whether a human took it
             render_status_strip(state)  # the run's shape at a glance
             render_user_rounds(state)   # what refinement has cost so far
 
@@ -525,15 +585,47 @@ else:
             feedback = render_feedback_box(state, "requirements")
 
             render_features(state)
+            # Against the artifacts, above them, and not in an expander: an
+            # objection says the design in front of you is not the design you
+            # asked for, and everything below would render identically if it
+            # had complied.
+            render_objections(state)
             render_blueprint(state)
             render_adrs(state)
             render_components(state)
+
+            # ASK before DIRECT. A question costs one flash-lite call and
+            # changes nothing; the box under it costs a full refine round. Most
+            # first reactions to a finished design are questions, and the
+            # directive written after one is a better directive.
+            question = render_design_advisory(state)
             # Either button submits BOTH boxes, so whichever fired is the one
             # that carries the pair. `or` keeps the non-None one.
             feedback = render_feedback_box(state, "design") or feedback
+            st.divider()
+            intent = render_sign_off(state)
 
-            if feedback is not None:
+            if question is not None:
+                # OUTSIDE the graph, exactly like the context-gate advisory
+                # turn: no stage change, no `pending_decision`, no round
+                # consumed. Works at ACCEPTED too — reading is not changing.
+                try:
+                    clarifier_gate.ask_advisor(state, question, subject="design")
+                    # Checkpointed HERE because nothing else will. At the context
+                    # gate the next graph entry saves the turn for free; from a
+                    # terminal stage there may never BE a next graph entry, so
+                    # the tokens this just spent would be missing from the run on
+                    # disk and its totals would stop reconciling.
+                    save_state(state)
+                except LLMError as exc:
+                    # A failed side question must never cost the human their
+                    # screen — report it and leave everything as it was.
+                    st.error(f"Could not answer that: {exc}")
+                st.rerun()
+            elif feedback is not None:
                 _submit_feedback(state, *feedback)
+            elif intent is not None:
+                _sign_off(state, intent[1])
 
     # 5. Failed? → say so plainly, with the recorded errors.
     elif state.stage is Stage.FAILED:

@@ -49,6 +49,30 @@ names, ADR IDs and every decision the findings do not mention — and a user
 directive is not a finding, so as written it would have faithfully preserved the
 exact thing the human asked to change. The rule now has three exits: the
 findings, structural necessity, and the user's direction.
+
+OBJECTIONS: A VOICE, NOT A VETO (feature A2)
+---------------------------------------------
+The directive wins — that did not change. What changed is what happens when it
+cannot be built AS STATED. Previously the only available behaviours were to
+comply impossibly or to substitute something else silently, and the second is
+what a model actually does. So `ArchitectureDesign` gains `directive_objection`:
+the architect builds the closest feasible variant AND records what was asked,
+why it does not work as stated, and what it built instead.
+
+The objection is TRANSPORTED on the phase-2 response schema and STORED on the
+matching `UserFeedback` entry (status `objected`) — named explicitly here
+because the only other object with a spare free-text slot is `Blueprint`, and
+that is precisely where it must not go: `revision_note` is already excluded from
+the reviewer's prompt as self-advocacy, and an objection is the same thing about
+a different audience. It belongs to the directive it objects to.
+
+One objection per pass, then the run proceeds. There is no argument loop, no
+re-prompt and no blocked design — a design that deviates from what the user
+asked, with the reason attached, is the whole deliverable.
+
+And the architect NEVER READS ITS OWN OBJECTIONS BACK. See the note on the
+`<user_directive>` builder: storing the objection beside the text the prompt
+does read makes that a live leak rather than a hypothetical one.
 """
 
 from __future__ import annotations
@@ -85,6 +109,14 @@ class ArchitectureDesign(BaseModel):
     blueprint: Blueprint
     adrs: list[ADR] = Field(default_factory=list)
     components: list[ComponentDescription] = Field(default_factory=list)
+    directive_objection: str = Field(
+        "",
+        description=(
+            "Empty unless a <user_directive> could not be implemented AS STATED. "
+            "Then: what was asked, why it does not work as stated, and what was "
+            "built instead."
+        ),
+    )
 
 
 FEATURE_SYSTEM_PROMPT = """
@@ -143,6 +175,17 @@ Rules:
 - <user_directive> is the human who owns this system speaking, and it OUTRANKS
   <refinement_instruction>. Follow both wherever they are compatible; where they
   conflict, do what the user asked and say so in the revision_note.
+- If a <user_directive> cannot be implemented AS STATED, do BOTH of these and
+  neither one alone: build the closest feasible variant of what they asked for,
+  AND fill `directive_objection` with what was asked, why it does not work as
+  stated, and what you built instead. Substituting something else silently is
+  the one response that is not allowed — they must be able to see that the
+  design deviates from their instruction, and why.
+  Leave `directive_objection` EMPTY whenever you did implement the directive as
+  stated, and whenever there is no directive. It is not the place for caveats,
+  trade-offs or things you would have preferred; it is only for an instruction
+  you could not carry out as written. One objection, then proceed — you are not
+  being asked to negotiate, and the directive still stands.
 - On a revision, set the Blueprint's revision_note to a brief statement of what
   you changed and why. Leave it empty on the initial design.
 - Return only the structured output requested by the response schema.
@@ -204,6 +247,15 @@ def _build_architecture_prompt(
     # edit and would destroy the one thing the trail exists to answer: who asked
     # for this change? That field has a single writer — the reviewer — so
     # everything in it is a finding, and everything here is a person.
+    #
+    # `.text` AND NOTHING ELSE. Never `model_dump_json()`, however convenient.
+    # A `UserFeedback` entry also carries `objection` — this agent's own account
+    # of why it could not build a previous directive — one field away from the
+    # text being serialised here. Reading that back would teach the architect
+    # that objecting makes a directive go away, which is the same self-advocacy
+    # leak `_format_artifacts` keeps `revision_note` out of the reviewer for.
+    # There is a test that asserts it, including for an entry that carries an
+    # objection and is still pending.
     directives = state.pending_feedback("design")
     user_directive = "\n\n".join(entry.text for entry in directives)
 
@@ -384,6 +436,13 @@ def architect_node(state: ArchitectState) -> dict:
         if not design_result.components:
             raise ValueError("Architect produced no Component Descriptions.")
 
+        # An objection is only meaningful about a directive that was actually in
+        # this prompt. With no directive it is the model volunteering a caveat
+        # it was told not to write, and there is no entry to record it against —
+        # so it is dropped rather than parked somewhere a reader would mistake
+        # for a response to a human.
+        objection = design_result.directive_objection.strip() if directives else ""
+
         usage = sum_usage(usages)  # every phase THIS pass ran, as one node total
         verb = "reused" if reuse_features else "derived"
         note = (
@@ -393,6 +452,11 @@ def architect_node(state: ArchitectState) -> dict:
         )
         if directives:
             note += f"; applied {len(directives)} user directive(s)"
+        if objection:
+            # In the trace as well as on the entry: "the design deviates from
+            # what was asked" is a fact about the RUN, and the run's trail is
+            # where a reader looks for what happened when.
+            note += f"; objected to a directive: {objection}"
         step = make_step(
             "architect",
             state.stage,
@@ -421,7 +485,14 @@ def architect_node(state: ArchitectState) -> dict:
             # design that carries it out. Also a LastValue channel, so this is
             # the whole list with those entries flipped — see
             # `ArchitectState.feedback_marked_applied`.
-            update["user_feedback"] = state.feedback_marked_applied(directives)
+            #
+            # An objection rides on the SAME update and marks its entry
+            # `objected` rather than `applied`. It is a voice, not a veto: the
+            # design still ships, the pass still succeeds, and the run carries
+            # on. The stage below is DESIGNING either way.
+            update["user_feedback"] = state.feedback_marked_applied(
+                directives, objection=objection
+            )
         return update
     except Exception as e:
         if usages:

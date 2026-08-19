@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -553,6 +553,26 @@ class Stage(str, Enum):
     human-in-the-loop touchpoint into the router's static table, and the stage
     enum would slowly become the routing problem it exists to keep simple.
 
+    DONE IS NOT ACCEPTED. Two terminal stages, because they record two different
+    facts and a decision-support tool owes its reader both. `DONE` means THE
+    PIPELINE STOPPED — the reviewer passed the design, or the refine budget ran
+    out and the gate handed back the best round it saw. That is a statement
+    about this system. `ACCEPTED` means A HUMAN TOOK THE DESIGN, which is a
+    statement about a person, and it is the only one of the two that anybody
+    downstream can act on. Collapsing them would make an unread run and a signed
+    -off one indistinguishable in the trail.
+
+    `ACCEPTED` is reached ONLY by an explicit user action at DONE (see
+    pipeline/sign_off.py). No agent writes it and no route leads to it, which is
+    why it needs no row in `STAGE_TO_NODE`: like DONE it is absent from that
+    table and therefore routes to END.
+
+    A design the reviewer did NOT pass may be accepted, and that is the normal
+    case rather than an escape hatch — most runs end `stopped_on_cap` with open
+    findings, so a sign-off that required a pass would leave exactly the runs
+    that need closing out unable to be closed. What was accepted DESPITE is
+    recorded separately, as a `Waiver`.
+
     NAMING NOTE. This member was `AWAITING_INPUT` until the context gate landed;
     it is now `AWAITING_HUMAN`, because a lock approval is not "input". The
     STRING VALUE is deliberately still `"awaiting_input"`: checkpoints already
@@ -570,6 +590,7 @@ class Stage(str, Enum):
     REVIEWING = "reviewing"
     REFINING = "refining"
     DONE = "done"
+    ACCEPTED = "accepted"              # a human took the design (terminal; see below)
     FAILED = "failed"
 
 
@@ -665,10 +686,25 @@ class AdvisoryTurn(BaseModel):
 
     The token COST of the same turn is recorded separately, as an ordinary
     `StepLog` in `history`, so per-agent accounting stays a plain groupby.
+
+    `subject` says WHAT was being read when the question was asked, and it is
+    what keeps two conversations from being spliced into one. The side channel
+    is now offered at both ends of a run — over the frozen record at the context
+    lock, and over the finished artifacts at DONE — and those threads have
+    nothing to do with each other. Without the tag, a question about an ADR
+    would arrive at the model with the lock-gate Q&A about scale and budget
+    stapled above it, and the answer would be about the wrong thing.
+
+    Defaults to `"context_record"` so checkpoints written before the design
+    thread existed load as what they were: questions about the record.
     """
 
     question: str
     answer: str = ""
+    subject: Literal["context_record", "design"] = Field(
+        "context_record",
+        description="Which artifact set the question was asked about — the thread it belongs to.",
+    )
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -682,11 +718,34 @@ class UserFeedback(BaseModel):
     Record, the design box re-enters the refine loop, and no model is asked to
     guess which one was meant.
 
-    `status` is the consumption receipt. `pending` means the text has been
-    recorded but no agent has acted on it yet; `applied` is written by the agent
-    that consumed it — the clarifier for a requirements correction, the
-    architect for a design directive. Two agents write this field, but never the
-    same entry, because `kind` decides which one owns it.
+    `status` is the consumption receipt, and every value it can take is a
+    DIFFERENT ANSWER to "what became of what the person typed":
+
+      * `pending`   — recorded, and nothing has acted on it yet.
+      * `applied`   — the owning agent consumed it and did what it said. Written
+                      by the clarifier for a requirements correction and by the
+                      architect for a design directive. Two agents write this
+                      field, never the same entry, because `kind` decides which
+                      one owns it.
+      * `objected`  — the architect consumed it, could not build it AS STATED,
+                      built the closest feasible variant, and said so in
+                      `objection`. Still consumed: this is a voice, not a veto,
+                      and the pass proceeds.
+      * `abandoned` — the human signed the run off without ever re-running, so
+                      no agent will now consume it. Written by the sign-off (see
+                      pipeline/sign_off.py) against their explicit confirmation.
+
+    `abandoned` exists because the alternative is worse than losing the text: an
+    entry left `pending` on a closed run is INDISTINGUISHABLE from one queued
+    and about to run, so the trail would claim work was outstanding on a run
+    nobody is going to touch again.
+
+    `objection` is the architect's reason, and it is written HERE — one field
+    away from `text`, which the architect's own prompt reads. That adjacency is
+    deliberate (the objection belongs to the directive it objects to, not to the
+    Blueprint) and it is exactly why the `<user_directive>` builder serialises
+    `text` and nothing else: an architect that could read back its own
+    objections would learn that objecting makes a directive go away.
 
     `round` is the `user_rounds` value this submission was charged (see
     `refine_gate.begin_user_round`), so the trail can say how much of the budget
@@ -698,12 +757,86 @@ class UserFeedback(BaseModel):
         ...,
         description="Which box it came from — the route, not a judgment about the text.",
     )
-    status: Literal["pending", "applied"] = Field(
+    status: Literal["pending", "applied", "objected", "abandoned"] = Field(
         "pending",
-        description="'applied' once the owning agent has consumed it.",
+        description="What became of it — see the class docstring; anything but 'pending' is consumed.",
+    )
+    objection: str = Field(
+        "",
+        description=(
+            "The architect's account of why this could not be built as stated and "
+            "what it built instead. Set with status 'objected'; NEVER fed back to "
+            "any agent."
+        ),
     )
     submitted_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     round: int = Field(0, description="The `user_rounds` value this submission was charged.")
+
+
+class Waiver(BaseModel):
+    """The recorded decision to ship a design WITH a known problem in it.
+
+    One per sign-off, naming every open finding it covers — not one per finding.
+    A person signs off once, on the whole picture, and splitting that single
+    decision into N records would invent a deliberation that did not happen.
+
+    WHY IT EXISTS AT ALL. Without it, an accepted best-effort design and an
+    accepted clean one are indistinguishable the moment the run is closed: both
+    are `ACCEPTED`, both carry artifacts, and the review that objected is just
+    one more expander nobody opens. The waiver is what makes "we knew, and we
+    took it anyway" a fact on the record rather than something a reader has to
+    reconstruct. A CLEAN sign-off writes no waiver at all — its absence is
+    itself the information, and a waiver with an empty finding list would
+    destroy that.
+
+    `finding_ids` and `severities` are PARALLEL: `severities[i]` is the severity
+    of `finding_ids[i]`, both ordered highest severity first, and the validator
+    below refuses a pair that has drifted. Two lists rather than one list of
+    objects because these are a snapshot, not a view onto `review.issues` — the
+    review can be re-run, and what was waived cannot change afterwards.
+
+    `note` is optional and stays optional. A mandatory justification field
+    produces "n/a" on every second run and then means nothing; an empty note
+    honestly says the person had nothing to add.
+
+    IT IS FOR HUMANS ONLY. A waiver never enters an agent prompt — least of all
+    the architect's, where a waived finding would read as a solved one.
+    """
+
+    finding_ids: list[str] = Field(
+        default_factory=list,
+        description="IDs of every open finding this sign-off accepted, highest severity first.",
+    )
+    severities: list[str] = Field(
+        default_factory=list,
+        description="Severity of each entry in `finding_ids`, same order, same length.",
+    )
+    review_status: str = Field(
+        "",
+        description="The review's `overall_status` at sign-off — what the gate said, kept beside what the human did.",
+    )
+    accepted_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat(),
+        description="When the sign-off happened. There is no user identity in this system, so there is no signer.",
+    )
+    note: str = Field("", description="Optional free text from the signer, e.g. 'tracked in JIRA-123'.")
+
+    @model_validator(mode="after")
+    def _severities_match_findings(self) -> "Waiver":
+        if len(self.severities) != len(self.finding_ids):
+            raise ValueError(
+                f"Waiver.severities has {len(self.severities)} entries for "
+                f"{len(self.finding_ids)} finding(s). They are parallel lists: "
+                f"severities[i] is the severity of finding_ids[i]."
+            )
+        return self
+
+    def severity_counts(self) -> dict[str, int]:
+        """How many findings of each severity this waiver covers. Derived, for display."""
+        counts: dict[str, int] = {}
+        for severity in self.severities:
+            counts[severity] = counts.get(severity, 0) + 1
+        return counts
 
 
 # ── Clarifier output (Kati owns) ─────────────────────────────────────────
@@ -856,6 +989,20 @@ class ArchitectState(BaseModel):
     # reducer that return would append a duplicate of every entry instead of
     # updating one.
     user_feedback: list[UserFeedback] = Field(default_factory=list)
+    # THE SIGN-OFF, and what it was made against. Both written by
+    # pipeline/sign_off.py, together, once, and never by an agent.
+    #
+    # `accepted_at` is a timestamp and nothing else: there is no user identity
+    # anywhere in this system, so there is no signer to name and one must not be
+    # invented. Empty means nobody has taken this design — the honest default
+    # for every run, including the ones that finished perfectly.
+    #
+    # `waiver` is present ONLY when the sign-off accepted open findings. Its
+    # ABSENCE is information (a clean design was accepted clean), which is why
+    # this is Optional rather than an always-present object with an empty list.
+    # See `Waiver`. Neither field ever enters an agent prompt.
+    accepted_at: str = ""
+    waiver: Optional[Waiver] = None
     retrieved_knowledge: list[KBChunk] = Field(default_factory=list)
     features: list[Feature] = Field(default_factory=list)
     # Drill-down cache (Malte): the Architect appends one DeepDive whenever it
@@ -992,9 +1139,9 @@ class ArchitectState(BaseModel):
         ]
 
     def feedback_marked_applied(
-        self, consumed: list[UserFeedback]
+        self, consumed: list[UserFeedback], *, objection: str = ""
     ) -> list[UserFeedback]:
-        """The WHOLE feedback list with `consumed` flipped to "applied". Pure.
+        """The WHOLE feedback list with `consumed` no longer pending. Pure.
 
         Returns a new list of new objects and mutates nothing, because a node
         must not write into the state it was handed — LangGraph persists only
@@ -1006,14 +1153,32 @@ class ArchitectState(BaseModel):
         Matching is by identity, on the objects `pending_feedback` handed back
         from this same state. Two submissions can carry identical text and both
         must be tracked separately, so equality would mark the wrong one.
+
+        `objection`, when the architect could not build a directive as stated,
+        lands on the LAST entry in `consumed` and marks it `objected` instead of
+        `applied`. Last, because the response schema carries ONE objection while
+        `consumed` can hold several directives, and the last is the newest — the
+        one the person typed most recently and the one they are still looking
+        at. Several pending directives at once means an earlier architect pass
+        raised, which is rare; guessing the newest is better than spraying one
+        reason across entries it may not be about. Everything else in `consumed`
+        is `applied` as usual, because the pass DID carry them out.
         """
         consumed_ids = {id(entry) for entry in consumed}
-        return [
-            entry.model_copy(update={"status": "applied"})
-            if id(entry) in consumed_ids
-            else entry.model_copy()
-            for entry in self.user_feedback
-        ]
+        objected_id = id(consumed[-1]) if (objection and consumed) else None
+        out: list[UserFeedback] = []
+        for entry in self.user_feedback:
+            if id(entry) == objected_id:
+                out.append(
+                    entry.model_copy(
+                        update={"status": "objected", "objection": objection}
+                    )
+                )
+            elif id(entry) in consumed_ids:
+                out.append(entry.model_copy(update={"status": "applied"}))
+            else:
+                out.append(entry.model_copy())
+        return out
 
     def bump_retry(self, agent: str) -> int:
         """Increment and return this agent's retry counter (for retry caps later)."""

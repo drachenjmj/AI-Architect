@@ -133,6 +133,18 @@ def submit_feedback(
             "to record, and re-entering the graph would spend a user round on a "
             "run that would produce exactly what it produced before."
         )
+    if state.stage is Stage.ACCEPTED:
+        # Its own message because this is not a caller bug — it is a run that
+        # was CLOSED. A human took this design; changing it now would mean the
+        # thing on screen is no longer the thing that was signed off, and the
+        # waiver would name findings against artifacts that no longer exist.
+        # `sign_off.feedback_is_closed` is what stops a UI ever getting here.
+        raise ValueError(
+            "submit_feedback called on an ACCEPTED run. The design was signed "
+            "off, so there is nothing left to redirect — start a new run to "
+            "take it further. Reading it is still open: ask_advisor works at "
+            "ACCEPTED."
+        )
     if state.stage is not Stage.DONE:
         raise ValueError(
             f"submit_feedback called at stage {state.stage.value!r}; feedback is "

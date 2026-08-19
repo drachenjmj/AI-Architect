@@ -20,14 +20,38 @@ the agents. This keeps the system auditable and deterministic wherever it can be
 - **Architect** — derives features and writes the Blueprint, ADRs, and Components.
 - **Reviewer** — checks quality and can send work back for refinement.
 
-The human is in the loop at three points, and none of them adds a routing
+The human is in the loop at four points, and none of them adds a routing
 decision an LLM makes: the Clarifier's questions, the Context Record approval
-gate, and — on the finished run — two feedback boxes. A correction typed into
-the requirements box re-opens the record as a new *version*; a directive typed
-into the design box goes to the Architect ranked above the Reviewer's own
-instruction. Which box the text was typed into IS the route, so no classifier
-stands between a person and what they asked for
+gate, the two feedback boxes on the finished run, and the sign-off that closes
+it. A correction typed into the requirements box re-opens the record as a new
+*version*; a directive typed into the design box goes to the Architect ranked
+above the Reviewer's own instruction. Which box the text was typed into IS the
+route, so no classifier stands between a person and what they asked for
 (`pipeline/user_feedback.py`).
+
+## Sign-off — what was decided, and what it was decided against
+
+`DONE` means the pipeline stopped. `ACCEPTED` means a person took the design,
+and only the second is a fact anyone downstream can act on, so the run records
+both (`pipeline/sign_off.py`).
+
+- A design the Reviewer did **not** pass may be accepted — that is the normal
+  case, since most runs end on the refine budget with findings still open.
+- Accepting against open findings records a **waiver**: every finding it covers,
+  their severities, the Reviewer's verdict at the time, and an optional note.
+  They are listed above the button, highest severity first, and a high-severity
+  finding needs a second, deliberate confirmation. A clean sign-off records no
+  waiver, and that absence is itself information.
+- Anything the person typed and never re-ran is surfaced on the same screen and
+  marked `abandoned` on confirmation — never left looking outstanding on a
+  closed run, and never a reason to block the sign-off.
+- When the Architect cannot build a directive as stated it builds the closest
+  feasible variant and records an **objection** — what was asked, why it does
+  not work, what it built instead — shown against the artifacts.
+
+None of it ever enters an agent prompt. The Reviewer grades artifacts, not
+intentions; a waived finding is not a solved one; and the Architect never reads
+its own objections back. That is asserted in `test_sign_off.py`, not trusted.
 
 ## Reviewer quality gate
 
