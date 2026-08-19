@@ -112,6 +112,16 @@ Rules:
 - Address cloud, budget, scalability, compliance, and migration constraints
   whenever they are present.
 - Clearly label assumptions and open risks.
+- When <current_design> is present you are REVISING that design, not creating a
+  new one. Keep component names, ADR IDs, the selected pattern, and every
+  decision the findings do not mention EXACTLY as they are. Change only what the
+  refinement instruction requires. Renaming or replacing parts the review did
+  not object to discards work that was already correct.
+- That rule yields to the findings, it does not override them. If a finding
+  requires a structural change to the architecture itself, make it and say so.
+  Never preserve a design the review says is wrong.
+- On a revision, set the Blueprint's revision_note to a brief statement of what
+  you changed and why. Leave it empty on the initial design.
 - Return only the structured output requested by the response schema.
 """.strip()
 
@@ -183,12 +193,50 @@ def _build_architecture_prompt(
 {features_json}
 </derived_features>
 
-<refinement_instruction>
+{_format_current_design(state)}<refinement_instruction>
 {refinement_instruction or "None — create the initial architecture design."}
 </refinement_instruction>
 
 Create the structured Architecture Blueprint, ADRs, and Component Descriptions.
 """.strip()
+
+
+def _format_current_design(state: ArchitectState) -> str:
+    """The previous round's artifacts, for a refine pass to revise. Pure.
+
+    Returns "" when the block does not belong in the prompt, so the caller can
+    interpolate it unconditionally. Two reasons it can be absent:
+
+    * this is the INITIAL design, so there is nothing to revise; or
+    * a refine pass somehow has no artifacts to show. That is a bug upstream -
+      the reviewer only reaches REFINING after judging a design - but the
+      response is to omit the block and let the architect build from the
+      context, exactly as `_reuses_features` re-derives features rather than
+      failing the run over an inconsistency it did not create.
+
+    Emitting EMPTY tags instead would be worse than omitting them: it reads as
+    "the previous design was blank" rather than "there was not one".
+    """
+
+    if not _reuses_features(state):
+        return ""
+    if state.blueprint is None or not state.adrs or not state.components:
+        return ""
+
+    blueprint_json = state.blueprint.model_dump_json(indent=2)
+    adr_json = "[\n" + ",\n".join(
+        adr.model_dump_json(indent=2) for adr in state.adrs
+    ) + "\n]"
+    component_json = "[\n" + ",\n".join(
+        component.model_dump_json(indent=2) for component in state.components
+    ) + "\n]"
+    return (
+        "<current_design>\n"
+        f"BLUEPRINT:\n{blueprint_json}\n\n"
+        f"ADRS:\n{adr_json}\n\n"
+        f"COMPONENTS:\n{component_json}\n"
+        "</current_design>\n\n"
+    )
 
 
 def _reuses_features(state: ArchitectState) -> bool:

@@ -44,6 +44,7 @@ from pipeline.persistence import (
 )
 from pipeline.state import (
     ArchitectState,
+    Blueprint,
     ContextRecord,
     KBChunk,
     ReviewResult,
@@ -484,3 +485,42 @@ def test_checkpoint_written_before_the_field_existed_still_loads():
     # applied when the checkpoint was written.
     assert loaded.review.not_applicable == []
     assert loaded.review.overall_status == "fail"
+
+
+def test_revision_note_survives_the_round_trip():
+    _isolate("revision_note_round_trip")
+    state = new_run(PROMPT)
+    state.blueprint = Blueprint(
+        stakeholder_view="Customers keep shopping during peak sales.",
+        technical_view="Web tier offloads order writes to a queue.",
+        revision_note="Added FEAT-004 to the Data Governance Service.",
+    )
+
+    save_state(state)
+    loaded = load_state(state.run_id)
+
+    assert loaded.blueprint.revision_note == (
+        "Added FEAT-004 to the Data Governance Service."
+    )
+    assert loaded.blueprint == state.blueprint
+
+
+def test_checkpoint_without_revision_note_still_loads():
+    """Every run recorded before this field existed."""
+
+    _isolate("revision_note_legacy")
+    state = new_run(PROMPT)
+    state.blueprint = Blueprint(
+        stakeholder_view="A view.", technical_view="Another view."
+    )
+    path = save_state(state)
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    del payload["blueprint"]["revision_note"]
+    assert "revision_note" not in payload["blueprint"]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = load_state(state.run_id)
+
+    assert loaded.blueprint.revision_note == ""
+    assert loaded.blueprint.stakeholder_view == "A view."

@@ -97,6 +97,7 @@ from pipeline.state import (
 # The clarifier's judgment sets the quality of everything downstream, so it uses
 # the stronger model rather than the cheap default.
 CLARIFIER_MODEL = "flash-lite"
+MAX_ASK_ROUNDS = 5
 
 # ── ContextRecord field policy (deterministic, code-owned) ───────────────
 # WHICH fields are architecture-critical. This list mirrors the enumeration in
@@ -667,7 +668,7 @@ def clarifier_node(state: ArchitectState) -> dict:
         # A re-judge has a record; a first pass does not. That one fact selects
         # the mode, so the flag cannot drift out of sync with reality — there is
         # no second copy of it to forget to update.
-        assume_only = state.context_record is not None
+        assume_only = state.context_record is not None or state.ask_rounds >= MAX_ASK_ROUNDS
 
         # 1. LLM JUDGES — returns a validated ClarificationResult (no manual parsing).
         result: ClarificationResult

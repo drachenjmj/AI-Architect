@@ -830,6 +830,8 @@ def print_blueprint(state: ArchitectState) -> None:
         + (f" | {blueprint.project_name}" if blueprint.project_name else "")
     )
     print()
+    # Shown to the human, never to the reviewer - see agents/reviewer.py.
+    _text("Revised this round", blueprint.revision_note)
     _text("Selected pattern", blueprint.selected_pattern)
     _text("Rationale", blueprint.rationale)
     drew_view = _text("Stakeholder view (business-facing)", blueprint.stakeholder_view)
@@ -960,8 +962,11 @@ def print_review(state: ArchitectState) -> None:
         print(_wrap(reason or "(no reason recorded)", "        "))
     print()
 
+    # "Blocking", not just "Issues". Advisory and not-applicable criteria are
+    # deliberately kept OUT of `issues` (see agents/reviewer.py), so a run can
+    # carry a real complaint and still print zero here.
     if review.issues:
-        print(f"Issues ({len(review.issues)}):")
+        print(f"Blocking issues ({len(review.issues)}):")
         for index, issue in enumerate(review.issues, start=1):
             print()
             print(
@@ -976,8 +981,27 @@ def print_review(state: ArchitectState) -> None:
                 f"{'yes' if issue.requires_refinement else 'no'}"
             )
     else:
-        print("Issues: none recorded.")
+        print("Blocking issues: none recorded.")
     print()
+
+    # ADVISORY FINDINGS. An excluded criterion still gets asked and still
+    # answers, and its answer can be substantive - in run
+    # 20260819T080216Z-f981f8ef `refinement_readiness` named the exact unlinked
+    # feature while the blocking list was empty. It raises no ReviewIssue by
+    # design, so without this the report looks like it found nothing.
+    advisory_findings = [
+        (label, (getattr(review.judgment_reasons, field, "") or "").strip())
+        for field, label in _LLM_CHECKS
+        if field in ADVISORY_CRITERIA
+        and not bool(getattr(review.rubric_scores, field, False))
+    ]
+    if advisory_findings:
+        print(f"Advisory findings ({len(advisory_findings)}); "
+              f"recorded, excluded from the verdict:")
+        for label, reason in advisory_findings:
+            print(f"  - {label}")
+            print(_wrap(reason or "(no reason recorded)", "      "))
+        print()
 
     print(f"refine_iterations : {state.refine_iterations}")
     print(

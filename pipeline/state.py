@@ -305,6 +305,17 @@ class Blueprint(BaseModel):
         default="1.0",
         description="Version of the blueprint.",
     )
+    # Written by the architect on a REFINE pass only, and deliberately kept OUT
+    # of the reviewer's view - see `_format_artifacts` in agents/reviewer.py.
+    # A design that narrates its own corrections to the judge grading it is
+    # asking to be believed rather than checked.
+    revision_note: str = Field(
+        default="",
+        description=(
+            "On a revision, a brief statement of what changed and why. "
+            "Empty on the initial design."
+        ),
+    )
 
 
 class ADR(BaseModel):

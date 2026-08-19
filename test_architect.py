@@ -350,3 +350,100 @@ def test_refine_pass_still_reaches_the_architecture_prompt_with_the_instruction(
 
     assert "Assign FEAT-005 to a component." in prompt
     assert "FEAT-005" in prompt  # the ID it names is in the feature set it sees
+
+
+# --- revising the previous design instead of regenerating it ---------------
+#
+# Run 20260819T072344Z-2a29f3bd: the datastore went Aurora -> SQS -> RDS MySQL
+# across three rounds and component names were replaced wholesale each pass, so
+# a one-line finding triggered a full redesign and broke what the previous round
+# had right. `<current_design>` is what gives the architect something to revise.
+
+
+def _designed_state(features: list[Feature] | None = None):
+    """A refine-pass state that already carries a previous design."""
+
+    state = _refining_state(features or _existing_features())
+    state.blueprint = Blueprint(
+        blueprint_id="BP-KEEP-001",
+        project_name="E-commerce Platform",
+        selected_pattern="Modular Monolith with Asynchronous Task Queue",
+        stakeholder_view="Customers keep shopping during peak sales.",
+        technical_view="Web tier offloads order writes to a queue.",
+        addressed_feature_ids=["FEAT-001"],
+    )
+    state.adrs = [
+        ADR(
+            adr_id="ADR-001",
+            title="ADR-001: Use Amazon SQS",
+            context="Order writes saturate the database.",
+            decision="Buffer order writes through Amazon SQS.",
+            rationale="It decouples the write path from the request path.",
+        )
+    ]
+    state.components = [
+        ComponentDescription(
+            name="Transactional Order Worker",
+            description="Drains the queue and persists orders.",
+            related_feature_ids=["FEAT-001"],
+        ),
+        ComponentDescription(
+            name="Redis Caching Layer",
+            description="Serves hot catalogue reads.",
+            related_feature_ids=["FEAT-002"],
+        ),
+    ]
+    return state
+
+
+def test_refine_pass_shows_the_architect_its_previous_design():
+    prompt = arch._build_architecture_prompt(_designed_state(), _existing_features())
+
+    assert "<current_design>" in prompt
+    assert "</current_design>" in prompt
+    # The names that kept churning are exactly what must survive the round.
+    assert "Transactional Order Worker" in prompt
+    assert "Redis Caching Layer" in prompt
+    assert "ADR-001" in prompt
+    assert "Modular Monolith with Asynchronous Task Queue" in prompt
+
+
+def test_initial_design_has_no_current_design_block():
+    """There is nothing to revise on the first pass, and saying so with empty
+    tags would read as 'the previous design was blank'."""
+
+    state = _base_state()  # no review at all
+    prompt = arch._build_architecture_prompt(state, _existing_features())
+
+    assert "current_design" not in prompt
+
+
+def test_refine_pass_without_artifacts_omits_the_block_entirely():
+    state = _designed_state()
+    state.blueprint = None
+    state.adrs = []
+    state.components = []
+
+    prompt = arch._build_architecture_prompt(state, _existing_features())
+
+    assert "current_design" not in prompt
+    # ... and the pass still carries the reason it is happening.
+    assert "Assign FEAT-005 to a component." in prompt
+
+
+def test_a_partial_previous_design_omits_the_block():
+    """Components present but no ADRs: still nothing coherent to revise."""
+
+    state = _designed_state()
+    state.adrs = []
+
+    assert arch._format_current_design(state) == ""
+
+
+def test_the_revision_rules_reach_the_model():
+    assert "<current_design>" in arch.ARCHITECTURE_SYSTEM_PROMPT
+    assert "REVISING" in arch.ARCHITECTURE_SYSTEM_PROMPT
+    # The escape hatch is not optional: anchoring to the previous design
+    # unconditionally would stop the loop ever fixing a wrong architecture.
+    assert "yields to the findings" in arch.ARCHITECTURE_SYSTEM_PROMPT
+    assert "revision_note" in arch.ARCHITECTURE_SYSTEM_PROMPT

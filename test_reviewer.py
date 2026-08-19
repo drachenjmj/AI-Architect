@@ -637,3 +637,32 @@ def test_retrieved_knowledge_restores_the_original_behaviour():
     assert report.rubric_scores.best_practice_grounding is False
     assert report.overall_status == "fail"
     assert [i for i in report.issues if "retrieved knowledge" in i.finding]
+
+
+# --- the reviewer must not read the architect's own account of its changes ---
+
+
+def test_revision_note_never_reaches_the_review_prompt():
+    """The architect writes `revision_note` on a refine pass to say what it
+    changed and why. Feeding that to the judge grading the result would let the
+    design argue its own case - a model that states it addressed a finding tends
+    to be believed, and this reviewer exists to CHECK the artifacts rather than
+    take them at their word. The note is persisted and shown to a human; it is
+    simply not evidence.
+    """
+
+    state = _good_design_state()
+    state.blueprint.revision_note = (
+        "MAGIC_SELF_REPORT: added FEAT-005 to the Order Worker as instructed."
+    )
+
+    artifacts = rev._format_artifacts(state)
+    prompt = rev._build_prompt(state, run_deterministic_checks(state))
+
+    assert "MAGIC_SELF_REPORT" not in artifacts
+    assert "MAGIC_SELF_REPORT" not in prompt
+    assert "revision_note" not in artifacts
+    # The rest of the blueprint is still there - only that one field is dropped.
+    assert state.blueprint.stakeholder_view in artifacts
+    assert state.blueprint.technical_view in artifacts
+    assert "blueprint_id" in artifacts

@@ -673,7 +673,11 @@ def render_review_report(state: ArchitectState) -> None:
 
     verdict = "PASS" if review.overall_status == "pass" else "FAIL"
     with st.expander(
-        f"⚖️  Review report — {verdict}, {len(review.issues)} issue"
+        # "blocking", not "issue". Advisory and not-applicable criteria are
+        # deliberately kept OUT of `issues` (see agents/reviewer.py), so a run
+        # can carry a real complaint and still show zero here. Saying "0 issues"
+        # beside a FAIL, or beside an advisory finding, reads as a contradiction.
+        f"⚖️  Review report — {verdict}, {len(review.issues)} blocking issue"
         f"{'s' if len(review.issues) != 1 else ''}  ·  iteration + quality gate",
         expanded=False,
     ):
@@ -731,7 +735,7 @@ def render_review_report(state: ArchitectState) -> None:
 
         st.divider()
         if review.issues:
-            st.markdown(f"**Issues** — {len(review.issues)}")
+            st.markdown(f"**Blocking issues** — {len(review.issues)}")
             # `st.table`, NOT `st.dataframe`. The interactive grid clips every
             # cell to one line — `column_config` has no wrap option — so the
             # findings, evidence and fixes were unreadable without scrolling
@@ -755,7 +759,29 @@ def render_review_report(state: ArchitectState) -> None:
                 ]
             )
         else:
-            st.caption("No issues were recorded.")
+            st.caption("No blocking issues were recorded.")
+
+        # ADVISORY FINDINGS. A criterion excluded from the verdict still gets
+        # asked and still answers, and its answer can be substantive - in run
+        # 20260819T080216Z-f981f8ef `refinement_readiness` named the exact
+        # unlinked feature while the blocking-issue list was empty. It raises no
+        # ReviewIssue by design, so without this block that finding is visible
+        # only as a red cross in the column above, and the report looks like it
+        # found nothing. Shown, and shown as NOT counting.
+        advisory_findings = [
+            (label, (getattr(review.judgment_reasons, field, "") or "").strip())
+            for field, label in _LLM_CHECKS
+            if field in ADVISORY_CRITERIA
+            and not bool(getattr(review.rubric_scores, field, False))
+        ]
+        if advisory_findings:
+            st.markdown(
+                f"**Advisory findings** — {len(advisory_findings)} &nbsp; "
+                f"{_tag('recorded, excluded from the verdict', GREY)}",
+                unsafe_allow_html=True,
+            )
+            for label, reason in advisory_findings:
+                st.caption(f"**{html.escape(label)}** — {reason or '_no reason recorded_'}")
 
         st.divider()
         st.markdown(
@@ -1065,6 +1091,9 @@ def render_blueprint(state: ArchitectState) -> None:
             f"{blueprint.blueprint_id} · v{blueprint.version}"
             + (f" · {blueprint.project_name}" if blueprint.project_name else "")
         )
+        # Shown to the human, never to the reviewer - see agents/reviewer.py.
+        if blueprint.revision_note.strip():
+            st.info(f"**Revised this round** — {blueprint.revision_note.strip()}")
         _text("Selected pattern", blueprint.selected_pattern)
         _text("Rationale", blueprint.rationale)
 

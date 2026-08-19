@@ -263,8 +263,15 @@ def _format_artifacts(state: ArchitectState) -> str:
     feature_json = "[\n" + ",\n".join(
         feature.model_dump_json(indent=2) for feature in state.features
     ) + "\n]"
+    # `revision_note` is EXCLUDED, deliberately. It is the architect's own
+    # account of what it just changed and why, written on a refine pass. Feeding
+    # it to the judge that grades the result would let the design argue its own
+    # case: a model that states it addressed a finding tends to be believed,
+    # and the whole point of this reviewer is that the artifacts are checked
+    # rather than taken at their word. The note is still persisted and still
+    # shown to a human - it just is not evidence.
     blueprint_json = (
-        state.blueprint.model_dump_json(indent=2)
+        state.blueprint.model_dump_json(indent=2, exclude={"revision_note"})
         if state.blueprint is not None
         else "null"
     )
