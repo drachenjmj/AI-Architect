@@ -1,5 +1,8 @@
 # Evaluation Rubric v2
 
+> Historical specification. New reports use rubric v3, documented in
+> `08_eval_rubric_v3.md`. The v2 fields remain loadable for stored-run replay.
+
 Rubric v2 removes the numeric pass threshold. It preserves diagnostic scores
 for checks that code can measure and makes every qualitative judgment an atomic
 yes/no question. Python assembles the report and owns the final verdict.

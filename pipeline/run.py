@@ -907,13 +907,14 @@ def _print_component(component: ComponentDescription) -> None:
     _inline("Justified by ADRs", component.related_adr_ids)
 
 
-# The four code-owned rubric checks, in report order: 0-2 diagnostic scores, and
+# The five code-owned rubric checks, in report order: 0-2 diagnostic scores, and
 # the verdict requires every one of them to be 2 (see reviewer.py).
 _CODE_CHECKS: list[tuple[str, str]] = [
     ("all_artifacts_present", "All artifacts present"),
     ("constraint_coverage", "Constraint coverage"),
     ("traceability", "Traceability"),
     ("adr_presence", "ADR presence"),
+    ("source_integrity", "Source integrity"),
 ]
 # The five LLM-owned judgments: binary, each paired with its written reason.
 _LLM_CHECKS: list[tuple[str, str]] = [

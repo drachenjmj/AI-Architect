@@ -22,39 +22,41 @@ the agents. This keeps the system auditable and deterministic wherever it can be
 
 ## Reviewer quality gate
 
-Reviewer rubric v2 separates checks by who can evaluate them reliably:
+Reviewer rubric v3 separates checks by who can evaluate them reliably:
 
 - Python checks artifact completeness, constraint coverage, structured
-  traceability, and ADR presence.
+  traceability, ADR completeness, repository availability, and source integrity.
 - One LLM call answers five atomic yes/no questions covering repository
-  grounding, flaw detection, ADR soundness, best-practice grounding, and
-  refinement readiness.
+  grounding, run-specific problem resolution, ADR soundness, evidence
+  grounding, and refinement readiness.
 - Python assembles the issues and owns the final pass/fail verdict. A design
-  passes only when every deterministic check is full, every qualitative
-  judgment passes, and no high-severity issue remains.
+  passes only when every deterministic check is full, every verdict-bearing
+  judgment passes, and no high-severity issue remains. Refinement readiness is
+  retained as an advisory measurement rather than a second veto.
 
 See the [Reviewer prompt](docs/prompt_quality/04_reviewer_agent_prompt.md),
 [report schema](docs/prompt_quality/06_reviewer_report_schema.json), and
-[evaluation rubric v2](docs/prompt_quality/07_eval_rubric_v2.md) for the full
+[evaluation rubric v3](docs/prompt_quality/08_eval_rubric_v3.md) for the full
 contract.
 
 ## Evaluation
 
-The development-only [evaluation harness](eval/README.md) sends two labeled
-use-case #1 designs through the production Reviewer: a seeded-flaw design that
-must fail and a sound design that must pass. It reports agreement, true-positive
-and true-negative rates, the confusion matrix, and every disagreement. The
-`eval/` package is not an agent and is never imported by the production
-pipeline.
+The development-only [evaluation harness](eval/README.md) compares the final
+verdict, every deterministic score, and every qualitative judgment against
+labeled cases. It includes seven provisional cross-domain seed cases and can
+load human-labeled saved pipeline states. `eval/replay_reviews.py` separately
+replays the deterministic verdict rule over historical runs. Neither tool is
+an agent or part of production routing.
 
 ```bash
 python -m pytest -q          # offline suite; LLM calls are mocked
-python -m eval.harness       # real Reviewer call; requires GEMINI_API_KEY
+python -m eval.harness --repeats 3 --output eval/results/run.json
 ```
 
-Current status: rubric v2 and the labeled harness are implemented and covered
-by offline tests. Applying the rubric to a real end-to-end pipeline output for
-use-case #1 remains the Week 3 evaluation exit gate.
+Current status: rubric v3 and the criterion-level harness are implemented and
+covered by offline tests. The bundled labels remain provisional; human review
+and repeated live evaluation on saved real outputs are still required before
+making a reliability claim.
 
 ## Layout
 

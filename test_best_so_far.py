@@ -467,11 +467,14 @@ def test_a_flapping_judge_ships_the_better_middle_round(monkeypatch):
                        "best_practice_grounding", "refinement_readiness")
         if getattr(scores, name)
     )
-    # 3, not 4: repo_grounding and flaw_detection genuinely passed in round 2,
-    # and best_practice_grounding reads true because it was NOT APPLICABLE -
-    # see review.not_applicable, which is what stops that true reading as a pass.
+    # 3, not 4: flaw_detection passed in round 2, while both grounding
+    # booleans read true only because they were NOT APPLICABLE. The list below
+    # prevents either compatibility boolean from being presented as a pass.
     assert passing == 3, "the shipped review is not round 2's"
-    assert done.review.not_applicable == ["best_practice_grounding"]
+    assert done.review.not_applicable == [
+        "repo_grounding",
+        "best_practice_grounding",
+    ]
 
     # THE consistency claim: the shipped review is the review OF the shipped
     # artifacts. Both surfaces (ui_sections, run.py) read these two off the same

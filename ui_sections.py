@@ -637,13 +637,14 @@ def _render_mermaid(source: str, height: int = 420) -> None:
 # ══════════════════════════════════════════════════════════════════════════
 # G. Review report  [iteration + quality gate]
 # ══════════════════════════════════════════════════════════════════════════
-# The four code-owned rubric checks, in report order. Each is a 0-2 diagnostic
+# The five code-owned rubric checks, in report order. Each is a 0-2 diagnostic
 # score and the verdict requires every one of them to be 2 (see reviewer.py).
 _CODE_CHECKS: list[tuple[str, str]] = [
     ("all_artifacts_present", "All artifacts present"),
     ("constraint_coverage", "Constraint coverage"),
     ("traceability", "Traceability"),
     ("adr_presence", "ADR presence"),
+    ("source_integrity", "Source integrity"),
 ]
 # The five LLM-owned judgments: binary, each paired with its written reason.
 _LLM_CHECKS: list[tuple[str, str]] = [

@@ -430,8 +430,28 @@ class ComponentDescription(BaseModel):
     )
 
 
+REVIEW_CODE_SCORE_FIELDS = (
+    "all_artifacts_present",
+    "constraint_coverage",
+    "traceability",
+    "adr_presence",
+    "source_integrity",
+)
+REVIEW_JUDGMENT_FIELDS = (
+    "repo_grounding",
+    "flaw_detection",
+    "adr_soundness",
+    "best_practice_grounding",
+    "refinement_readiness",
+)
+REVIEW_ADVISORY_FIELDS = ("refinement_readiness",)
+REVIEW_VERDICT_JUDGMENT_FIELDS = tuple(
+    name for name in REVIEW_JUDGMENT_FIELDS if name not in REVIEW_ADVISORY_FIELDS
+)
+
+
 class RubricScores(BaseModel):
-    """Rubric v2 results, with field types reflecting decision ownership.
+    """Reviewer results, with field types reflecting decision ownership.
 
     Code-owned checks retain 0-2 diagnostic scores. The final verdict requires
     each to equal 2. LLM-owned checks are binary pass/fail judgments; code owns
@@ -442,6 +462,9 @@ class RubricScores(BaseModel):
     constraint_coverage: int = Field(0, ge=0, le=2)
     traceability: int = Field(0, ge=0, le=2)
     adr_presence: int = Field(0, ge=0, le=2)
+    # Defaults to full only for checkpoints written before this check existed.
+    # The production Reviewer always overwrites it with the current run's check.
+    source_integrity: int = Field(2, ge=0, le=2)
     repo_grounding: bool = False
     flaw_detection: bool = False
     adr_soundness: bool = False
@@ -466,7 +489,7 @@ class ReviewIssue(BaseModel):
     severity: Literal["low", "medium", "high"] = "low"
     category: Literal[
         "completeness", "constraint", "grounding", "traceability",
-        "adr", "repo_alignment", "safety",
+        "adr", "repo_alignment", "evidence", "safety",
     ] = "completeness"
     finding: str = ""
     evidence: str = ""
@@ -478,13 +501,17 @@ class ReviewIssue(BaseModel):
 # `ReviewResult.not_applicable`. Rendered by both the CLI report and the UI, which
 # is why it lives here beside the model rather than inside the reviewer.
 NOT_APPLICABLE_REASONS: dict[str, str] = {
-    "best_practice_grounding": "no knowledge retrieved",
+    "repo_grounding": "greenfield request with no repository",
+    "best_practice_grounding": "no repository or knowledge evidence supplied",
 }
 
 
 class ReviewResult(BaseModel):
     """Code-assembled Reviewer verdict and audit evidence."""
 
+    # Older checkpoints have no version field and therefore load as v2.0.
+    # Fresh Reviewer reports set this explicitly to v3.0.
+    rubric_version: Literal["2.0", "3.0"] = "2.0"
     overall_status: Literal["pass", "fail"] = "fail"
     rubric_scores: RubricScores = Field(default_factory=RubricScores)
     judgment_reasons: JudgmentReasons = Field(default_factory=JudgmentReasons)

@@ -6,7 +6,7 @@ prints what the verdict would be now, beside what it actually was when the run
 happened. The gap between those two columns is the measurement.
 
 It deliberately does NOT reconstruct `DeterministicChecks` or re-ask the LLM.
-Everything the rule needs - the four code scores, the five judgments, the issue
+Everything the rule needs - the code scores, five judgments, the issue
 severities, and which criteria were not applicable - is already in the stored
 report, which is exactly why `derive_verdict` was written to take only those.
 
@@ -115,9 +115,14 @@ def _reviews_of(run_dir: Path) -> Iterator[tuple[str, ReviewResult, list[str]]]:
         if signature == previous:
             continue
         previous = signature
-        not_applicable = (
-            [] if payload.get("retrieved_knowledge") else ["best_practice_grounding"]
-        )
+        initial_request = payload.get("initial_request") or {}
+        repo_expected = bool(str(initial_request.get("repo_url", "")).strip())
+        repo_available = bool(payload.get("repo_representation"))
+        not_applicable: list[str] = []
+        if not repo_expected and not repo_available:
+            not_applicable.append("repo_grounding")
+        if not payload.get("retrieved_knowledge") and not repo_available:
+            not_applicable.append("best_practice_grounding")
         yield path.name, ReviewResult(**raw), not_applicable
 
 
