@@ -100,6 +100,10 @@ Rules:
 - Detect and address the architectural flaw described by the context or repository.
 - The Blueprint must contain both stakeholder and technical views.
 - Every component must reference at least one related feature ID.
+- Every feature must be implemented: each FEAT-nnn must appear in at least one
+  component's related feature IDs, and in the Blueprint's addressed feature IDs.
+  Check the full feature list before returning — a feature with no
+  implementing component is an incomplete design.
 - Every component must reference at least one related ADR ID where a major
   technical choice justifies it.
 - ADR titles must follow the exact format: ADR-<number>: <decision>.
