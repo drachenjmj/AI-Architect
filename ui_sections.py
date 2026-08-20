@@ -581,11 +581,11 @@ def render_repo_analysis(state: ArchitectState) -> None:
                 st.code(structure.architecture_diagram, language="text")
 
         if structure.file_tree:
-            st.markdown("**File tree**")
-            st.code(structure.file_tree, language="text")
+            with st.expander("**File tree**"):
+                st.code(structure.file_tree, language="text")
         if structure.repo_map:
-            st.markdown("**Repo map** (most-imported files first)")
-            st.code(structure.repo_map, language="text")
+            with st.expander("**Repo map** (most-imported files first)"):
+                st.code(structure.repo_map, language="text")
         if structure.integration_interface:
             st.markdown("**Integration interface** (condensed API surface)")
             st.code(structure.integration_interface, language="text")
@@ -1592,19 +1592,15 @@ def render_components(state: ArchitectState) -> None:
 
 
 def _render_component(component: ComponentDescription) -> None:
-    st.markdown(
-        f"{_tag(component.id, BCG_DARK)} &nbsp; **{html.escape(component.name)}** "
-        f"&nbsp; {_tag(component.component_type, GREY)}",
-        unsafe_allow_html=True,
-    )
-    _text("Purpose", component.purpose)
-    _text("Description", component.description)
-    _bullets("Inputs", component.inputs)
-    _bullets("Outputs", component.outputs)
-    _bullets("Dependencies", component.dependencies)
-    _bullets("Technology choices", component.technology_choices)
-    _bullets("Security considerations", component.security_considerations)
-    _bullets("Scalability considerations", component.scalability_considerations)
-    _chips("Implements features", component.related_feature_ids)
-    _chips("Justified by ADRs", component.related_adr_ids)
-    st.divider()
+    label = f"{component.id}  {component.name}  [{component.component_type}]"
+    with st.expander(label):
+        _text("Purpose", component.purpose)
+        _text("Description", component.description)
+        _bullets("Inputs", component.inputs)
+        _bullets("Outputs", component.outputs)
+        _bullets("Dependencies", component.dependencies)
+        _bullets("Technology choices", component.technology_choices)
+        _bullets("Security considerations", component.security_considerations)
+        _bullets("Scalability considerations", component.scalability_considerations)
+        _chips("Implements features", component.related_feature_ids)
+        _chips("Justified by ADRs", component.related_adr_ids)
