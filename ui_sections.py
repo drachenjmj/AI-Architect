@@ -256,47 +256,54 @@ def render_run_status(state: ArchitectState) -> None:
     the review had failed and the run had stopped on the refine budget. An
     honest "stopped on budget, N open issues" is evidence the cost guardrail
     works; a false success is just wrong.
+
+    Rendered as ONE compact line (the workspace header carries the verdict
+    chip; this is the sentence behind it) rather than a padded alert box —
+    the finished screen is a workspace, not a notification feed.
     """
     review = state.review
     open_issues = len(review.issues) if review else 0
     issue_text = f"{open_issues} open issue{'s' if open_issues != 1 else ''}"
 
     if review is None:
-        st.info(
-            "**Design produced — not reviewed.** The run finished without a "
-            "review result, so nothing here has passed the quality gate."
+        st.markdown(
+            f"{_tag('NOT REVIEWED', _SEVERITY_COLORS['medium'])} &nbsp; "
+            "Design produced without a review result — nothing here has "
+            "passed the quality gate.",
+            unsafe_allow_html=True,
         )
         return
 
     if state.stopped_on_cap:
-        st.warning(
-            f"**Best-effort design — stopped on the refine budget.** "
-            f"The architect re-designed {state.refine_iterations} time"
-            f"{'s' if state.refine_iterations != 1 else ''} "
-            f"(cap: {MAX_REFINE_ITERATIONS}), and the reviewer still reports "
-            f"**{issue_text}**. The run ended on the cost guardrail, not on a "
-            f"clean pass — the artifacts below are the best version reached "
-            f"within budget."
+        st.markdown(
+            f"{_tag('BEST-EFFORT — STOPPED ON BUDGET', _SEVERITY_COLORS['high'])} &nbsp; "
+            f"{state.refine_iterations} redesign"
+            f"{'s' if state.refine_iterations != 1 else ''} (cap "
+            f"{MAX_REFINE_ITERATIONS}); **{issue_text}** still open. The run "
+            f"ended on the cost guardrail, not on a clean pass.",
+            unsafe_allow_html=True,
         )
         return
 
     if review.overall_status != "pass":
-        st.warning(
-            f"**Design produced — review did not pass.** The reviewer reports "
+        st.markdown(
+            f"{_tag('REVIEW DID NOT PASS', _SEVERITY_COLORS['high'])} &nbsp; "
             f"**{issue_text}** after {state.refine_iterations} refine "
-            f"iteration{'s' if state.refine_iterations != 1 else ''}. "
-            f"See the review report below."
+            f"iteration{'s' if state.refine_iterations != 1 else ''} — "
+            f"see the Review view.",
+            unsafe_allow_html=True,
         )
         return
 
-    st.success(
-        f"**Design complete — review passed.**"
+    st.markdown(
+        f"{_tag('DESIGN COMPLETE — REVIEW PASSED', BCG_GREEN)} &nbsp; "
         + (
-            f" Reached after {state.refine_iterations} refine "
+            f"reached after {state.refine_iterations} refine "
             f"iteration{'s' if state.refine_iterations != 1 else ''}."
             if state.refine_iterations
-            else " Passed on the first pass."
-        )
+            else "passed on the first pass."
+        ),
+        unsafe_allow_html=True,
     )
 
 
@@ -477,59 +484,102 @@ def _agent_usage_rows(state: ArchitectState) -> list[dict]:
 # ══════════════════════════════════════════════════════════════════════════
 # E. Knowledge retrieved  [retrieval]
 # ══════════════════════════════════════════════════════════════════════════
+def _source_card_html(
+    index: int, source: str, box_line: str, distance_line: str, body: str
+) -> str:
+    """One retrieved chunk as a compact HTML source card.
+
+    Meta (source, box, distance) sits in the card header so it is readable at
+    a glance; a short passage shows in full, a long one is clipped with the
+    complete text behind a native `<details>` toggle — expandable without
+    costing a Streamlit rerun. Everything is escaped — chunk text is
+    retrieved data, not trusted markup.
+    """
+
+    head = (
+        f"<div class='ws-card-head'>"
+        f"<span class='ws-card-title'>{index:02d}. {html.escape(source)}</span>"
+        f"<span class='ws-card-meta'>{html.escape(box_line)}"
+        + (f" &nbsp;·&nbsp; {html.escape(distance_line)}" if distance_line else "")
+        + "</span></div>"
+    )
+    body = body or "(empty chunk)"
+    if len(body) <= 420:
+        passage = html.escape(body).replace("\n", "<br>")
+    else:
+        clipped = html.escape(_clip_sentence(body, 380)).replace("\n", "<br>")
+        full = html.escape(body).replace("\n", "<br>")
+        passage = (
+            f"{clipped}…"
+            f"<details style='margin-top:.35rem'><summary style='cursor:pointer'>"
+            f"Show full passage</summary><div style='margin-top:.35rem'>{full}</div>"
+            f"</details>"
+        )
+    return f"<div class='ws-card'>{head}<div class='ws-card-body'>{passage}</div></div>"
+
+
 def render_knowledge(state: ArchitectState) -> None:
     """What the researcher pulled out of the knowledge base.
 
-    Opens itself when EMPTY. A run that retrieved nothing is a real finding
-    about our KB, and hiding it behind a closed expander would be the one thing
-    this screen exists to stop.
+    One compact card per chunk — source, box and distance readable at a
+    glance, the passage below them — instead of a single long expander. The
+    empty case stays loud: a run that retrieved nothing is a real finding
+    about our KB, and it must not hide behind a closed section.
     """
     chunks = state.retrieved_knowledge
     count = len(chunks)
-    label = (
-        f"📚  Knowledge retrieved — {count} chunk{'s' if count != 1 else ''}"
-        f"  ·  retrieval"
-        if count
-        else "📚  Knowledge retrieved — none  ·  retrieval"
-    )
 
-    with st.expander(label, expanded=not count):
-        if not count:
-            st.warning(
-                "**No knowledge-base results for this run.** The researcher ran "
-                "and returned zero chunks, so the design below is grounded in "
-                "the request and the repository only — not in the curated "
-                "pattern library."
-            )
-            return
-
-        st.caption(
-            "Passages handed to the architect as grounding. Box 1 = curated "
-            "architecture patterns, box 2 = domain knowledge, "
-            "box 3 = live web-search fallback."
+    if not count:
+        st.warning(
+            "**No knowledge-base results for this run.** The researcher ran "
+            "and returned zero chunks, so the design is grounded in the "
+            "request and the repository only — not in the curated pattern "
+            "library."
         )
-        for index, chunk in enumerate(chunks, start=1):
-            box_name = _BOX_LABELS.get(chunk.box, f"box {chunk.box}")
-            source = chunk.source or "unknown source"
-            head = f"{index:02d}. {source}"
-            if chunk.page:
-                head += f", p. {chunk.page}"
-            st.markdown(
-                f"{_tag(head, BCG_DARK)} &nbsp; {_tag(f'box {chunk.box} — {box_name}', GREY)}",
-                unsafe_allow_html=True,
-            )
-            st.markdown(chunk.content or "_(empty chunk)_")
-            if chunk.distance is None:
-                st.caption("no distance recorded (web-search result)")
-            else:
-                st.caption(f"distance {chunk.distance:.4f} — lower is closer")
+        return
 
+    st.markdown(
+        f"**📚 Knowledge retrieved — {count} chunk"
+        f"{'s' if count != 1 else ''}** &nbsp; "
+        f"{_tag('retrieval', BCG_DARK)}",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Passages handed to the architect as grounding. Box 1 = curated "
+        "architecture patterns, box 2 = domain knowledge, box 3 = live "
+        "web-search fallback."
+    )
+    for index, chunk in enumerate(chunks, start=1):
+        box_name = _BOX_LABELS.get(chunk.box, f"box {chunk.box}")
+        source = chunk.source or "unknown source"
+        head_source = f"{source}, p. {chunk.page}" if chunk.page else source
+        distance_line = (
+            "" if chunk.distance is None else f"distance {chunk.distance:.4f}"
+        )
+        st.markdown(
+            _source_card_html(
+                index,
+                head_source,
+                f"box {chunk.box} — {box_name}",
+                distance_line,
+                chunk.content or "(empty chunk)",
+            ),
+            unsafe_allow_html=True,
+        )
 
 # ══════════════════════════════════════════════════════════════════════════
 # F. Repository analysis  [tool use]
 # ══════════════════════════════════════════════════════════════════════════
 def render_repo_analysis(state: ArchitectState) -> None:
-    """The repo representation the ingestor built, when there is one."""
+    """The repo representation the ingestor built, when there is one.
+
+    SUMMARY FIRST: what the repository is, what it is built with, and how it
+    is partitioned render directly — the old single expander made the page
+    look empty and hid the analysis behind a click. The genuinely deep
+    artifacts (file tree, repo map, import edges, API surface, diagram) stay
+    in expanders, where their density belongs.
+    """
+
     repo = state.repo_representation
     if repo is None:
         _missing(
@@ -540,57 +590,57 @@ def render_repo_analysis(state: ArchitectState) -> None:
         _render_deep_dives(state)  # never silently dropped, even without a repo
         return
 
-    with st.expander("🗂️  Repository analysis  ·  tool use", expanded=False):
-        meta, structure, behavior = repo.meta, repo.structure, repo.behavior
+    st.markdown(
+        f"**🗂️  Repository analysis** &nbsp; {_tag('tool use', BCG_DARK)}",
+        unsafe_allow_html=True,
+    )
+    meta, structure, behavior = repo.meta, repo.structure, repo.behavior
 
-        _text("Repository", meta.url)
-        if meta.commit_sha:
-            st.caption(f"commit `{meta.commit_sha}` · ingested {meta.ingested_at}")
+    _text("Repository", meta.url)
+    if meta.commit_sha:
+        st.caption(f"commit `{meta.commit_sha}` · ingested {meta.ingested_at}")
 
-        stack = structure.tech_stack
-        if stack.languages:
-            st.markdown("**Languages** (lines of code)")
-            st.markdown(
-                "\n".join(
-                    f"- {name} — {loc:,} LOC"
-                    for name, loc in sorted(
-                        stack.languages.items(), key=lambda kv: -kv[1]
-                    )
+    # ── Summary, directly visible ────────────────────────────────────────
+    stack = structure.tech_stack
+    if stack.languages:
+        st.markdown(
+            "**Languages** — "
+            + " · ".join(
+                f"{name} {loc:,} LOC"
+                for name, loc in sorted(
+                    stack.languages.items(), key=lambda kv: -kv[1]
                 )
             )
-        _bullets("Frameworks", stack.frameworks)
-        _bullets("Dependencies", stack.dependencies)
-        _bullets("External services", stack.external_services)
+        )
+    _bullets("Frameworks", stack.frameworks)
+    _bullets("External services", stack.external_services)
+    _text("What the repository does", behavior.overview)
 
-        _text("What the repository does", behavior.overview)
-        if behavior.partitions:
-            st.markdown("**Partitions**")
-            for part in behavior.partitions:
-                st.markdown(f"- **{part.name or 'unnamed'}** — {part.role}")
-                if part.functionality:
-                    st.markdown(f"  {part.functionality}")
-                if part.paths:
-                    st.caption("paths: " + ", ".join(f"`{p}`" for p in part.paths))
+    if behavior.partitions:
+        st.markdown("**Partitions**")
+        for part in behavior.partitions:
+            st.markdown(f"- **{part.name or 'unnamed'}** — {part.role}")
 
-        if structure.architecture_diagram:
-            st.markdown("**Architecture diagram** (derived from import edges)")
+    # ── Technical detail, collapsible ───────────────────────────────────
+    if structure.architecture_diagram:
+        with st.expander("Architecture diagram (derived from import edges)"):
             diagram_tab, source_tab = st.tabs(["Diagram", "Mermaid source"])
             with diagram_tab:
                 _render_mermaid(structure.architecture_diagram)
             with source_tab:
                 st.code(structure.architecture_diagram, language="text")
 
-        if structure.file_tree:
-            with st.expander("**File tree**"):
-                st.code(structure.file_tree, language="text")
-        if structure.repo_map:
-            with st.expander("**Repo map** (most-imported files first)"):
-                st.code(structure.repo_map, language="text")
-        if structure.integration_interface:
-            st.markdown("**Integration interface** (condensed API surface)")
+    if structure.file_tree:
+        with st.expander("File tree"):
+            st.code(structure.file_tree, language="text")
+    if structure.repo_map:
+        with st.expander("Repo map (most-imported files first)"):
+            st.code(structure.repo_map, language="text")
+    if structure.integration_interface:
+        with st.expander("Integration interface (condensed API surface)"):
             st.code(structure.integration_interface, language="text")
-        if structure.dependency_edges:
-            st.markdown(f"**Import edges** — {len(structure.dependency_edges)}")
+    if structure.dependency_edges:
+        with st.expander(f"Import edges — {len(structure.dependency_edges)}"):
             st.dataframe(
                 [
                     {"imports from": edge.target, "file": edge.source}
@@ -599,7 +649,14 @@ def render_repo_analysis(state: ArchitectState) -> None:
                 hide_index=True,
             )
 
-        _render_deep_dives(state, inline=True)
+    for part in behavior.partitions:
+        if part.functionality.strip() or part.paths:
+            with st.expander(f"Partition detail — {part.name or 'unnamed'}"):
+                _text("What it does", part.functionality)
+                if part.paths:
+                    st.caption("paths: " + ", ".join(f"`{p}`" for p in part.paths))
+
+    _render_deep_dives(state, inline=True)
 
 
 def _render_deep_dives(state: ArchitectState, inline: bool = False) -> None:
@@ -679,12 +736,73 @@ _LLM_CHECKS: list[tuple[str, str]] = [
 ]
 
 
-def render_review_report(state: ArchitectState) -> None:
-    """The quality gate, with the code-owned / LLM-owned split made obvious.
+def _render_rubric_columns(review) -> None:
+    """The code-owned / LLM-owned split, side by side.
 
     That split is a core design claim of the project — deterministic code owns
-    the verdict, the LLM only supplies judgments and reasons — and this screen
-    is the only place it can actually be seen.
+    the verdict, the LLM only supplies judgments and reasons — and the Review
+    view is the only place it can actually be seen.
+    """
+    left, right = st.columns(2)
+
+    with left:
+        st.markdown(
+            f"{_tag('CODE-OWNED — rubric checks', BCG_DARK)}<br>"
+            f"{_tag('deterministic Python · scored 0-2 · all must be 2 to pass', GREY)}",
+            unsafe_allow_html=True,
+        )
+        st.write("")
+        for field, label in _CODE_CHECKS:
+            score = getattr(review.rubric_scores, field, 0)
+            mark, color = ("✓", BCG_GREEN) if score == 2 else ("✕", RED)
+            st.markdown(
+                f"{_tag(mark, color)} &nbsp; {html.escape(label)} &nbsp; "
+                f"{_tag(f'{score}/2', GREY)}",
+                unsafe_allow_html=True,
+            )
+
+    with right:
+        st.markdown(
+            f"{_tag('LLM-OWNED — judgments', BCG_DARK)}<br>"
+            f"{_tag('model judgment · binary · never summed into the verdict', GREY)}",
+            unsafe_allow_html=True,
+        )
+        st.write("")
+        for field, label in _LLM_CHECKS:
+            # not_applicable FIRST - see the same guard in pipeline/run.py.
+            # The stored boolean is true for these, so checking it first
+            # would paint "no evidence existed" as a green tick.
+            if field in review.not_applicable:
+                why = NOT_APPLICABLE_REASONS.get(field, "not applicable")
+                st.markdown(
+                    f"{_tag('n/a', GREY)} &nbsp; {html.escape(label)} &nbsp; "
+                    f"{_tag(html.escape(why) + ' · excluded from verdict', GREY)}",
+                    unsafe_allow_html=True,
+                )
+            else:
+                passed = bool(getattr(review.rubric_scores, field, False))
+                mark, color = ("✓", BCG_GREEN) if passed else ("✕", RED)
+                # See the same note in pipeline/run.py: an advisory ✕ beside
+                # a PASS verdict needs to say why it did not block.
+                advisory = (
+                    f" &nbsp; {_tag('advisory · excluded from verdict', GREY)}"
+                    if field in ADVISORY_CRITERIA and not passed else ""
+                )
+                st.markdown(
+                    f"{_tag(mark, color)} &nbsp; {html.escape(label)}{advisory}",
+                    unsafe_allow_html=True,
+                )
+            reason = getattr(review.judgment_reasons, field, "") or ""
+            st.caption(reason.strip() or "_no reason recorded_")
+
+
+def render_review_report(state: ArchitectState) -> None:
+    """The quality gate: verdict and blocking findings FIRST, rubric detail
+    behind one collapsed expander.
+
+    The verdict line and the findings table are what a reader acts on, so
+    they sit in the main flow; the per-criterion checks and judgment reasons
+    are the audit trail behind them, one click away.
     """
     review = state.review
     if review is None:
@@ -695,95 +813,61 @@ def render_review_report(state: ArchitectState) -> None:
         )
         return
 
+    # "blocking", not "issue". Advisory and not-applicable criteria are
+    # deliberately kept OUT of `issues` (see agents/reviewer.py), so a run
+    # can carry a real complaint and still show zero here. Saying "0 issues"
+    # beside a FAIL, or beside an advisory finding, reads as a contradiction.
     verdict = "PASS" if review.overall_status == "pass" else "FAIL"
-    with st.expander(
-        # "blocking", not "issue". Advisory and not-applicable criteria are
-        # deliberately kept OUT of `issues` (see agents/reviewer.py), so a run
-        # can carry a real complaint and still show zero here. Saying "0 issues"
-        # beside a FAIL, or beside an advisory finding, reads as a contradiction.
-        f"⚖️  Review report — {verdict}, {len(review.issues)} blocking issue"
-        f"{'s' if len(review.issues) != 1 else ''}  ·  iteration + quality gate",
-        expanded=False,
-    ):
-        left, right = st.columns(2)
+    verdict_color = BCG_GREEN if verdict == "PASS" else RED
+    st.markdown(
+        f"{_tag(f'REVIEW — {verdict}', verdict_color)} &nbsp; "
+        f"**{len(review.issues)} blocking issue"
+        f"{'s' if len(review.issues) != 1 else ''}** &nbsp; "
+        f"{_tag('iteration + quality gate', GREY)}",
+        unsafe_allow_html=True,
+    )
 
-        with left:
-            st.markdown(
-                f"{_tag('CODE-OWNED — rubric checks', BCG_DARK)}<br>"
-                f"{_tag('deterministic Python · scored 0-2 · all must be 2 to pass', GREY)}",
-                unsafe_allow_html=True,
-            )
-            st.write("")
-            for field, label in _CODE_CHECKS:
-                score = getattr(review.rubric_scores, field, 0)
-                mark, color = ("✓", BCG_GREEN) if score == 2 else ("✕", RED)
-                st.markdown(
-                    f"{_tag(mark, color)} &nbsp; {html.escape(label)} &nbsp; "
-                    f"{_tag(f'{score}/2', GREY)}",
-                    unsafe_allow_html=True,
-                )
+    if review.issues:
+        # `st.table`, NOT `st.dataframe`. The interactive grid clips every
+        # cell to one line — `column_config` has no wrap option — so the
+        # findings, evidence and fixes were unreadable without scrolling
+        # sideways. The static table wraps every cell, fits all six columns
+        # at 1080p, and shows no index. It gives up sorting and
+        # click-to-expand, which this screen is read and filmed rather than
+        # operated, so it never needed.
+        st.table(
+            [
+                {
+                    "ID": issue.id,
+                    "Severity": issue.severity,
+                    "Category": issue.category,
+                    "Finding": issue.finding,
+                    "Evidence": issue.evidence,
+                    "Suggested fix": issue.suggested_fix,
+                    # A bool would print "True"/"False" in a static table.
+                    "Needs refine": "yes" if issue.requires_refinement else "—",
+                }
+                for issue in review.issues
+            ]
+        )
+    else:
+        st.caption("No blocking issues were recorded.")
 
-        with right:
-            st.markdown(
-                f"{_tag('LLM-OWNED — judgments', BCG_DARK)}<br>"
-                f"{_tag('model judgment · binary · never summed into the verdict', GREY)}",
-                unsafe_allow_html=True,
-            )
-            st.write("")
-            for field, label in _LLM_CHECKS:
-                # not_applicable FIRST - see the same guard in pipeline/run.py.
-                # The stored boolean is true for these, so checking it first
-                # would paint "no evidence existed" as a green tick.
-                if field in review.not_applicable:
-                    why = NOT_APPLICABLE_REASONS.get(field, "not applicable")
-                    st.markdown(
-                        f"{_tag('n/a', GREY)} &nbsp; {html.escape(label)} &nbsp; "
-                        f"{_tag(html.escape(why) + ' · excluded from verdict', GREY)}",
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    passed = bool(getattr(review.rubric_scores, field, False))
-                    mark, color = ("✓", BCG_GREEN) if passed else ("✕", RED)
-                    # See the same note in pipeline/run.py: an advisory ✕ beside
-                    # a PASS verdict needs to say why it did not block.
-                    advisory = (
-                        f" &nbsp; {_tag('advisory · excluded from verdict', GREY)}"
-                        if field in ADVISORY_CRITERIA and not passed else ""
-                    )
-                    st.markdown(
-                        f"{_tag(mark, color)} &nbsp; {html.escape(label)}{advisory}",
-                        unsafe_allow_html=True,
-                    )
-                reason = getattr(review.judgment_reasons, field, "") or ""
-                st.caption(reason.strip() or "_no reason recorded_")
+    # Refinement status stays VISIBLE — it is the state of the loop, not a
+    # diagnostic — while the rubric internals below it collapse.
+    st.markdown(
+        f"**Refine loop** — {state.refine_iterations} of "
+        f"{MAX_REFINE_ITERATIONS} iteration"
+        f"{'s' if MAX_REFINE_ITERATIONS != 1 else ''} used · "
+        + (
+            "stopped on the cost cap"
+            if state.stopped_on_cap
+            else "stopped on the reviewer's verdict"
+        )
+    )
 
-        st.divider()
-        if review.issues:
-            st.markdown(f"**Blocking issues** — {len(review.issues)}")
-            # `st.table`, NOT `st.dataframe`. The interactive grid clips every
-            # cell to one line — `column_config` has no wrap option — so the
-            # findings, evidence and fixes were unreadable without scrolling
-            # sideways. The static table wraps every cell, fits all six columns
-            # at 1080p, and shows no index. It gives up sorting and
-            # click-to-expand, which this screen is read and filmed rather than
-            # operated, so it never needed.
-            st.table(
-                [
-                    {
-                        "ID": issue.id,
-                        "Severity": issue.severity,
-                        "Category": issue.category,
-                        "Finding": issue.finding,
-                        "Evidence": issue.evidence,
-                        "Suggested fix": issue.suggested_fix,
-                        # A bool would print "True"/"False" in a static table.
-                        "Needs refine": "yes" if issue.requires_refinement else "—",
-                    }
-                    for issue in review.issues
-                ]
-            )
-        else:
-            st.caption("No blocking issues were recorded.")
+    with st.expander("Rubric detail — code-owned checks and LLM judgments"):
+        _render_rubric_columns(review)
 
         # ADVISORY FINDINGS. A criterion excluded from the verdict still gets
         # asked and still answers, and its answer can be substantive - in run
@@ -807,17 +891,6 @@ def render_review_report(state: ArchitectState) -> None:
             for label, reason in advisory_findings:
                 st.caption(f"**{html.escape(label)}** — {reason or '_no reason recorded_'}")
 
-        st.divider()
-        st.markdown(
-            f"**Refine loop** — {state.refine_iterations} of "
-            f"{MAX_REFINE_ITERATIONS} iteration"
-            f"{'s' if MAX_REFINE_ITERATIONS != 1 else ''} used · "
-            + (
-                "stopped on the cost cap"
-                if state.stopped_on_cap
-                else "stopped on the reviewer's verdict"
-            )
-        )
         _text(
             "Refinement instruction fed back to the architect",
             review.refinement_instruction,
@@ -1116,17 +1189,167 @@ def render_context_record(state: ArchitectState) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# The Context view's compact presentation of the locked record
+# ══════════════════════════════════════════════════════════════════════════
+def _record_card_html(title: str, values: list[str]) -> str | None:
+    """One record field-group as a compact HTML card. None when empty.
+
+    Values are escaped: the record holds user- and clarifier-written text,
+    not trusted markup. The card classes are the workspace's own (`ws-card`,
+    defined in ui_workspace's scoped styles), so this stays inside the
+    lightweight visual system rather than growing a second one.
+    """
+    items = [str(v).strip() for v in values if str(v).strip()]
+    if not items:
+        return None
+    body = "<br>".join(html.escape(item) for item in items)
+    return (
+        f"<div class='ws-card'>"
+        f"<div class='ws-card-title'>{html.escape(title)}</div>"
+        f"<div class='ws-card-body'>{body}</div>"
+        f"</div>"
+    )
+
+
+def render_context_cards(state: ArchitectState) -> None:
+    """The locked Context Record as the PRIMARY object of the Context view.
+
+    The old presentation (one expander, every field as a bullet list) buried
+    the record's shape. This renders it as compact grouped cards — objective,
+    scope, platform, compliance — with nothing invented: every card maps to
+    existing `ContextRecord` fields, and a group whose fields are empty
+    simply does not appear. The revision banner and version line from the
+    expander version are kept, above the cards.
+    """
+    record = state.context_record
+    if record is None:
+        _missing(
+            "Context Record",
+            "clarification never completed, so no context was locked for this run.",
+        )
+        return
+
+    title = record.project_name or "Context Record"
+    version = _version_number(record)
+    locked = (
+        "locked after clarification"
+        if version <= 1
+        else f"v{version} · revised after your feedback"
+    )
+    st.markdown(f"### Context Record — {html.escape(title)}")
+    st.caption(locked)
+    if record.revision_reason.strip():
+        superseded = ", ".join(
+            f"v{old.version}" for old in state.context_history
+        ) or "the previous version"
+        st.info(
+            f"**Revised — supersedes {superseded}.** You asked for: "
+            f"{record.revision_reason.strip()}"
+        )
+
+    objective = _record_card_html(
+        "Objective",
+        [
+            *([record.business_goal] if record.business_goal.strip() else []),
+            *([f"Problem: {record.problem_statement}"]
+              if record.problem_statement.strip() else []),
+        ],
+    )
+    if objective:
+        st.markdown(objective, unsafe_allow_html=True)
+
+    card_rows: list[list[tuple[str, list[str]]]] = [
+        [
+            ("Users & stakeholders", record.users),
+            ("Functional scope", record.functional_requirements),
+        ],
+        [
+            ("Platform & budget",
+             [record.cloud_provider, record.budget]),
+            ("Scale & reliability", record.non_functional_requirements),
+        ],
+        [
+            ("Compliance", record.compliance_requirements),
+            ("Existing systems", record.existing_systems),
+        ],
+        [
+            ("Assumptions", record.assumptions),
+            ("Open questions", record.open_questions),
+        ],
+    ]
+    drew_any = objective is not None
+    for row in card_rows:
+        left, right = st.columns(2)
+        for column, (card_title, values) in zip((left, right), row):
+            card = _record_card_html(card_title, values)
+            if card is not None:
+                with column:
+                    st.markdown(card, unsafe_allow_html=True)
+                drew_any = True
+
+    if record.summary.strip():
+        st.markdown(
+            _record_card_html("Summary", [record.summary]),
+            unsafe_allow_html=True,
+        )
+        drew_any = True
+
+    if not drew_any:
+        st.caption("The context record exists but every field is empty.")
+
+
+def render_clarification_history(state: ArchitectState) -> None:
+    """The run's Q&A — original request plus every clarification exchange.
+
+    The linear pre-run flow shows these as chat bubbles because the
+    conversation IS the interface there. The finished workspace is an
+    artifact view, so the same data (drawn from `state`, nothing stored
+    separately) becomes a collapsed, clearly-labelled secondary section:
+    the questions the clarifier asked, the answers given, and any
+    corrections filed after design — all of them, unchanged.
+    """
+    exchanges = list(state.clarification_answers.items())
+    with st.expander(
+        f"💬 Clarification history — {len(exchanges)} exchange"
+        f"{'s' if len(exchanges) != 1 else ''}  ·  clarification"
+    ):
+        st.markdown("**Original request**")
+        st.markdown(f"> {html.escape(state.initial_request.raw_prompt.strip())}")
+        for question, answer in exchanges:
+            st.markdown(f"**{html.escape(question)}**")
+            st.markdown(f"> {html.escape(answer)}")
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # The two feedback boxes at DONE — iterative refinement, human-driven
 # ══════════════════════════════════════════════════════════════════════════
-# BOTH ARE ALWAYS ON SCREEN, never tabs and never one-at-a-time. Which box the
-# text is typed into IS the route (see pipeline/user_feedback.py), so hiding one
-# is what makes people put everything in the other — and a design directive
+# NEVER TABS, never interchangeable. Which box the text is typed into IS the
+# route (see pipeline/user_feedback.py), so blurring the two is what makes
+# people put a design directive in the requirements box — and a directive
 # filed as a requirements correction re-opens the record and re-runs the whole
-# pipeline for nothing. Two visible boxes are the cheapest possible classifier
-# and the only one that cannot be wrong about what the person meant.
+# pipeline for nothing. Two clearly-labelled boxes, each in the view of the
+# artifact it acts on (the workspace split — see ui_workspace.py), are the
+# cheapest possible classifier and the only one that cannot be wrong about
+# what the person meant.
+#
+# BATCHING. Before the workspace split both boxes shared one page, so one
+# submission could carry a correction AND a directive and cost a single
+# refinement round. The split would have quietly taken that away — one round
+# per view — so the boxes no longer submit directly. Each STAGES its text
+# into a session-state bundle (`stage_pending_feedback` below), the bundle
+# survives navigation, and ONE submit action in the sidebar sends everything
+# as a single `user_feedback.submit_feedback` call: one round, however many
+# views contributed. The bundle is UI-only and unsent: it lives in
+# `st.session_state`, never in the checkpointed state, and a page refresh
+# discards it — the same deal every other unsent widget value already gets.
+#
+# Bundle shape mirrors the backend payload exactly — one text per kind,
+# `{"requirements": str, "design": str}` — so submission is a kwarg-for-kwarg
+# hand-off with no translation layer that could blur the intent.
 _FEEDBACK_COPY: dict[str, dict[str, str]] = {
     "requirements": {
         "heading": "✏️  Is anything above wrong or missing?",
+        "expander": "✏️  Correct the context",
         "label": "Correct the requirements",
         "placeholder": (
             "e.g. peak load is 500k users, not 50k — and we are on Azure, not AWS."
@@ -1135,18 +1358,18 @@ _FEEDBACK_COPY: dict[str, dict[str, str]] = {
             "Facts about what the system must do or must respect: scale, cloud, "
             "budget, compliance, existing systems."
         ),
-        # The warning is here, before the click, because this is the expensive
-        # path: it re-opens the record and re-runs research, design and review.
+        # Short, but the cost warning survives: this is the expensive path —
+        # it re-opens the record and re-runs research, design and review.
         "note": (
-            "Submitting this **re-opens the Context Record**. The clarifier "
-            "re-judges it, you approve the revised version, and then research, "
-            "design and review all run again — because everything below is "
-            "derived from this record. For a change to the architecture itself, "
-            "use the design box further down instead."
+            "Submitting this **re-opens the Context Record** — research, "
+            "design and review then all re-run. For a change to the "
+            "architecture itself, use the change box in the "
+            "**Architecture** view."
         ),
     },
     "design": {
         "heading": "✏️  Want the architecture changed?",
+        "expander": "✏️  Request a design change",
         "label": "Direct the architect",
         "placeholder": (
             "e.g. use SQS instead of Kafka — we have no team to run a broker."
@@ -1156,27 +1379,74 @@ _FEEDBACK_COPY: dict[str, dict[str, str]] = {
             "a decision you disagree with."
         ),
         "note": (
-            "This goes straight to the architect, ranked **above** the reviewer's "
-            "own instruction, and only what you name is changed — the rest of the "
-            "design keeps its components, IDs and decisions. It spends one "
-            "refinement round and one iteration of the refine budget."
+            "Goes straight to the architect, ranked **above** the reviewer's "
+            "instruction; only what you name is changed. Submitted from the "
+            "sidebar as one refinement round."
         ),
     },
 }
 
 
 def _feedback_key(kind: str, state: ArchitectState) -> str:
-    """Widget key for one box, rotated by the round the run is on.
+    """Widget key for one box, rotated by round AND by every staging.
 
-    The same trick as `_record_nonce`, for the same Streamlit reason: a widget is
-    remembered by its key, so a stable key would leave the text a person just
-    submitted sitting in the box afterwards, looking unsent. `user_rounds` ticks
-    on every accepted submission, so the next screen gets fresh, empty boxes.
-
-    Both boxes share the round, which is also how either one's button can read
-    what was typed into the other: one submission, two boxes, one round charged.
+    The same trick as `_record_nonce`, for the same Streamlit reason: a widget
+    is remembered by its key, so a stable key would leave the text a person
+    just staged sitting in the box afterwards, looking unsent. `user_rounds`
+    ticks on every accepted submission and `fb_staged_count` on every staging
+    (either box — see `stage_pending_feedback`), so the next screen gets a
+    fresh, empty box in both cases.
     """
-    return f"fb_{kind}_{state.user_rounds}"
+    staged = st.session_state.get("fb_staged_count", 0)
+    return f"fb_{kind}_{state.user_rounds}_{staged}"
+
+
+# The pending bundle lives ONLY in session state — unsent UI draft, never a
+# fact about the run, so it must not be checkpointed with the state object.
+_PENDING_BUNDLE_KEY = "pending_feedback"
+
+
+def get_pending_feedback() -> dict[str, str]:
+    """The unsent feedback bundle: one text per kind. Read-only accessor."""
+
+    return dict(st.session_state.get(_PENDING_BUNDLE_KEY) or {})
+
+
+def pending_feedback_kinds() -> list[str]:
+    """Which kinds currently have staged text, in submission order."""
+
+    bundle = st.session_state.get(_PENDING_BUNDLE_KEY) or {}
+    return [
+        kind for kind in ("requirements", "design")
+        if str(bundle.get(kind) or "").strip()
+    ]
+
+
+def stage_pending_feedback(kind: str, text: str) -> None:
+    """Add one box's text to the pending bundle. Session state only.
+
+    Staging twice from the same kind CONCATENATES rather than replaces: the
+    second entry is a second thing the person wants changed, and silently
+    dropping the first would be the "accept the text and lose it" failure the
+    feedback trail everywhere else in this system exists to prevent.
+    """
+
+    bundle = st.session_state.setdefault(_PENDING_BUNDLE_KEY, {})
+    existing = str(bundle.get(kind) or "").strip()
+    bundle[kind] = (
+        f"{existing}\n\n{text.strip()}" if existing else text.strip()
+    )
+    # Rotates BOTH boxes' widget keys (see `_feedback_key`): whichever box
+    # staged, both come back empty on the next render.
+    st.session_state["fb_staged_count"] = st.session_state.get(
+        "fb_staged_count", 0
+    ) + 1
+
+
+def clear_pending_feedback() -> None:
+    """Empty the bundle after its content was submitted (or discarded)."""
+
+    st.session_state[_PENDING_BUNDLE_KEY] = {}
 
 
 # What each `UserFeedback.status` looks like in the history line under a box.
@@ -1199,34 +1469,31 @@ def _render_feedback_history(state: ArchitectState, kind: str) -> None:
         st.caption(f"{mark} · round {entry.round} · you asked: {entry.text}")
 
 
-def render_feedback_box(
-    state: ArchitectState, kind: str
-) -> tuple[str, str] | None:
-    """Draw ONE feedback box. Returns BOTH boxes' text when it is submitted.
+def render_feedback_box(state: ArchitectState, kind: str) -> None:
+    """Draw ONE feedback box, visually SECONDARY. Its button stages, never
+    submits.
 
-    Returns `(requirements, design)` — whatever is in both boxes at the moment a
-    button is pressed — or None if this rerun carried no submission. DRAW-only
-    like everything else here: it writes nothing and decides nothing, ui.py does
-    that through `pipeline.user_feedback`.
+    The artifact this box acts on is the primary content of its view, so the
+    entry form lives inside a collapsed expander — one labelled line on the
+    page until it is opened. What stays OUTSIDE the expander is state, not
+    chrome: the feedback history, a staged-text preview, and the reason the
+    box is closed. DRAW-only like everything here: the box writes nothing but
+    the UI's own session state (`stage_pending_feedback`), and the actual
+    submission — one `user_feedback.submit_feedback` call for the WHOLE
+    bundle — is performed by ui.py when the sidebar panel's submit action
+    fires.
 
-    Returning both is what makes "fill in both, submit once" work from either
-    button. The other box's text is read from `st.session_state` under its
-    rotating key, which is where Streamlit is already keeping it — so a person
-    who types a requirements correction at the top and an architecture change at
-    the bottom gets one round charged, not two, and the record lands before the
-    design is redone.
-
-    At the cap the boxes are DISABLED and say why. Never accept text and quietly
-    drop it: a box that takes a paragraph and does nothing with it is worse than
-    a box that is visibly closed. AFTER SIGN-OFF they are disabled for a second
-    reason — the design was taken, so changing it would leave the thing on
-    screen different from the thing that was accepted. `feedback_is_closed`
-    knows about both, so this call site does not have to.
+    At the cap — and after sign-off — the box is disabled and says why. Never
+    accept text and quietly drop it: a box that takes a paragraph and does
+    nothing with it is worse than a box that is visibly closed. AFTER
+    SIGN-OFF it is closed for a second reason — the design was taken, so
+    changing it would leave the thing on screen different from the thing that
+    was accepted. `feedback_is_closed` knows about both, so this call site
+    does not have to.
     """
     copy = _FEEDBACK_COPY[kind]
     closed, why = feedback_is_closed(state)
 
-    st.markdown(f"##### {copy['heading']}")
     _render_feedback_history(state, kind)
     if closed:
         st.caption(
@@ -1234,36 +1501,35 @@ def render_feedback_box(
             f"going — the artifacts above are what this one produced. You can "
             f"still ask questions about the design; that changes nothing."
         )
-    else:
+        return
+
+    staged = str(get_pending_feedback().get(kind) or "").strip()
+    if staged:
+        st.caption(f"**Queued for this round:** {' '.join(staged.split())}")
+
+    with st.expander(copy["expander"]):
         st.caption(copy["note"])
-
-    st.text_area(
-        copy["label"],
-        key=_feedback_key(kind, state),
-        placeholder=copy["placeholder"],
-        help=copy["help"],
-        height=90,
-        disabled=closed,
-        label_visibility="collapsed",
-    )
-    submitted = st.button(
-        "Submit feedback",
-        key=f"fb_submit_{kind}_{state.user_rounds}",
-        disabled=closed,
-        help="Sends whatever you have typed in EITHER box — both are submitted "
-             "together, and cost one round between them.",
-    )
-    if not submitted:
-        return None
-
-    requirements = str(
-        st.session_state.get(_feedback_key("requirements", state), "")
-    ).strip()
-    design = str(st.session_state.get(_feedback_key("design", state), "")).strip()
-    if not requirements and not design:
-        st.warning("Type what you would like changed first.")
-        return None
-    return requirements, design
+        text = st.text_area(
+            copy["label"],
+            key=_feedback_key(kind, state),
+            placeholder=copy["placeholder"],
+            help=copy["help"],
+            height=90,
+            label_visibility="collapsed",
+        )
+        added = st.button(
+            "Add to pending feedback",
+            key=f"fb_add_{kind}_{state.user_rounds}",
+            help="Adds this to the pending feedback round. Submit everything at "
+                 "once from the sidebar — one submission is one refinement "
+                 "round, however many boxes contributed.",
+        )
+        if added:
+            if not text.strip():
+                st.warning("Type what you would like changed first.")
+            else:
+                stage_pending_feedback(kind, text.strip())
+                st.rerun()  # redraw with an empty box and the preview updated
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1334,6 +1600,7 @@ def render_design_advisory(state: ArchitectState) -> str | None:
     with st.form("design_ask", clear_on_submit=True):
         question = st.text_input(
             "Your question",
+            key="design_ask_question",
             placeholder="e.g. why did it pick this pattern? what breaks if we drop the cache?",
             label_visibility="collapsed",
         )
@@ -1415,8 +1682,9 @@ def render_sign_off(state: ArchitectState) -> tuple[str, str] | None:
             f"{'s' if len(unapplied) != 1 else ''}.** Accepting drops "
             f"{'them' if len(unapplied) != 1 else 'it'} — the run closes with "
             f"the design as it stands. To apply "
-            f"{'them' if len(unapplied) != 1 else 'it'} instead, submit the box "
-            f"above first and sign off after the run."
+            f"{'them' if len(unapplied) != 1 else 'it'} instead, submit "
+            f"{'them' if len(unapplied) != 1 else 'it'} from the matching "
+            f"feedback view first and sign off after the run."
         )
         for entry in unapplied:
             st.caption(f"· “{entry.text}” ({entry.kind} box, round {entry.round})")
@@ -1621,3 +1889,141 @@ def _render_component(component: ComponentDescription) -> None:
         _bullets("Scalability considerations", component.scalability_considerations)
         _chips("Implements features", component.related_feature_ids)
         _chips("Justified by ADRs", component.related_adr_ids)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# The Overview view — the client-facing result, drawn from existing artifacts
+# ══════════════════════════════════════════════════════════════════════════
+# Nothing below invents architecture content: every line is an existing
+# Blueprint / ADR / Component / Review field, shown compactly enough that
+# the four client questions are answered in one screenful. The full detail
+# of each artifact stays in the Architecture view; these renderers are the
+# executive cut of the same state.
+
+def _clip_sentence(text: str, limit: int = 110) -> str:
+    """One line of a longer field, cut on a word boundary."""
+
+    one_line = " ".join((text or "").split())
+    if len(one_line) <= limit:
+        return one_line
+    return one_line[: limit - 1].rsplit(" ", 1)[0].rstrip(" ,;:.") + "…"
+
+
+def render_architecture_summary(state: ArchitectState) -> None:
+    """The recommended architecture, DIRECTLY visible — not behind an
+    expander. The Blueprint's own stakeholder and technical views are the
+    summary; this only frames them."""
+
+    blueprint = state.blueprint
+    if blueprint is None:
+        _missing(
+            "Recommended architecture",
+            "the architect produced no blueprint for this run.",
+        )
+        return
+
+    st.markdown("#### Recommended architecture")
+    if blueprint.selected_pattern.strip():
+        st.markdown(
+            f"**Pattern:** {html.escape(blueprint.selected_pattern.strip())}"
+        )
+    if blueprint.stakeholder_view.strip():
+        st.markdown(blueprint.stakeholder_view.strip())
+    if blueprint.technical_view.strip():
+        with st.expander("Technical view"):
+            st.markdown(blueprint.technical_view.strip())
+
+
+def render_key_decisions(state: ArchitectState) -> None:
+    """Every ADR as one line: its title (which states the decision) and a
+    clipped decision sentence. Full trade-offs stay in Architecture."""
+
+    if not state.adrs:
+        _missing(
+            "Key decisions",
+            "no ADRs were written, so the design's decisions are unrecorded.",
+        )
+        return
+
+    st.markdown("#### Key decisions")
+    for adr in state.adrs:
+        st.markdown(
+            f"{_tag(adr.id, BCG_DARK)} &nbsp; **{html.escape(adr.title)}**",
+            unsafe_allow_html=True,
+        )
+        st.caption(_clip_sentence(adr.decision))
+
+
+def render_component_summary(state: ArchitectState) -> None:
+    """The components as a compact grid: name, type, one-line purpose."""
+
+    if not state.components:
+        _missing(
+            "Components",
+            "no components were described, so the blueprint has no parts to build.",
+        )
+        return
+
+    st.markdown("#### Key components")
+    pairs = [
+        (
+            state.components[i],
+            state.components[i + 1] if i + 1 < len(state.components) else None,
+        )
+        for i in range(0, len(state.components), 2)
+    ]
+    for left, right in pairs:
+        cols = st.columns(2)
+        for column, component in zip(cols, (left, right)):
+            if component is None:
+                continue
+            body = (
+                f"[{html.escape(component.component_type or 'component')}] "
+                + html.escape(
+                    _clip_sentence(component.purpose or component.description, 120)
+                )
+            )
+            with column:
+                st.markdown(
+                    f"<div class='ws-card'>"
+                    f"<div class='ws-card-title'>{html.escape(component.name)}"
+                    f"</div><div class='ws-card-body'>{body}</div></div>",
+                    unsafe_allow_html=True,
+                )
+
+
+def render_blocking_findings(state: ArchitectState) -> None:
+    """What the review left open — the client-cut of `review.issues`.
+
+    Full evidence and suggested fixes stay in the Review view's table; here
+    each finding is one line, severity-first.
+    """
+
+    review = state.review
+    if review is None:
+        return  # the verdict line already said "not reviewed"
+    if not review.issues:
+        st.caption("No blocking findings were recorded.")
+        return
+
+    st.markdown("#### Blocking findings")
+    for issue in review.issues:
+        color = _SEVERITY_COLORS.get(issue.severity, GREY)
+        st.markdown(
+            f"{_tag(issue.severity.upper(), color)} &nbsp; "
+            f"`{html.escape(issue.id or '—')}` &nbsp; "
+            f"{html.escape(_clip_sentence(issue.finding, 130))}",
+            unsafe_allow_html=True,
+        )
+
+
+def render_key_risks(state: ArchitectState) -> None:
+    """The design's own stated open risks — one compact card."""
+
+    if state.blueprint is None or not state.blueprint.open_risks:
+        return
+    st.markdown("#### Key risks")
+    st.markdown(
+        _record_card_html("Stated open risks", state.blueprint.open_risks),
+        unsafe_allow_html=True,
+    )

@@ -57,23 +57,33 @@ ui_sections.py only reports what the human asked for.
 THE FINISHED-RUN SCREEN (what the DONE branch shows)
 ----------------------------------------------------
 This file stays the event/DRAW spine; the sections themselves live in
-ui_sections.py as small DRAW-only functions, each taking the state and reading
-nothing else. The DONE branch below is therefore a table of contents, in the
-order a viewer should meet them.
+ui_sections.py as small DRAW-only functions, and the finished-run screen is
+now a multi-view WORKSPACE (see ui_workspace.py): a persistent left-side
+navigation in the sidebar picks one view — Overview, Context, Knowledge,
+Repository, Design, Review, and the History/Chat placeholders — and only the
+selected view renders. The screen had grown past what one page should carry,
+and the upcoming History and Chat workstreams would only have added to it.
 
-The screen has one job: make what the run actually DID visible. Four of the
-five agentic behaviours happen inside the pipeline and used to leave no trace
-on screen, so each section is labelled with the behaviour it evidences —
+The views are a table of contents, not a rewrite: each one is a thin
+orchestration over the same section renderers as before, every action the
+single-page screen had lives in exactly one view, and the intent handling
+below (question, feedback, sign-off) is the same code the long page used.
 
-    Run trace            -> multi-step reasoning
-    Knowledge retrieved  -> retrieval
-    Repository analysis  -> tool use
-    Review report        -> iteration + quality gate
-    the Q&A replay above -> clarification
+The screen still has one job: make what the run actually DID visible. Four of
+the five agentic behaviours happen inside the pipeline and used to leave no
+trace on screen, so the sections stay labelled with the behaviour they
+evidence —
 
-— followed by the artifacts in full. Nothing on this screen is computed here:
-every value already exists on the state object, and the run status, the token
-totals and the cost are read from the same fields the pipeline wrote.
+    Run trace (Overview)  -> multi-step reasoning
+    Knowledge view        -> retrieval
+    Repository view       -> tool use
+    Review view           -> iteration + quality gate
+    the Q&A replay above  -> clarification
+
+— followed by the artifacts in full, in their own views. Nothing on this
+screen is computed here: every value already exists on the state object, and
+the run status, the token totals and the cost are read from the same fields
+the pipeline wrote.
 
 Two honesty rules are load-bearing. The status line never claims completion
 for a run whose review failed or that stopped on the refine budget; and every
@@ -83,44 +93,49 @@ when a step used a model we have no verified price for).
 
 FEEDBACK AT DONE — THE THIRD PLACE A HUMAN CAN CHANGE THE RUN
 --------------------------------------------------------------
-The finished screen is not the end of the conversation. It carries TWO boxes,
-each under what it acts on: a requirements box in the Context Record section,
-and a design box below the Blueprint / ADRs / Components. Which box the text is
-typed into is what routes the run — there is no classifier, so the graph stays
-100% deterministically routed even with a human steering it.
+The finished workspace carries TWO boxes, each in the view of the artifact it
+acts on: a requirements box in the Context view, and a design box in the
+Design view. Which box the text is typed into is what routes the run — there
+is no classifier, so the graph stays 100% deterministically routed even with
+a human steering it.
 
-Both are on screen at once, deliberately. Hiding one behind a tab is what makes
-people put everything in the first one, and the requirements box carries the
-warning that it re-opens the record and re-runs research BEFORE the click,
-because that is the expensive path. Fill in both and one round is charged, the
-correction lands first, and the design directive waits for the architect pass
-that follows.
+BATCHING SURVIVES THE SPLIT. The boxes do not submit directly; each stages
+its text into a session-state bundle (`ui_sections.stage_pending_feedback`),
+the bundle survives navigation, and ONE submit action in the sidebar panel
+(`render_pending_feedback_panel`) sends everything as a single
+`user_feedback.submit_feedback` call — one refinement round, however many
+views contributed, exactly as when both boxes shared one page. The bundle is
+UI-only: unsent drafts live in `st.session_state`, never in the checkpointed
+run, and a page refresh discards them (the same as any other unsent widget
+value). A refused submission (round budget spent) keeps the bundle; a
+successful one clears it before the pipeline re-runs.
 
-Everything either box does to the state happens in `pipeline.user_feedback`;
+Everything the bundle does to the state happens in `pipeline.user_feedback`;
 this file only reports a refused round. Same division as the context gate.
 
 CLOSING A RUN OUT — ASK, DIRECT, ACCEPT
 ----------------------------------------
-Under the artifacts sit three actions, in ascending cost, and the order is the
-design:
+In the workspace, in ascending cost, and the order is the design:
 
-    ask     — one flash-lite call. Changes nothing, spends no round, works at
-              ACCEPTED too. It is FIRST because most first reactions to a
-              finished design are questions, and with only a directive box on
-              screen the question gets typed as an instruction and costs a full
-              refine round to answer.
-    direct  — the design box above. One user round, one refine iteration.
-    accept  — the sign-off. `DONE` says the pipeline stopped; `ACCEPTED` says a
-              person took the design, and only the second is a fact anyone
-              downstream can act on. It is terminal, it is never reached by an
-              agent, and it records what was accepted DESPITE — every open
-              finding, as a waiver, plus anything the person typed and never
-              re-ran (see pipeline/sign_off.py).
+    ask     — one flash-lite call, in the Design view. Changes nothing,
+              spends no round, works at ACCEPTED too. It is FIRST because
+              most first reactions to a finished design are questions, and
+              with only a directive box on screen the question gets typed as
+              an instruction and costs a full refine round to answer.
+    direct  — the design box, also in the Design view; it stages into the
+              bundle, and the sidebar's submit action spends the round.
+    accept  — the sign-off, in the Overview view. `DONE` says the pipeline
+              stopped; `ACCEPTED` says a person took the design, and only
+              the second is a fact anyone downstream can act on. It is
+              terminal, it is never reached by an agent, and it records what
+              was accepted DESPITE — every open finding, as a waiver, plus
+              anything the person typed and never re-ran (see
+              pipeline/sign_off.py).
 
-The finished-run branch renders at DONE **and** at ACCEPTED. After sign-off the
-same screen redraws with the boxes disabled and the acceptance on it: the
-artifacts do not change, because the whole value of the record is that what is
-on screen is what was signed.
+The finished-run branch renders at DONE **and** at ACCEPTED. After sign-off
+the workspace redraws with the boxes disabled and the acceptance on it: the
+artifacts do not change, because the whole value of the record is that what
+is on screen is what was signed.
 
 RESUMING ACROSS SESSIONS
 ------------------------
@@ -140,7 +155,7 @@ import streamlit as st
 
 from pipeline.agents import clarifier as clarifier_gate
 from pipeline.llm import LLMError
-from pipeline.orchestrator import run_pipeline_streaming
+from pipeline import orchestrator
 from pipeline.persistence import CheckpointError, list_runs, load_state, save_state
 from pipeline.refine_gate import begin_user_round
 from pipeline.repo_analysis import is_repo_url
@@ -151,32 +166,24 @@ from ui_sections import (
     BCG_GREEN as _BCG_GREEN,
     GREY as _GREY,
     RED as _RED,
+    clear_pending_feedback,
+    get_pending_feedback,
     live_step_caption,
-    render_acceptance,
     render_context_approval,
-    render_design_advisory,
-    render_feedback_box,
-    render_objections,
-    render_sign_off,
     render_user_rounds,
-    render_adrs,
-    render_blueprint,
-    render_components,
-    render_context_record,
-    render_features,
-    render_knowledge,
-    render_repo_analysis,
-    render_review_report,
-    render_run_status,
-    render_run_trace,
-    render_status_strip,
+)
+from ui_workspace import (
+    render_pending_feedback_panel,
+    render_workspace_view,
+    select_workspace_view,
 )
 
 # ── page setup ────────────────────────────────────────────────────────────
 st.set_page_config(page_title="AI Architect", page_icon="🏛️", layout="wide")
 
-# The stages shown in the sidebar checklist, in pipeline order.
-# AWAITING_HUMAN is not listed: it is a pause WITHIN clarifying, not a step.
+# The pipeline's stages, named once for the live status header in `_run` and
+# the sidebar's compact status line. The full stage-by-stage trace lives in
+# the workspace's `Run details` view.
 _CHECKLIST: list[tuple[Stage, str]] = [
     (Stage.INGESTING, "Ingest repo"),
     (Stage.CLARIFYING, "Clarify"),
@@ -185,17 +192,6 @@ _CHECKLIST: list[tuple[Stage, str]] = [
     (Stage.REVIEWING, "Review"),
     (Stage.DONE, "Done"),
 ]
-# Rank of each stage so we can mark earlier ones as completed.
-_ORDER = {stage: i for i, (stage, _) in enumerate(_CHECKLIST)}
-# A pause happens inside the clarifying step.
-_ORDER[Stage.AWAITING_HUMAN] = _ORDER[Stage.CLARIFYING]
-_ORDER[Stage.CREATED] = -1
-_ORDER[Stage.REFINING] = _ORDER[Stage.REVIEWING]
-_ORDER[Stage.FAILED] = -1
-# ACCEPTED is NOT a seventh checklist row. The checklist is what the PIPELINE
-# did, and the pipeline did not do this one — a person did, after it stopped. It
-# ranks with DONE so every step above it still reads as complete.
-_ORDER[Stage.ACCEPTED] = _ORDER[Stage.DONE]
 
 # Human-readable label for each stage — drives the live status header in `_run`.
 _STAGE_LABELS: dict[Stage, str] = dict(_CHECKLIST)
@@ -240,7 +236,12 @@ def _run(state: ArchitectState) -> None:
     """
     latest = state
     with st.status("Pipeline running…", expanded=True) as status:
-        for snapshot in run_pipeline_streaming(state):
+        # Called through the module on purpose: `from … import` would bind
+        # the function object into THIS module's namespace, where a test (or
+        # any other caller) patching `pipeline.orchestrator` could no longer
+        # reach it — the offline test suite would silently drive the real
+        # orchestrator instead of the stub.
+        for snapshot in orchestrator.run_pipeline_streaming(state):
             latest = snapshot
             status.update(label=f"{_stage_label(snapshot)}…")
             if snapshot.history:
@@ -251,30 +252,37 @@ def _run(state: ArchitectState) -> None:
     st.rerun()  # restart the script so the DRAW section shows the new state
 
 
-def _submit_feedback(state: ArchitectState, requirements: str, design: str) -> None:
-    """REACT half of the finished-run feedback: record it, then re-run.
+def _submit_pending_feedback(state: ArchitectState) -> None:
+    """REACT half of the batched feedback round: send the whole bundle once.
 
-    Every write lives in `pipeline.user_feedback` — the stage, the routing, the
-    round charge, the reset of the fields a stale cap would otherwise use to
-    turn this into a silent no-op. This function only reports a refusal and
-    hands control back to `_run`, which is the same division the context gate
-    already uses: ui_sections returns intent, ui.py performs it, the pipeline
-    owns what it means.
+    ONE `user_feedback.submit_feedback` call with whatever is pending — a
+    correction staged in the Context view and a directive staged in the
+    Design view leave as a single refinement round, exactly as they did when
+    both boxes shared one page. Every write lives in
+    `pipeline.user_feedback`; this function only reports a refusal.
 
-    A refusal is the interesting case. `submit_feedback` records NOTHING when
-    the round budget is spent, so the warning below is the whole outcome — the
-    text is still in the box, and nothing about the run has changed.
+    The bundle is cleared ONLY on acceptance. A refusal (round budget spent)
+    records nothing on the run and must not eat the staged text either — the
+    warning below is the whole outcome, and the person can still discard it
+    from the sidebar or carry it into a new run.
     """
+    pending = get_pending_feedback()
+    requirements = str(pending.get("requirements", "")).strip()
+    design = str(pending.get("design", "")).strip()
+    if not requirements and not design:
+        return  # unreachable: the panel renders only with pending content
+
     accepted, why = user_feedback.submit_feedback(
         state, requirements=requirements, design=design
     )
     if not accepted:
         st.warning(
             f"Out of refinement rounds ({why}), so this was not submitted. "
-            f"The artifacts above are what this run produced — start a new run "
-            f"to take it further."
+            f"Your pending feedback is kept — discard it from the sidebar, "
+            f"or start a new run to take it further."
         )
         return
+    clear_pending_feedback()
     _run(state)
 
 
@@ -388,34 +396,70 @@ state: ArchitectState | None = st.session_state["state"]
 # spine and the section renderers cannot drift apart. (Widget theme itself
 # lives in .streamlit/config.toml.)
 
-# ── SIDEBAR: stage checklist (Event-agnostic — pure DRAW) ─────────────────
+# ── SIDEBAR: brand, compact run status, workspace navigation ──────────────
+# The old six-row stage checklist restated the pipeline on every screen; the
+# workspace nav already says where you are. Status is now ONE line, and the
+# full stage-by-stage detail lives in the `Run details` view.
+def _sidebar_status_line(state: ArchitectState) -> str:
+    """The run's state as one compact sidebar line (HTML)."""
+
+    if state.stage is Stage.FAILED:
+        return f"<span style='color:{_RED}; font-weight:600'>✕ Run failed</span>"
+    if state.stage is Stage.ACCEPTED:
+        return (
+            f"<span style='color:{_BCG_DARK}; font-weight:600'>✓ Accepted</span>"
+        )
+    if state.stage in _FINISHED:
+        verdict = "Review passed" if (
+            state.review and state.review.overall_status == "pass"
+        ) else "Review not passed"
+        if state.stopped_on_cap:
+            verdict += " · stopped on budget"
+        refine = (
+            f" · {state.refine_iterations} refinement"
+            f"{'s' if state.refine_iterations != 1 else ''}"
+            if state.refine_iterations
+            else ""
+        )
+        return (
+            f"<span style='color:{_BCG_GREEN}; font-weight:600'>✓ Completed</span>"
+            f"<span style='color:{_GREY}'> · {verdict}{refine}</span>"
+        )
+    return (
+        f"<span style='color:{_BCG_GREEN}; font-weight:600'>● {_stage_label(state)}</span>"
+    )
+
+
 with st.sidebar:
     st.markdown(
         f"<h1 style='color:{_BCG_DARK}; margin-bottom:0.2rem'>AI Architect</h1>",
         unsafe_allow_html=True,
     )
     st.caption("BCG Platinion × AIIM — Architecture Assistant")
-    current_rank = _ORDER.get(state.stage, -1) if state else -1
-    for stage, label in _CHECKLIST:
-        rank = _ORDER[stage]
-        if state and state.stage is Stage.FAILED:
-            mark, color = "✕", _RED
-        elif rank < current_rank or (state and state.stage in _FINISHED):
-            mark, color = "✓", _BCG_DARK
-        elif rank == current_rank:
-            mark = "⏸" if state.stage is Stage.AWAITING_HUMAN else "●"  # either pause
-            color = _BCG_GREEN
-        else:
-            mark, color = "○", _GREY
-        st.markdown(
-            f"<span style='color:{color}; font-weight:600'>{mark}</span>&nbsp; "
-            f"<span style='color:{color}'>{label}</span>",
-            unsafe_allow_html=True,
-        )
+    if state is not None:
+        st.markdown(_sidebar_status_line(state), unsafe_allow_html=True)
     st.divider()
+    # Workspace navigation — only for a finished run. A run mid-flight (or a
+    # first visit) keeps the focused linear flow: intake, clarifier, context
+    # lock. Nothing mandatory ever waits on navigation. The pending-feedback
+    # panel sits under it: the bundle outlives navigation BY DESIGN, so its
+    # submit action has to be reachable from every view — which is also why
+    # it lives in the sidebar rather than in any one view.
+    workspace_view: str | None = None
+    request_submit_round = False
+    if state is not None and state.stage in _FINISHED:
+        workspace_view = select_workspace_view()
+        request_submit_round = render_pending_feedback_panel(state)
     if state is not None and st.button("🔄 New run"):
         st.session_state.clear()  # Event 3: forget everything → fresh start
         st.rerun()
+
+# A submit request from the sidebar panel. Handled OUTSIDE the `with
+# st.sidebar` block on purpose: `_submit_pending_feedback` → `_run` streams
+# the pipeline status widget, and inside the block Streamlit would capture it
+# into the sidebar instead of the main area.
+if request_submit_round and state is not None:
+    _submit_pending_feedback(state)
 
 # ── DRAW: replay the conversation from the state object ──────────────────
 if state is None:
@@ -462,16 +506,20 @@ if state is None:
             # auto-approving, which is what it did before this existed.
             _run(new_run(prompt.strip(), clean_url, require_context_approval=True))
 else:
-    # 1. The original request — the ground truth of the run.
-    with st.chat_message("user"):
-        st.write(state.initial_request.raw_prompt)
-
-    # 2. Q&A rounds already answered (drawn from state, not stored separately).
-    for question, answer in state.clarification_answers.items():
-        with st.chat_message("assistant"):
-            st.write(question)
+    # 1 & 2. The original request and the Q&A replay — the LINEAR flow's
+    #    conversation. The finished workspace deliberately does not draw
+    #    them: it is an artifact view, and the same data lives there in the
+    #    Context view's collapsed "Clarification history" (plus the header).
+    #    Drawing both would put the transcript back on top of every view.
+    if state.stage not in _FINISHED:
         with st.chat_message("user"):
-            st.write(answer)
+            st.write(state.initial_request.raw_prompt)
+
+        for question, answer in state.clarification_answers.items():
+            with st.chat_message("assistant"):
+                st.write(question)
+            with st.chat_message("user"):
+                st.write(answer)
 
     # 3a. Paused on questions? → show them as a form (Event 2 lives here).
     if (
@@ -555,77 +603,39 @@ else:
                             clarifier_gate.open_for_rejudge(state)
                             _run(state)
 
-    # 4. Finished? → show what the run DID, then the design in full.
-    #    Every section is a DRAW-only function in ui_sections.py taking this
-    #    same state object; the order below is the order a viewer meets them.
-    #    Each renderer is null-safe on its own: a section whose source is
-    #    missing either omits itself or says why it is empty, so a thin run
-    #    (greenfield, no KB results, no review) renders honestly rather than
-    #    leaving empty headings behind.
+    # 4. Finished? → the multi-view workspace. The sidebar (drawn above, in
+    #    this same rerun) holds the navigation; this branch draws ONLY the
+    #    selected view — the whole point of the restructure is that selecting
+    #    Knowledge no longer also renders the Blueprint underneath. Each view
+    #    is a thin orchestration over the same section renderers as before
+    #    (see ui_workspace.py), and every action the single-page screen had
+    #    still exists in exactly one view, performed by the exact same code
+    #    below as before. No chat bubble wraps the workspace: the finished
+    #    screen is an artifact view with its own header, not a transcript.
     elif state.stage in _FINISHED:
-        with st.chat_message("assistant"):
-            render_run_status(state)    # honest verdict — never a false success
-            render_acceptance(state)    # and, separately, whether a human took it
-            render_status_strip(state)  # the run's shape at a glance
-            render_user_rounds(state)   # what refinement has cost so far
+        intents = render_workspace_view(state, workspace_view)
 
-            # What the system DID — one expander per agentic behaviour.
-            render_run_trace(state)      # multi-step reasoning
-            render_knowledge(state)      # retrieval
-            render_repo_analysis(state)  # tool use
-            render_review_report(state)  # iteration + quality gate
-
-            # What the system PRODUCED — the artifacts, in full, each followed
-            # by the box that acts on it. The two feedback boxes are BOTH here,
-            # both visible, and neither is a tab: which one the text goes into
-            # is what routes the run (see pipeline/user_feedback.py), so the
-            # choice has to be in front of the person while they read the thing
-            # they want changed.
-            render_context_record(state)
-            feedback = render_feedback_box(state, "requirements")
-
-            render_features(state)
-            # Against the artifacts, above them, and not in an expander: an
-            # objection says the design in front of you is not the design you
-            # asked for, and everything below would render identically if it
-            # had complied.
-            render_objections(state)
-            render_blueprint(state)
-            render_adrs(state)
-            render_components(state)
-
-            # ASK before DIRECT. A question costs one flash-lite call and
-            # changes nothing; the box under it costs a full refine round. Most
-            # first reactions to a finished design are questions, and the
-            # directive written after one is a better directive.
-            question = render_design_advisory(state)
-            # Either button submits BOTH boxes, so whichever fired is the one
-            # that carries the pair. `or` keeps the non-None one.
-            feedback = render_feedback_box(state, "design") or feedback
-            st.divider()
-            intent = render_sign_off(state)
-
-            if question is not None:
-                # OUTSIDE the graph, exactly like the context-gate advisory
-                # turn: no stage change, no `pending_decision`, no round
-                # consumed. Works at ACCEPTED too — reading is not changing.
-                try:
-                    clarifier_gate.ask_advisor(state, question, subject="design")
-                    # Checkpointed HERE because nothing else will. At the context
-                    # gate the next graph entry saves the turn for free; from a
-                    # terminal stage there may never BE a next graph entry, so
-                    # the tokens this just spent would be missing from the run on
-                    # disk and its totals would stop reconciling.
-                    save_state(state)
-                except LLMError as exc:
-                    # A failed side question must never cost the human their
-                    # screen — report it and leave everything as it was.
-                    st.error(f"Could not answer that: {exc}")
-                st.rerun()
-            elif feedback is not None:
-                _submit_feedback(state, *feedback)
-            elif intent is not None:
-                _sign_off(state, intent[1])
+        if intents.question is not None:
+            # OUTSIDE the graph, exactly like the context-gate advisory
+            # turn: no stage change, no `pending_decision`, no round
+            # consumed. Works at ACCEPTED too — reading is not changing.
+            try:
+                clarifier_gate.ask_advisor(
+                    state, intents.question, subject="design"
+                )
+                # Checkpointed HERE because nothing else will. At the context
+                # gate the next graph entry saves the turn for free; from a
+                # terminal stage there may never BE a next graph entry, so
+                # the tokens this just spent would be missing from the run on
+                # disk and its totals would stop reconciling.
+                save_state(state)
+            except LLMError as exc:
+                # A failed side question must never cost the human their
+                # screen — report it and leave everything as it was.
+                st.error(f"Could not answer that: {exc}")
+            st.rerun()
+        elif intents.sign_off is not None:
+            _sign_off(state, intents.sign_off[1])
 
     # 5. Failed? → say so plainly, with the recorded errors.
     elif state.stage is Stage.FAILED:
