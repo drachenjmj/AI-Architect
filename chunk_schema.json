@@ -1,68 +1,55 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "RAG Chunk Schema",
-  "description": "Data contracts for the AI Solution Architect RAG layer. Rule-based, no LLM evaluation.",
+  "description": "Data contract for the AI Solution Architect RAG layer. The TOP-LEVEL validation target is one flat runtime Chunk as emitted by architect.retrieve_chunks() and web_search_fallback() and consumed as KBChunk(**chunk) by pipeline/agents/researcher.py. The schema follows the implementation (pipeline/state.py KBChunk), not the other way around. Rule-based, no LLM evaluation.",
+  "$ref": "#/definitions/Chunk",
   "definitions": {
     "Chunk": {
       "type": "object",
-      "description": "A single ingested text chunk from the knowledge base.",
+      "description": "One retrieved chunk, flat. KB chunks (box 1/2) come from Chroma with a numeric distance; web-fallback chunks (box 3) come from Google-Search grounding with distance null.",
       "properties": {
-        "id": {
-          "type": "string",
-          "description": "Stable unique identifier for the chunk."
-        },
         "content": {
           "type": "string",
           "description": "The chunk text."
         },
         "source": {
           "type": "string",
-          "description": "Origin file path or document title."
+          "description": "Origin file path/document title (KB) or grounded source URI/title (web)."
         },
         "page": {
           "type": "integer",
-          "description": "Source page number (0/1-based per ingestion convention)."
-        },
-        "chunk_size": {
-          "type": "integer",
-          "description": "Chunk length in characters.",
-          "default": 1000
-        },
-        "overlap": {
-          "type": "integer",
-          "description": "Character overlap between adjacent chunks.",
-          "default": 200
+          "description": "Source page number (0/1-based per ingestion convention); 0 for web chunks."
         },
         "box": {
           "type": "integer",
           "minimum": 1,
           "maximum": 3,
-          "description": "Semantic bucket (1-3). Assigned during ingestion based on the source directory."
+          "description": "Semantic bucket: 1 = curated architecture patterns, 2 = domain knowledge, 3 = live web-search fallback."
         },
-        "ingested_at": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Optional. ISO timestamp of ingestion."
+        "distance": {
+          "type": ["number", "null"],
+          "description": "Chroma distance, lower = better match. Numeric for KB chunks (box 1/2); null for box-3 web-fallback chunks."
         }
       },
-      "required": ["id", "content", "source", "page", "chunk_size", "box"]
+      "required": ["content", "source", "page", "box", "distance"],
+      "additionalProperties": false
     },
     "RetrievalResponse": {
       "type": "array",
-      "description": "Filtered list of retrieved chunks returned by search_patterns(). Ordered best (lowest distance) first.",
-      "items": {
-        "type": "object",
-        "properties": {
-          "chunk": {
-            "$ref": "#/definitions/Chunk"
-          },
-          "distance": {
-            "type": "number",
-            "description": "Chroma distance metric. Lower = better match. Chunks with distance > DISTANCE_THRESHOLD are discarded."
-          }
+      "description": "JSON-equivalent of the Python boundary: architect.retrieve_chunks(query, k) returns the tuple (chunks, origin). Position 0 is the array of Chunk (ordered best/lowest distance first; KB path filtered by DISTANCE_THRESHOLD), position 1 is the origin string. This two-item array is a serialization convention for the tuple, NOT a runtime object shape.",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": [
+        {
+          "type": "array",
+          "items": { "$ref": "#/definitions/Chunk" }
         },
-        "required": ["chunk", "distance"]
-      }
+        {
+          "type": "string",
+          "enum": ["kb", "web", "none"]
+        }
+      ],
+      "additionalItems": false
     }
   }
 }

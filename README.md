@@ -106,7 +106,11 @@ pipeline/
   agents/          base class + one file per agent
 eval/              development-only labeled evaluation harness
 architect.py       single-agent prototype (reference for prompt + RAG wiring)
-Rag Database/      knowledge base assets
+Rag Database/      curated knowledge base: box1_patterns/ (general architecture),
+                   box2_domain/ (8 curated e-commerce sources), raw_source_archive/
+                   (unindexed raw upstream material), plus 2 AWS whitepapers in the
+                   root (box 1). Web-search grounding (box 3) is the live fallback in
+                   architect.py when the KB has no usable match. See setup_report.md.
 ```
 
 ## Quick start

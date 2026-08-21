@@ -1,9 +1,16 @@
 """kb_gap_report.py - Knowledge-base gap report from the RAG log.
 
-Scans rag_log.jsonl for web-search fallback queries (status == "web_fallback"),
-i.e. topics the internal knowledge base could not answer, normalises and groups
-them, and prints a frequency table so recurring gaps become visible. A topic
-that hits the threshold is flagged with "Consider adding to KB box 1/2".
+Scans rag_log.jsonl for web-search fallback queries (any "web_fallback*"
+status — success, empty, error, or disabled), i.e. topics the internal
+knowledge base could not answer, normalises and groups them, and prints a
+frequency table so recurring gaps become visible. A topic that hits the
+threshold is flagged with "Consider adding to KB box 1/2".
+
+All four fallback statuses count as a KB gap: the external fallback's own
+outcome (it succeeded, returned nothing, failed, or was switched off) does not
+change the fact that the internal KB had no answer. The pre-fallback statuses
+("no_results"/"below_threshold") are NOT counted because every fallback query
+also logs one of them — counting both would double-report each gap.
 
 Rule-based only - no LLM calls, no third-party packages.
 
@@ -19,6 +26,16 @@ from datetime import datetime
 
 DEFAULT_LOG = "rag_log.jsonl"
 DEFAULT_THRESHOLD = 3
+
+# Records that mark a knowledge-base gap: the retrieval fell through to the
+# web-search fallback. Mirrors the statuses documented in rag_logger.py; keep
+# the two in sync. Every KB miss produces exactly one web_fallback* record.
+WEB_FALLBACK_STATUSES = frozenset({
+    "web_fallback",          # fallback succeeded with grounded chunks
+    "web_fallback_empty",    # fallback ran, no usable grounded chunks
+    "web_fallback_error",    # fallback raised (API/network failure)
+    "web_fallback_disabled", # fallback skipped via kill switch
+})
 
 # Generic function words + obvious filler removed before grouping so that
 # phrasing variants collapse onto the same topic.
@@ -98,7 +115,7 @@ def main(argv=None) -> int:
         except json.JSONDecodeError:
             print(f"kb_gap_report: skipping malformed line {ln}", file=sys.stderr)
             continue
-        if rec.get("status") != "web_fallback":
+        if rec.get("status") not in WEB_FALLBACK_STATUSES:
             continue
         query = rec.get("query", "") or ""
         key = _normalize(query)

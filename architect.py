@@ -26,6 +26,13 @@ _REPO_ROOT = Path(__file__).resolve().parent
 # CONFIGURATION
 # ──────────────────────────────────────────────
 MODEL_NAME = "gemini-3.1-flash-lite"
+# Dedicated model for Google-Search grounding. Search-grounding support is
+# model-specific and differs from the main pipeline model: gemini-3.1-flash-
+# lite (MODEL_NAME) is not documented as grounding-capable, while the model
+# below is (validated live 2026-08-21) and still has Free-Tier Search-
+# grounding quota per current pricing docs. Kept separate so the fallback
+# never breaks just because the main model changes.
+WEB_SEARCH_MODEL = "gemini-2.5-flash"
 CHROMA_DIR = str(_REPO_ROOT / "chroma_db")
 DB_PATH = str(_REPO_ROOT / "architect.db")
 
@@ -178,26 +185,24 @@ def web_search_fallback(query: str) -> list[dict]:
 
     Used when the Chroma knowledge base has no usable match. Returns dicts of
     {content, source, page: 0, box: 3, distance: None}, one per grounded
-    source URL. Never raises — on any failure it logs to stderr and returns [].
+    source URL. Raises on API/network errors — the caller (_apply_web_fallback)
+    decides how to degrade and which status to log, so a failure can never be
+    mistaken for a successful (but empty) fallback.
     """
-    try:
-        from google.genai import types
-        client = _get_web_client()
-        prompt = (
-            f"Find current architecture best practices for: {query}. "
-            "Summarize the top findings with source URLs."
-        )
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                tools=[types.Tool(google_search=types.GoogleSearch())]
-            ),
-        )
-        return _extract_grounding_entries(response)[:5]
-    except Exception as e:
-        print(f"web_search_fallback: failed for '{query}': {e}", file=sys.stderr)
-        return []
+    from google.genai import types
+    client = _get_web_client()
+    prompt = (
+        f"Find current architecture best practices for: {query}. "
+        "Summarize the top findings with source URLs."
+    )
+    response = client.models.generate_content(
+        model=WEB_SEARCH_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            tools=[types.Tool(google_search=types.GoogleSearch())]
+        ),
+    )
+    return _extract_grounding_entries(response)[:5]
 
 
 def _resolve_url(url, timeout=3):
@@ -231,7 +236,10 @@ def _extract_grounding_entries(response) -> list[dict]:
     """Turn a grounded generate_content response into KB-shaped chunk dicts.
 
     Prefers per-segment grounding_supports (each snippet -> its source URL);
-    falls back to the full summary text when supports are unavailable.
+    falls back to the full summary text when supports are unavailable but a
+    grounded source URI exists. Returns [] when the response carries no
+    usable grounding source URI — a plain ungrounded model answer is not a
+    successful web result.
     """
     try:
         text = response.text or ""
@@ -281,6 +289,15 @@ def _extract_grounding_entries(response) -> list[dict]:
     urls = list(dict.fromkeys(urls))
     sources = list(dict.fromkeys(sources))
 
+    # Grounding evidence is REQUIRED for a successful web chunk: at least one
+    # usable source URI from Google-Search grounding metadata (the "sources"
+    # list only ever contains entries derived from a real URI). Plain
+    # response text without a grounding URI is an ungrounded model answer —
+    # the "web_search" placeholder is never sufficient evidence — so nothing
+    # is returned and the caller logs the run as web_fallback_empty.
+    if not sources:
+        return []
+
     entries: list[dict] = []
     if gm is not None:
         chunks_meta = list(getattr(gm, "grounding_chunks", []) or [])
@@ -312,7 +329,7 @@ def _extract_grounding_entries(response) -> list[dict]:
             })
 
     if not entries and text:
-        source = sources[0] if sources else "web_search"
+        source = sources[0]
         body = text
         if len(urls) > 1:
             body += "\n\nSources:\n" + "\n".join(f"- {u}" for u in urls)
@@ -329,14 +346,42 @@ def _extract_grounding_entries(response) -> list[dict]:
 def _apply_web_fallback(query: str) -> list[dict]:
     """Run the web-search fallback when the knowledge base returned nothing.
 
-    Honours WEB_FALLBACK_ENABLED and logs the result as status "web_fallback".
-    Returns [] when disabled or when the fallback yields nothing, so callers
-    behave exactly as before the fallback existed.
+    Honours the WEB_FALLBACK_ENABLED kill switch. Never raises — the pipeline
+    degrades gracefully to no chunks — but every outcome is logged with an
+    explicit, distinguishable status (see rag_logger.py):
+
+    - "web_fallback"          fallback succeeded, >=1 grounded chunk returned
+    - "web_fallback_empty"    fallback ran but yielded no usable grounded chunks
+    - "web_fallback_error"    fallback raised (API/network failure)
+    - "web_fallback_disabled" fallback skipped via the kill switch
     """
     if not WEB_FALLBACK_ENABLED:
+        _rag_logger.log_query(
+            query=query,
+            duration_ms=0.0,
+            chunks_returned=0,
+            best_distance=None,
+            source_files=[],
+            status="web_fallback_disabled",
+        )
         return []
+
     start = time.perf_counter()
-    web_chunks = web_search_fallback(query)
+    try:
+        web_chunks = web_search_fallback(query)
+    except Exception as e:
+        duration_ms = (time.perf_counter() - start) * 1000
+        print(f"web_search_fallback: failed for '{query}': {e}", file=sys.stderr)
+        _rag_logger.log_query(
+            query=query,
+            duration_ms=duration_ms,
+            chunks_returned=0,
+            best_distance=None,
+            source_files=[],
+            status="web_fallback_error",
+        )
+        return []
+
     duration_ms = (time.perf_counter() - start) * 1000
     _rag_logger.log_query(
         query=query,
@@ -344,7 +389,7 @@ def _apply_web_fallback(query: str) -> list[dict]:
         chunks_returned=len(web_chunks),
         best_distance=None,
         source_files=sorted({c["source"] for c in web_chunks}),
-        status="web_fallback",
+        status="web_fallback" if web_chunks else "web_fallback_empty",
     )
     return web_chunks
 

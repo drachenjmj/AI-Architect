@@ -28,8 +28,18 @@ class RagLogger:
     ) -> None:
         """Append a single retrieval record to the JSON-Lines log file.
 
-        status is one of:
-        "success" | "no_results" | "below_threshold" | "web_fallback".
+        status is one of (str):
+        - "success":               KB hit(s) within DISTANCE_THRESHOLD
+        - "no_results":            Chroma returned nothing
+        - "below_threshold":       Chroma hits existed but all exceeded
+                                   DISTANCE_THRESHOLD
+        - "web_fallback":          web fallback ran and returned >=1 grounded
+                                   chunk (successful web fallback)
+        - "web_fallback_empty":    web fallback ran but yielded no usable
+                                   grounded chunks
+        - "web_fallback_error":    web fallback raised (API/network failure)
+        - "web_fallback_disabled": web fallback skipped via the
+                                   WEB_FALLBACK_ENABLED kill switch
         """
         record = {
             "timestamp": datetime.now().isoformat(),
