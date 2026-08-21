@@ -516,5 +516,75 @@ def test_a_checkpoint_written_before_this_change_still_loads(tmp_path, monkeypat
     assert loaded.advisory_turns == []
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# System-managed fields are not user-editable at the gate
+#
+# Run 20260821T103837Z-a7ae0a73 checkpointed `"version": "1"` — a string. The
+# path was `version` sitting in EDITABLE_RECORD_FIELDS while the edit applier
+# stringifies values without schema validation, so a gate pass could turn the
+# system's integer version counter into text and crash the DONE screen's
+# `record.version <= 1`. `version`/`revision_reason` are now excluded at the
+# allowlist; the UI coercion in ui_sections._version_number stays as a
+# compatibility layer for runs that already carry the stringified value.
+# ══════════════════════════════════════════════════════════════════════════
+
+def test_version_and_revision_reason_are_not_editable_fields():
+    assert "version" not in clar.EDITABLE_RECORD_FIELDS
+    assert "revision_reason" not in clar.EDITABLE_RECORD_FIELDS
+    # Ordinary domain fields stay editable, list and string alike.
+    for name in ("budget", "cloud_provider", "compliance_requirements",
+                 "non_functional_requirements"):
+        assert name in clar.EDITABLE_RECORD_FIELDS
+
+
+def test_version_cannot_be_overwritten_through_the_gate():
+    """The exact write that produced the checkpointed string "1" now raises."""
+    record = _record()
+    assert record.version == 1
+
+    with pytest.raises(ValueError, match="not an editable"):
+        clar.apply_user_edits(record, ContextEdits(fields={"version": "1"}))
+
+
+def test_version_stays_an_integer_after_a_normal_edit_pass():
+    record = _record()
+    assert record.version == 1
+
+    after = clar.apply_user_edits(
+        record,
+        ContextEdits(
+            fields={"budget": "large", "compliance_requirements": ["GDPR", "SOC 2"]}
+        ),
+    )
+
+    assert after.budget == "large"
+    assert after.compliance_requirements == ["GDPR", "SOC 2"]
+    assert after.version == 1
+    assert isinstance(after.version, int)  # not "1" — the crash is gone at the source
+    assert before_intact(record)  # purity of the untouched original still holds
+
+
+def before_intact(record) -> bool:
+    return record.budget == "medium" and record.version == 1
+
+
+def test_revision_reason_cannot_be_user_overwritten():
+    """Why a version exists is `_freeze_context_record`'s words, not the user's."""
+    record = _record(version=2, revision_reason="user corrected the budget")
+
+    with pytest.raises(ValueError, match="not an editable"):
+        clar.apply_user_edits(
+            record, ContextEdits(fields={"revision_reason": "no reason"})
+        )
+
+
+def test_recommend_channel_also_refuses_system_managed_fields():
+    """"You recommend" is the same write path — it must not reach them either."""
+    record = _record()
+
+    with pytest.raises(ValueError, match="nothing to recommend"):
+        clar.apply_user_edits(record, ContextEdits(recommend=["version"]))
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))

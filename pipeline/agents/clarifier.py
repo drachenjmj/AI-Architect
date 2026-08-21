@@ -146,10 +146,18 @@ CRITICAL_RECORD_FIELDS: tuple[str, ...] = (
 
 # Fields a human may set directly at the gate. DERIVED from the schema rather
 # than listed, so adding a field to `ContextRecord` makes it editable without a
-# second edit here. The three exclusions each have their own edit channel:
+# second edit here. The exclusions each have their own edit channel:
 # assumptions are struck, open questions are answered, and `summary` is a
-# rendering of the other fields that code recomputes after every edit.
-_DERIVED_FIELDS = frozenset({"assumptions", "open_questions", "summary"})
+# rendering of the other fields that code recomputes after every edit. The
+# SYSTEM-MANAGED versioning pair is excluded because the user-edit path
+# stringifies values (`str(value).strip()`) without schema validation, and
+# letting it touch `version` turned the int 1 into "1" and crashed the DONE
+# screen's `record.version <= 1`. `version` and `revision_reason` belong to
+# `_freeze_context_record` alone: a record's identity and its reason for
+# existing are not human-editable facts about the domain.
+_DERIVED_FIELDS = frozenset(
+    {"assumptions", "open_questions", "summary", "version", "revision_reason"}
+)
 EDITABLE_RECORD_FIELDS: tuple[str, ...] = tuple(
     name for name in ContextRecord.model_fields if name not in _DERIVED_FIELDS
 )

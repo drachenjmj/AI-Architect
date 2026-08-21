@@ -1050,6 +1050,22 @@ def render_user_rounds(state: ArchitectState) -> None:
     )
 
 
+def _version_number(record) -> int:
+    """`record.version` as an int, for display branching only.
+
+    The context gate's edit path stores text values without schema validation,
+    so a checkpointed record can carry `version` as a numeric string ("1")
+    instead of an int — and `record.version <= 1` would raise TypeError right
+    on the DONE screen. Coerce numeric strings; anything non-numeric falls
+    back to 1, the "locked after clarification" branch, so the page still
+    renders. Read-only: the state on disk is never rewritten for display.
+    """
+    try:
+        return int(record.version)
+    except (TypeError, ValueError):
+        return 1
+
+
 def render_context_record(state: ArchitectState) -> None:
     """The frozen context — every field, not just the one-line summary."""
     record = state.context_record
@@ -1061,10 +1077,11 @@ def render_context_record(state: ArchitectState) -> None:
         return
 
     title = record.project_name or "Context Record"
+    version = _version_number(record)
     locked = (
         "locked after clarification"
-        if record.version <= 1
-        else f"v{record.version} · revised after your feedback"
+        if version <= 1
+        else f"v{version} · revised after your feedback"
     )
     with st.expander(f"📋  Context Record — {title}  ·  {locked}"):
         if record.revision_reason.strip():
