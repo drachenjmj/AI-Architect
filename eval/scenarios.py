@@ -300,6 +300,11 @@ def symptom_patch_shop_state() -> ArchitectState:
     state.components[0].purpose = "Continue serving catalog, checkout, and orders together."
     state.components[0].description = "Implements FEAT-001 under ADR-001 on one large EC2 instance."
     state.blueprint.components = ["Shop Monolith"]
+    # The data flow inherited from the sound design still named the extracted
+    # Checkout Service, which this variant replaces with the monolith. It is
+    # kept in sync so the scenario's labeled flaw stays the vertical-scaling
+    # patch, not a dangling target-service reference.
+    state.blueprint.data_flows = ["Requests flow through the Shop Monolith."]
     state.adrs[0].related_component_names = ["Shop Monolith"]
     return state
 

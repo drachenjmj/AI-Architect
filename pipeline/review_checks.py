@@ -10,6 +10,7 @@ Covered rubric items:
 3. Feature → Component → ADR traceability
 4. ADR presence and structure
 5. Source-reference integrity
+6. Cross-artifact target-service ownership
 
 The checks use the frozen structured schemas owned by Maheen. A limited legacy
 fallback exists only when callers explicitly enable it for old fixtures.
@@ -79,6 +80,11 @@ class DeterministicChecks(BaseModel):
     repository_expected: bool = False
     repository_available: bool = False
     invalid_source_references: dict[str, list[str]] = Field(default_factory=dict)
+
+    # Target-architecture service references (name -> referencing locations)
+    # that resolve to no Component Description and carry no explicit legacy,
+    # external, or ownership disposition anywhere in the design.
+    unowned_target_services: dict[str, list[str]] = Field(default_factory=dict)
 
     constraints_applicable: dict[str, bool] = Field(default_factory=dict)
     constraints_covered: dict[str, bool] = Field(default_factory=dict)
@@ -563,6 +569,297 @@ def _check_traceability(
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# Rubric item: cross-artifact target-service ownership
+#
+# A completed run once passed review while FEAT-005 redirected the Cart
+# module to a "Cart Service" that had no Component Description, the Shared
+# Event Bus depended on a "Notification Service" that did not exist, and an
+# ADR made Inventory part of the target architecture with no owner. The
+# structured traceability checks never saw those references because they
+# lived in prose and dependency lists, so Traceability scored 2/2.
+#
+# This check is deliberately DETERMINISTIC and narrow: a reference counts
+# only when the name carries the "Service" suffix ("Cart Service", "the
+# Order, Payment, and Notification services") or is listed outright as a
+# Blueprint component. Bare nouns ("inventory", "cart") are not treated as
+# references — without the suffix they are indistinguishable from generic
+# prose, and blocking on them would flag valid designs.
+# ─────────────────────────────────────────────────────────────────────────
+
+_TARGET_SINGULAR_RE = re.compile(r"\b([A-Z][A-Za-z0-9-]*)\s+Service\b")
+_TARGET_LIST_RE = re.compile(
+    r"\b([A-Z][A-Za-z0-9-]*(?:(?:\s*,\s*|\s+and\s+|\s+)[A-Z][A-Za-z0-9-]*)*)"
+    r"\s+[Ss]ervices\b"
+)
+
+# TitleCase words that begin sentences or qualify nouns; never service names.
+# Cloud providers are included so phrases like "AWS Managed Services" cannot
+# manufacture a target service.
+_NON_NAME_WORDS = frozenset({
+    "above", "add", "added", "all", "amazon", "an", "and", "another", "any",
+    "as", "at", "aws", "azure", "below", "both", "build", "built", "by",
+    "call", "called", "central", "cloud", "create", "created", "current",
+    "dedicated", "defer", "deploy", "deployed", "existing", "expose",
+    "extract", "extracted", "external", "for", "from", "generic", "gcp",
+    "google", "host", "hosted", "if", "in", "independent", "internal",
+    "introduce", "invoke", "it", "its", "local", "main", "managed",
+    "microsoft", "migrate", "migrated", "move", "moved", "new", "no", "of",
+    "on", "one", "or", "other", "our", "publish", "published", "remote",
+    "replace", "replaced", "run", "running", "same", "separate", "send",
+    "sent", "shared", "such", "target", "the", "their", "then", "these",
+    "they", "this", "those", "three", "to", "two", "use", "used", "using",
+    "via", "we", "when", "while", "whole", "with", "you",
+})
+
+_LEGACY_NOUN_RE = re.compile(r"\b(?:monolith|legacy)\b")
+_RETENTION_VERB_RE = re.compile(
+    r"\b(?:remain(?:s|ed|ing)?|stay(?:s|ed|ing)?|keep(?:s|t|ing)?|"
+    r"retain(?:s|ed|ing)?|defer(?:s|red|ring)?|unchanged|"
+    r"not\s+(?:be\s+)?extracted|left\s+in|served\s+by|"
+    r"continue[sd]?\s+to\s+(?:be\s+)?(?:live|run|reside))\b"
+)
+_OWNERSHIP_PHRASE_RE = re.compile(
+    r"\b(?:owned\s+by|handled\s+by|provided\s+by|managed\s+by|"
+    r"responsibility\s+of|remains?\s+with|belongs\s+to|"
+    r"hosted\s+(?:by|in)|embedded\s+in)\b"
+)
+_EXTERNAL_DISPOSITION_RE = re.compile(
+    r"\b(?:is|are|as)\s+(?:an?\s+)?(?:fully\s+)?"
+    r"(?:external|third[- ]party|third\s+party|saas|off-the-shelf|managed)\b"
+    r"|\b(?:external|third[- ]party|third\s+party|saas|off-the-shelf)\s+"
+    r"(?:provider|vendor|service|platform|system|partner|api)\b"
+)
+
+
+def _singularise(token: str) -> str:
+    """Fold the trivial English plural so 'Notifications' meets 'Notification'."""
+
+    if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+        return token[:-1]
+    return token
+
+
+def _name_tokens(name: str) -> tuple[str, ...]:
+    """Normalise a display name to comparable lowercase tokens."""
+
+    return tuple(
+        _singularise(token)
+        for token in re.findall(r"[a-z0-9]+", name.lower())
+    )
+
+
+def _component_key(name: str) -> tuple[str, ...]:
+    """Identity tokens of a component name, ignoring a 'Service' suffix."""
+
+    tokens = _name_tokens(name)
+    while tokens and tokens[-1] == "service":
+        tokens = tokens[:-1]
+    return tokens
+
+
+def _extract_service_bases(text: str) -> list[str]:
+    """Pull candidate target-service names out of one text field.
+
+    Matches 'Cart Service' (single TitleCase word before 'Service') and
+    lists like 'Order, Payment, and Notification services'. Non-name words
+    ('The', 'Managed', 'External', sentence-start verbs) are dropped so
+    ordinary prose cannot manufacture a service.
+    """
+
+    bases: set[str] = set()
+    for match in _TARGET_SINGULAR_RE.finditer(text):
+        bases.add(match.group(1))
+    for match in _TARGET_LIST_RE.finditer(text):
+        bases.update(
+            part
+            for part in re.split(r",|\s+and\s+|\s+", match.group(1))
+            if part
+        )
+    return sorted(
+        base
+        for base in bases
+        if base.lower() not in _NON_NAME_WORDS
+        and base.lower() != "service"
+    )
+
+
+def _sentence_spans(text: str) -> list[str]:
+    return [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+", text)
+        if sentence.strip()
+    ]
+
+
+def _target_service_references(state: ArchitectState) -> dict[str, set[str]]:
+    """Map each referenced target-service name to where it is referenced.
+
+    Scanned fields describe the TARGET architecture: Feature prose, ADR
+    context/decision/rationale/positive consequences (alternatives and
+    negative consequences are excluded — they legitimately name services
+    that were rejected or are absent), Blueprint component names and data
+    flows, and Component dependency/input/output lists.
+    """
+
+    references: dict[str, set[str]] = {}
+
+    def note(display: str, location: str) -> None:
+        if _component_key(display):
+            references.setdefault(display, set()).add(location)
+
+    for feature in state.features:
+        for text in (
+            [feature.description, feature.scenario, *feature.acceptance_criteria]
+        ):
+            for base in _extract_service_bases(text or ""):
+                note(f"{base} Service", feature.id)
+
+    if state.blueprint is not None:
+        for entry in state.blueprint.components:
+            note(entry.strip(), "Blueprint.components")
+        for flow in state.blueprint.data_flows:
+            for base in _extract_service_bases(flow):
+                note(f"{base} Service", "Blueprint.data_flows")
+
+    for adr in state.adrs:
+        for text in (
+            [adr.context, adr.decision, adr.rationale, *adr.positive_consequences]
+        ):
+            for base in _extract_service_bases(text or ""):
+                note(f"{base} Service", adr.id)
+
+    for component in state.components:
+        for field, label in (
+            ("dependencies", "dependencies"),
+            ("inputs", "inputs"),
+            ("outputs", "outputs"),
+        ):
+            for entry in getattr(component, field):
+                for base in _extract_service_bases(entry):
+                    note(f"{base} Service", f"{component.name}.{label}")
+
+    return references
+
+
+def _design_sentences(state: ArchitectState) -> list[str]:
+    """Every artifact sentence, searched for explicit dispositions.
+
+    Deliberately broader than the reference scan: a statement that Cart
+    remains in the legacy monolith may live anywhere in the design (an
+    assumption, an open risk, an ADR alternative), and allowing it there
+    biases this check against false blocks.
+    """
+
+    sentences: list[str] = []
+
+    def extend(texts: list[str]) -> None:
+        for value in texts:
+            if isinstance(value, str) and value.strip():
+                sentences.extend(_sentence_spans(value))
+
+    for feature in state.features:
+        extend(
+            [feature.name, feature.description, feature.scenario,
+             *feature.acceptance_criteria]
+        )
+    if state.blueprint is not None:
+        extend(
+            [
+                state.blueprint.rationale,
+                state.blueprint.stakeholder_view,
+                state.blueprint.technical_view,
+                *state.blueprint.components,
+                *state.blueprint.data_flows,
+                *state.blueprint.constraints_addressed,
+                *state.blueprint.assumptions,
+                *state.blueprint.open_risks,
+            ]
+        )
+    for adr in state.adrs:
+        extend(
+            [
+                adr.title, adr.context, adr.decision, adr.rationale,
+                *adr.alternatives_considered,
+                *adr.positive_consequences,
+                *adr.negative_consequences,
+            ]
+        )
+    for component in state.components:
+        extend(
+            [
+                component.name, component.purpose, component.description,
+                *component.inputs, *component.outputs,
+                *component.dependencies, *component.technology_choices,
+            ]
+        )
+    return sentences
+
+
+def _has_explicit_disposition(
+    key: tuple[str, ...],
+    sentences: list[str],
+    owner_word_sets: list[set[str]],
+) -> bool:
+    """Does any design sentence explicitly dispose of this service?
+
+    Allowed dispositions, mirroring the strangler/legacy escape hatches:
+    retention in the legacy monolith, an external/third-party/SaaS
+    declaration, or ownership mapped to a named existing component.
+    """
+
+    token_patterns = [
+        re.compile(rf"\b{re.escape(token)}\b") for token in key
+    ]
+    for sentence in sentences:
+        if not any(pattern.search(sentence) for pattern in token_patterns):
+            continue
+        if (
+            _LEGACY_NOUN_RE.search(sentence)
+            and _RETENTION_VERB_RE.search(sentence)
+        ):
+            return True
+        if _EXTERNAL_DISPOSITION_RE.search(sentence):
+            return True
+        if _OWNERSHIP_PHRASE_RE.search(sentence):
+            words = set(re.findall(r"[a-z0-9]+", sentence))
+            if any(owner_words & words for owner_words in owner_word_sets):
+                return True
+    return False
+
+
+def _check_target_service_ownership(
+    state: ArchitectState,
+) -> dict[str, list[str]]:
+    """Referenced target services with no Component Description and no
+    explicit legacy/external/ownership disposition, mapped to the artifacts
+    that reference them."""
+
+    references = _target_service_references(state)
+    if not references:
+        return {}
+
+    component_keys = [
+        _component_key(component.name)
+        for component in state.components
+        if _component_key(component.name)
+    ]
+    owner_word_sets = [set(key) for key in component_keys]
+    sentences = [
+        sentence.lower() for sentence in _design_sentences(state)
+    ]
+
+    unowned: dict[str, list[str]] = {}
+    for display, locations in references.items():
+        key = _component_key(display)
+        if any(existing[-len(key):] == key for existing in component_keys):
+            continue
+        if _has_explicit_disposition(key, sentences, owner_word_sets):
+            continue
+        unowned[display] = sorted(locations)
+    return unowned
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # Rubric item 6: ADR structure
 # ─────────────────────────────────────────────────────────────────────────
 
@@ -756,6 +1053,10 @@ def run_deterministic_checks(
     features_without_component = traceability["features_without_component"]
     components_without_feature = traceability["components_without_feature"]
     components_without_adr = traceability["components_without_adr"]
+    unowned_target_services = _check_target_service_ownership(state)
+    # An unowned target service is a traceability failure: the artifact set
+    # claims a service that no Component Description traces to.
+    traceability["unowned_target_services"] = unowned_target_services
 
     malformed_adrs, incomplete_adrs, duplicate_numbers = _check_adrs(state)
     constraints_applicable, constraints_covered = _check_constraints(state)
@@ -962,6 +1263,26 @@ def run_deterministic_checks(
             ),
         )
 
+    if unowned_target_services:
+        for name, locations in sorted(unowned_target_services.items()):
+            add_issue(
+                "high",
+                "traceability",
+                (
+                    f"The target architecture references '{name}' but no "
+                    "Component Description exists for it and no artifact "
+                    "states it remains in the legacy monolith, is "
+                    "external, or is owned by an existing component."
+                ),
+                f"referenced in: {', '.join(locations)}",
+                (
+                    f"Add a Component Description for {name}, remove it "
+                    "from the target architecture, explicitly keep it in "
+                    "the legacy monolith, or map its ownership to an "
+                    "existing component."
+                ),
+            )
+
     structured_traceability_errors = {
         key: value
         for key, value in traceability.items()
@@ -969,6 +1290,7 @@ def run_deterministic_checks(
             "features_without_component",
             "components_without_feature",
             "components_without_adr",
+            "unowned_target_services",
         }
         and value
     }
@@ -1049,6 +1371,7 @@ def run_deterministic_checks(
         repository_expected=repository_expected,
         repository_available=repository_available,
         invalid_source_references=invalid_sources,
+        unowned_target_services=unowned_target_services,
         constraints_applicable=constraints_applicable,
         constraints_covered=constraints_covered,
         score_all_artifacts_present=score_artifacts,

@@ -431,6 +431,398 @@ def test_features_are_a_required_artifact():
     assert checks.score_all_artifacts_present == 0
 
 
+# --- cross-artifact target-service consistency ------------------------------
+#
+# A completed E2E run once passed review (Traceability 2/2, zero blocking
+# issues) although FEAT-005 redirected the Cart module to a Cart Service
+# that had no Component Description, the Shared Event Bus depended on a
+# Notification Service that did not exist, and ADR-002 made Inventory part
+# of the target architecture with no owner. The references lived in prose
+# and dependency lists, which the structured traceability checks never read.
+#
+# The fixture below reproduces exactly that shape with every OTHER check
+# green, so the only thing that can block the design is the new rule.
+
+
+def _dangling_services_state():
+    state = new_run(
+        "Strangle our monolithic shop incrementally so peak seasons stop "
+        "taking it down."
+    )
+    state.context_record = ContextRecord(
+        project_name="Strangler Shop",
+        business_goal="Peak-season shopping keeps working during migration.",
+        summary="brownfield strangler migration of a monolithic shop",
+    )
+    state.features = [
+        Feature(
+            id="FEAT-001",
+            name="Decouple order processing",
+            description="Orders are accepted asynchronously at peak.",
+            scenario="A customer order is queued instead of blocking checkout.",
+            acceptance_criteria=["Orders are persisted asynchronously."],
+        ),
+        Feature(
+            id="FEAT-002",
+            name="Take payments asynchronously",
+            description="Payments are drained from the queue.",
+            scenario="A queued payment is captured without blocking checkout.",
+            acceptance_criteria=["Payments complete off the request path."],
+        ),
+        Feature(
+            id="FEAT-003",
+            name="Publish domain events",
+            description="Extracted capabilities publish domain events.",
+            scenario="An order placement emits a domain event.",
+            acceptance_criteria=["Events are published once per change."],
+        ),
+        Feature(
+            id="FEAT-004",
+            name="Migrate incrementally",
+            description="The monolith shrinks step by step.",
+            scenario="A module is extracted without a big-bang rewrite.",
+            acceptance_criteria=["Each phase ships independently."],
+        ),
+        Feature(
+            id="FEAT-005",
+            name="Redirect Cart",
+            description=(
+                "The Cart module is redirected to the new Cart Service so "
+                "cart traffic leaves the monolith."
+            ),
+            scenario=(
+                "During checkout the Cart module is redirected to the new "
+                "Cart Service."
+            ),
+            acceptance_criteria=[
+                "Cart requests no longer run inside the legacy monolith."
+            ],
+        ),
+    ]
+    state.blueprint = Blueprint(
+        stakeholder_view=(
+            "Peak-season shopping keeps working while the shop is "
+            "decomposed incrementally."
+        ),
+        technical_view=(
+            "The Order Service and Payment Service are extracted first; the "
+            "Shared Event Bus carries their events while the Legacy "
+            "Monolith continues to serve the remaining shop."
+        ),
+        components=[
+            "Order Service",
+            "Payment Service",
+            "Shared Event Bus",
+            "Legacy Monolith",
+        ],
+        data_flows=[
+            (
+                "Order Service publishes OrderCreated to the Shared Event "
+                "Bus, which fans out to the Payment Service and the "
+                "Notification Service."
+            ),
+            (
+                "The Shared Event Bus fans out order events to the Order, "
+                "Payment, and Notification services for downstream "
+                "consumers."
+            ),
+        ],
+        addressed_feature_ids=[
+            "FEAT-001", "FEAT-002", "FEAT-003", "FEAT-004", "FEAT-005",
+        ],
+    )
+    state.adrs = [
+        ADR(
+            id="ADR-001",
+            title="ADR-1: Extract Order and Payment behind an event bus",
+            context="Synchronous processing saturates the monolith at peak.",
+            decision=(
+                "The Order Service and Payment Service publish domain "
+                "events to the Shared Event Bus."
+            ),
+            rationale="Asynchronous integration isolates peak load.",
+            alternatives_considered=["Scale the monolith vertically"],
+            positive_consequences=["Extracted capabilities scale independently."],
+            negative_consequences=["Eventual consistency during migration."],
+            related_feature_ids=["FEAT-001", "FEAT-002", "FEAT-003"],
+            related_component_names=[
+                "Order Service", "Payment Service", "Shared Event Bus",
+            ],
+        ),
+        ADR(
+            id="ADR-002",
+            title="ADR-2: Adopt an event-driven target architecture",
+            context=(
+                "The remaining shop modules must integrate without new "
+                "synchronous coupling."
+            ),
+            decision=(
+                "In the target event-driven architecture, the Order "
+                "Service, Payment Service, and Inventory Service "
+                "communicate only through domain events."
+            ),
+            rationale="Event integration keeps the migration incremental.",
+            alternatives_considered=["Point-to-point REST integration"],
+            positive_consequences=["No new synchronous coupling."],
+            negative_consequences=["Event schema governance is required."],
+            related_feature_ids=["FEAT-004"],
+            related_component_names=["Legacy Monolith"],
+        ),
+    ]
+    state.components = [
+        ComponentDescription(
+            id="COMP-001",
+            name="Order Service",
+            purpose="Accept orders asynchronously at peak.",
+            description="Implements FEAT-001 and is justified by ADR-001.",
+            inputs=["Checkout submissions from the storefront"],
+            outputs=["OrderCreated domain events"],
+            dependencies=["Shared Event Bus"],
+            related_feature_ids=["FEAT-001"],
+            related_adr_ids=["ADR-001"],
+        ),
+        ComponentDescription(
+            id="COMP-002",
+            name="Payment Service",
+            purpose="Drain queued payments.",
+            description="Implements FEAT-002 and is justified by ADR-001.",
+            inputs=["OrderCreated events from the Shared Event Bus"],
+            outputs=["PaymentCompleted events"],
+            dependencies=["Shared Event Bus"],
+            related_feature_ids=["FEAT-002"],
+            related_adr_ids=["ADR-001"],
+        ),
+        ComponentDescription(
+            id="COMP-003",
+            name="Shared Event Bus",
+            purpose="Backbone for publishing domain events.",
+            description="Implements FEAT-003 and is justified by ADR-001.",
+            inputs=["OrderCreated events from the Order Service"],
+            outputs=["Domain events for subscribed consumers"],
+            dependencies=[
+                "Order Service",
+                "Payment Service",
+                "Notification Service",
+            ],
+            related_feature_ids=["FEAT-003"],
+            related_adr_ids=["ADR-001"],
+        ),
+        ComponentDescription(
+            id="COMP-004",
+            name="Legacy Monolith",
+            purpose="Serves the capabilities that are not extracted yet.",
+            description=(
+                "Implements FEAT-004 and FEAT-005 and is justified by "
+                "ADR-002."
+            ),
+            related_feature_ids=["FEAT-004", "FEAT-005"],
+            related_adr_ids=["ADR-002"],
+        ),
+    ]
+    state.stage = Stage.DESIGNING
+    return state
+
+
+def _cart_stays_in_legacy(state):
+    """A valid strangler phase: Cart is explicitly retained in legacy."""
+
+    state.features[4].description = (
+        "The Cart module is redirected to the new Cart Service in a later "
+        "phase. The Cart module remains in the legacy monolith in the "
+        "current phase."
+    )
+    return state
+
+
+def _notification_is_external(state):
+    """Notification is explicitly declared an external SaaS provider."""
+
+    state.adrs[1].context = (
+        "The remaining shop modules must integrate without new synchronous "
+        "coupling. The Notification Service is an external SaaS provider "
+        "operated by the messaging team."
+    )
+    return state
+
+
+def _inventory_is_owned(state):
+    """Inventory is explicitly mapped to an existing component."""
+
+    state.adrs[1].decision += (
+        " The Inventory Service is owned by the Order Service during the "
+        "migration."
+    )
+    return state
+
+
+def _with_services_described(state):
+    """Every referenced target service has a Component Description."""
+
+    state.components.extend(
+        [
+            ComponentDescription(
+                id="COMP-005",
+                name="Cart Service",
+                purpose="Serve cart traffic after extraction.",
+                description=(
+                    "Implements FEAT-005 and is justified by ADR-002."
+                ),
+                related_feature_ids=["FEAT-005"],
+                related_adr_ids=["ADR-002"],
+            ),
+            ComponentDescription(
+                id="COMP-006",
+                name="Notification Service",
+                purpose="Deliver order notifications.",
+                description=(
+                    "Implements FEAT-003 and is justified by ADR-001."
+                ),
+                related_feature_ids=["FEAT-003"],
+                related_adr_ids=["ADR-001"],
+            ),
+            ComponentDescription(
+                id="COMP-007",
+                name="Inventory Service",
+                purpose="Own inventory availability events.",
+                description=(
+                    "Implements FEAT-001 and is justified by ADR-002."
+                ),
+                related_feature_ids=["FEAT-001"],
+                related_adr_ids=["ADR-002"],
+            ),
+        ]
+    )
+    state.blueprint.components.extend(
+        ["Cart Service", "Notification Service", "Inventory Service"]
+    )
+    return state
+
+
+def test_missing_cart_service_reference_is_blocking():
+    checks = run_deterministic_checks(_dangling_services_state())
+
+    assert checks.unowned_target_services["Cart Service"] == ["FEAT-005"]
+    assert checks.score_traceability < 2
+    assert any(
+        issue.severity == "high"
+        and "Cart Service" in issue.finding
+        and "FEAT-005" in issue.evidence
+        for issue in checks.issues
+    )
+
+
+def test_missing_notification_service_reference_is_blocking():
+    checks = run_deterministic_checks(_dangling_services_state())
+
+    assert checks.unowned_target_services["Notification Service"] == [
+        "Blueprint.data_flows",
+        "Shared Event Bus.dependencies",
+    ]
+    assert any(
+        issue.severity == "high" and "Notification Service" in issue.finding
+        for issue in checks.issues
+    )
+
+
+def test_target_capability_without_owner_is_blocking():
+    checks = run_deterministic_checks(_dangling_services_state())
+
+    assert checks.unowned_target_services["Inventory Service"] == ["ADR-002"]
+    assert any(
+        issue.severity == "high" and "Inventory Service" in issue.finding
+        for issue in checks.issues
+    )
+
+
+def test_dangling_services_were_the_only_deterministic_failure():
+    """The fixture is otherwise fully green — the shape of the false PASS."""
+
+    checks = run_deterministic_checks(_dangling_services_state())
+
+    assert checks.score_all_artifacts_present == 2
+    assert checks.score_constraint_coverage == 2
+    assert checks.score_adr_presence == 2
+    assert checks.score_source_integrity == 2
+    assert set(checks.unowned_target_services) == {
+        "Cart Service", "Notification Service", "Inventory Service",
+    }
+    assert len(checks.issues) == 3
+
+
+def test_inconsistent_design_cannot_pass_review(monkeypatch):
+    monkeypatch.setattr(rev, "llm_call", _as_llm_call(_all_pass_judgments))
+    output = rev.reviewer_node(_dangling_services_state())
+    report = output["review"]
+
+    assert report.overall_status == "fail"
+    assert report.requires_refinement is True
+    assert output["stage"] is Stage.REFINING
+    instruction = report.refinement_instruction
+    for name in ("Cart Service", "Notification Service", "Inventory Service"):
+        assert name in instruction
+    # The finding names where each service was referenced...
+    assert "FEAT-005" in instruction
+    # ...and the fix states every acceptable resolution.
+    cart_issue = next(
+        issue for issue in report.issues if "Cart Service" in issue.finding
+    )
+    assert "Component Description" in cart_issue.suggested_fix
+    assert "legacy monolith" in cart_issue.suggested_fix
+    assert "ownership" in cart_issue.suggested_fix
+
+
+def test_explicit_legacy_retention_is_not_flagged():
+    state = _cart_stays_in_legacy(_dangling_services_state())
+    checks = run_deterministic_checks(state)
+
+    assert "Cart Service" not in checks.unowned_target_services
+
+
+def test_explicit_external_provider_is_not_flagged():
+    state = _notification_is_external(_dangling_services_state())
+    checks = run_deterministic_checks(state)
+
+    assert "Notification Service" not in checks.unowned_target_services
+
+
+def test_ownership_by_existing_component_is_not_flagged():
+    state = _inventory_is_owned(_dangling_services_state())
+    checks = run_deterministic_checks(state)
+
+    assert "Inventory Service" not in checks.unowned_target_services
+
+
+def test_fully_disposed_strangler_design_passes_review(monkeypatch):
+    state = _inventory_is_owned(
+        _notification_is_external(_cart_stays_in_legacy(_dangling_services_state()))
+    )
+    checks = run_deterministic_checks(state)
+
+    assert checks.unowned_target_services == {}
+    assert checks.score_traceability == 2
+    assert checks.issues == []
+
+    monkeypatch.setattr(rev, "llm_call", _as_llm_call(_all_pass_judgments))
+    output = rev.reviewer_node(state)
+
+    assert output["review"].overall_status == "pass"
+    assert output["stage"] is Stage.DONE
+
+
+def test_services_with_component_descriptions_pass_review(monkeypatch):
+    state = _with_services_described(_dangling_services_state())
+    checks = run_deterministic_checks(state)
+
+    assert checks.unowned_target_services == {}
+    assert checks.issues == []
+
+    monkeypatch.setattr(rev, "llm_call", _as_llm_call(_all_pass_judgments))
+    output = rev.reviewer_node(state)
+
+    assert output["review"].overall_status == "pass"
+    assert output["stage"] is Stage.DONE
+
+
 # --- refinement-instruction assembly --------------------------------------
 #
 # These pin the fix for run 20260818T194159Z-107ff26e, where the instruction
