@@ -81,9 +81,33 @@ final verdict; Python owns all of those decisions.
    problem stated in this run's initial request and locked Context Record? For
    a brownfield system, does it address the structural cause evidenced by the
    repository rather than merely naming technologies or patching symptoms? Do
-   not require any particular architecture pattern.
+   not require any particular architecture pattern. For a brownfield design
+   also judge the DECOMPOSITION QUALITY and the MIGRATION APPROACH:
+   - Challenge services that appear to exist only because a source
+     module/package existed, tiny services with no independent
+     scaling/ownership/security/data boundary, and fragmentation that adds
+     network/operational complexity without a stated benefit. A DIFFERENT
+     decomposition than any reference passes when each standalone service
+     carries a concrete boundary rationale — do not insist services match
+     any particular decomposition.
+   - When the design modernizes a brownfield system with an incremental or
+     no-major-downtime objective, check the Blueprint's `migration_steps`
+     are coherent: understandable ordering, current and target can coexist,
+     routing/cutover and data-ownership transition are acknowledged, and
+     the sequence does not secretly require a big-bang rewrite. Architecture
+     level only — do not demand project-management detail, and do not
+     penalize a non-brownfield design for having no migration plan.
 3. adr_soundness: Are the ADR rationales, alternatives, and trade-offs
-   internally sound and supported by the locked context or retrieved evidence?
+   internally sound and supported by the locked context or retrieved
+   evidence? For a brownfield design also check TECHNOLOGY-CHANGE
+   JUSTIFICATION: every substantial change from the detected existing stack
+   (language, framework, data store, identity, or communication
+   infrastructure) must be justified by a requirement, an
+   architecture problem it solves, a scaling/security/reliability/operational
+   constraint, or a meaningful trade-off. Technology novelty without a
+   requirement-linked rationale is a soundness failure; a genuinely
+   justified change must not be flagged merely for differing from the
+   existing stack.
 4. best_practice_grounding: Are the recommendations supported by retrieved
    knowledge, repository evidence, or clearly labelled assumptions and open
    risks, rather than fabricated citations or unsupported certainty?

@@ -7,10 +7,9 @@ Scope: the CONTENT promises of the workspace UX pass —
     (executive recommendation, target architecture, why, decisions,
     components, risks/trade-offs, review confidence), with no technical
     run internals anywhere on the page;
-  * the Migration Approach section appears exactly when the artifacts
-    carry an explicit sequence — which today is never, so the tests pin
-    that prose mentions alone ("incrementally migrating…") do NOT conjure
-    it up;
+  * the Migration Approach section appears exactly when the Blueprint
+    carries STRUCTURED `migration_steps` — prose mentions alone
+    ("incrementally migrating…") never conjure it up;
   * Review exposes verdict, counts and the dimension summary directly,
     with only detailed evidence left collapsible.
 
@@ -427,3 +426,95 @@ def test_review_of_a_failed_run_shows_dimensions_and_findings():
     assert "2 blocking issues" in md
     assert "Review dimensions" in md
     assert len(at.table) == 1  # the findings table itself
+
+
+# ── 10. Migration approach — structured steps, client cut ─────────────────
+
+
+def _with_steps(variant: str = "pass"):
+    """A demo state carrying a structured migration sequence (GENERIC
+    placeholder content — no benchmark-specific names)."""
+    from pipeline.state import MigrationStep
+
+    state = build_demo_state(variant)
+    state.blueprint.migration_steps = [
+        MigrationStep(
+            title="Prepare the order-processing seam",
+            objective="Isolate the boundary the first extraction will use.",
+            changes=["Introduce an interface seam at the module edge"],
+            coexistence_or_data_strategy="Seam routes both paths during transition.",
+            exit_condition="Seam traffic observable.",
+        ),
+        MigrationStep(
+            title="Extract the first capability",
+            objective="Move the highest-value, lowest-risk capability first.",
+        ),
+    ]
+    return state
+
+
+def test_overview_shows_migration_approach_when_steps_exist():
+    at = AppTest.from_file(_UI, default_timeout=30)
+    at.session_state["state"] = _with_steps()
+    at.run()
+    assert not at.exception
+    md = _md(at)
+
+    assert "Migration approach" in md
+    assert "Prepare the order-processing seam" in md
+    assert "Extract the first capability" in md
+    # Compact: number + title + one-line objective, not every field.
+    assert "Coexistence" not in md.split("Key decisions")[0]
+    assert "Exit condition" not in md
+
+
+def test_overview_omits_migration_section_cleanly_when_no_steps():
+    at = _finished_app()          # the demo carries no structured steps
+
+    assert "Migration approach" not in _md(at)
+
+
+def test_overview_migration_sits_between_why_and_key_decisions():
+    at = AppTest.from_file(_UI, default_timeout=30)
+    at.session_state["state"] = _with_steps()
+    at.run()
+    md = _md(at)
+
+    why = md.index("Why this architecture")
+    migration = md.index("Migration approach")
+    decisions = md.index("Key decisions")
+    assert why < migration < decisions
+
+
+def test_architecture_view_shows_the_full_migration_steps():
+    at = AppTest.from_file(_UI, default_timeout=30)
+    at.session_state["state"] = _with_steps()
+    at.run()
+    at = _select_view(at, "Architecture")
+
+    labels = [e.label for e in at.expander]
+    assert any(
+        "Migration approach — 2 steps" in label for label in labels
+    )
+    # Full detail renders inside the expander's block, which AppTest
+    # traverses regardless of open state.
+    assert not at.exception
+
+
+def test_architecture_view_omits_migration_expander_when_no_steps():
+    at = _select_view(_finished_app(), "Architecture")
+
+    assert not any(
+        "Migration approach" in e.label for e in at.expander
+    )
+
+
+def test_rendering_migration_sections_calls_nothing(no_pipeline_actions):
+    """Rendering with steps on screen is pure drawing — no LLM, no
+    pipeline, no retrieval (the fixture booby-traps every path)."""
+    at = AppTest.from_file(_UI, default_timeout=30)
+    at.session_state["state"] = _with_steps()
+    at.run()
+    assert not at.exception
+    _select_view(at, "Architecture")
+    assert not at.exception

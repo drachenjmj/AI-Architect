@@ -264,6 +264,43 @@ class Feature(BaseModel):
     )
 
 
+class MigrationStep(BaseModel):
+    """One ordered step of a brownfield modernization sequence.
+
+    Deliberately COMPACT: this is an architecture-level migration approach
+    (what moves, in what order, and how the old and new coexist), not a
+    transformation-programme plan with owners, dates and tickets. Order is
+    the LIST order — no explicit `order` field to keep in sync.
+
+    Backward compatibility: `Blueprint.migration_steps` defaults to empty,
+    so checkpoints written before this field existed deserialize unchanged
+    (a greenfield run, or any design with no stated migration objective,
+    legitimately carries no steps). Old checkpoint FILES are never
+    rewritten; the default is applied on load.
+    """
+
+    title: str = Field(
+        ...,
+        description="Short step name, e.g. 'Introduce the order event seam'.",
+    )
+    objective: str = Field(
+        default="",
+        description="What this step achieves and why it sits at this point in the sequence.",
+    )
+    changes: list[str] = Field(
+        default_factory=list,
+        description="Architecture-level changes this step makes.",
+    )
+    coexistence_or_data_strategy: str = Field(
+        default="",
+        description="How current and target coexist here: routing, cutover, data ownership/consistency transition.",
+    )
+    exit_condition: str = Field(
+        default="",
+        description="Observable condition that validates the step is complete. Optional.",
+    )
+
+
 class Blueprint(BaseModel):
     """Architecture Blueprint — stakeholder view + technical view."""
     # TODO(Maheen): real Blueprint schema (two views).
@@ -315,6 +352,13 @@ class Blueprint(BaseModel):
     open_risks: list[str] = Field(
         default_factory=list,
         description="Known architectural risks that still require attention.",
+    )
+    # The ordered modernization sequence for a brownfield redesign. Empty
+    # for greenfield runs and for designs that carry no migration objective
+    # — absence is valid, not an omission (see MigrationStep).
+    migration_steps: list[MigrationStep] = Field(
+        default_factory=list,
+        description="Ordered brownfield modernization steps; empty when no migration is required.",
     )
     version: str = Field(
         default="1.0",

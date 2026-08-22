@@ -109,6 +109,8 @@ from ui_sections import (
     render_key_risks,
     render_knowledge,
     render_blocking_findings,
+    render_migration_approach,
+    render_migration_steps,
     render_objections,
     render_repo_analysis,
     render_review_confidence,
@@ -395,15 +397,14 @@ def _render_overview_view(state: ArchitectState) -> tuple[str, str] | None:
     descriptions, KB chunks, file trees — operations and evidence belong to
     their own views.
 
-    A Migration Approach section is deliberately absent: nothing in the
-    saved artifacts carries an ordered migration sequence (only prose
-    mentions of "incremental" work), and inferring one from prose is not
-    displaying the run's record. It stays omitted until an artifact states
-    a sequence explicitly.
+    A Migration Approach section renders from the Blueprint's STRUCTURED
+    `migration_steps` only, silent when absent: prose mentions of
+    "incremental" work were never a sequence, and are not rendered as one.
     """
 
     render_executive_recommendation(state)   # A. what we recommend, and why we're here
     render_why_architecture(state)           # C. grounded reasons, deduped, capped
+    render_migration_approach(state)         # D. structured steps, compact — silent when none
     render_key_decisions(state)              # E. every ADR, one line each
     render_component_summary(state)          # F. name / type / purpose grid
     render_risks_and_tradeoffs(state)        # G. risks, trade-offs, open findings
@@ -468,6 +469,8 @@ def _render_architecture_view(state: ArchitectState) -> str | None:
     render_blueprint(state)
     render_adrs(state)
     render_components(state)
+    # The structured migration sequence, when the run carries one.
+    render_migration_steps(state)
     # ASK before DIRECT — the cheap read-only question above the box that
     # costs a full refine round. Same order, same semantics as before.
     question = render_design_advisory(state)
@@ -709,12 +712,14 @@ def _render_historical_architecture(state: ArchitectState) -> None:
 
     NOT render_design_advisory and NOT render_feedback_box: the advisory ask
     would spend an LLM call against a run that is over, and a directive
-    would spend a refinement round on it. Neither belongs in history.
+    would spend a refinement round on it. Neither belongs in history. The
+    migration sequence renders read-only like every other artifact here.
     """
     render_objections(state)
     render_blueprint(state)
     render_adrs(state)
     render_components(state)
+    render_migration_steps(state)
 
 
 def _render_history_detail(run_id: str) -> None:

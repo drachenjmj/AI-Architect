@@ -2124,12 +2124,10 @@ def render_key_risks(state: ArchitectState) -> None:
 # schema. A section whose source is empty is omitted or says so; generic
 # architecture boilerplate is never used to fill a gap.
 #
-# Deliberately NOT here: a Migration Approach section. Nothing in the saved
-# artifacts carries an ordered sequence (no phases, no steps, no
-# current→target transition structure) — only prose mentions like
-# "incrementally migrating the monolith" in rationale text, and rendering
-# those as a sequence would be inferring, not displaying. Omitted until the
-# artifacts say it explicitly.
+# Deliberately NOT here: run trace, token/cost metrics, stage machinery,
+# run identifiers in the body, full ADR bodies, full Component
+# descriptions, KB chunks, file trees — operations and evidence belong to
+# their own views.
 # ══════════════════════════════════════════════════════════════════════════
 def render_executive_recommendation(state: ArchitectState) -> None:
     """A. The one block a client reads first: WHAT is recommended, for which
@@ -2408,6 +2406,58 @@ def render_risks_and_tradeoffs(state: ArchitectState) -> None:
                 f"{html.escape(_clip_sentence(issue.finding, 130))}",
                 unsafe_allow_html=True,
             )
+
+
+def render_migration_approach(state: ArchitectState) -> None:
+    """The compact client cut of `blueprint.migration_steps`: number, title,
+    one-line objective per step.
+
+    Silent when the run carries no structured steps (greenfield, or any
+    checkpoint written before the field existed) — an absent migration plan
+    is a valid state, not an empty section. The full fields stay in the
+    Architecture view; prose mentions of "incremental" migration in
+    rationale text are NOT rendered as a sequence.
+    """
+    steps = state.blueprint.migration_steps if state.blueprint else []
+    if not steps:
+        return
+
+    st.markdown("#### Migration approach")
+    for index, step in enumerate(steps, start=1):
+        title = html.escape(step.title.strip() or f"Step {index}")
+        st.markdown(f"{index}. **{title}**")
+        if step.objective.strip():
+            st.caption(_clip_sentence(step.objective, 160))
+
+
+def render_migration_steps(state: ArchitectState) -> None:
+    """The full ordered migration sequence, every structured field — the
+    Architecture view's rendering. Same silence rule as the compact cut."""
+    steps = state.blueprint.migration_steps if state.blueprint else []
+    if not steps:
+        return
+
+    with st.expander(
+        f"🧭  Migration approach — {len(steps)} step"
+        f"{'s' if len(steps) != 1 else ''}", expanded=False
+    ):
+        st.caption(
+            "The ordered modernization sequence from the Blueprint — "
+            "architecture-level steps, coexistence and data strategy, and "
+            "each step's validation."
+        )
+        for index, step in enumerate(steps, start=1):
+            title = step.title.strip() or f"Step {index}"
+            st.markdown(
+                f"{_tag(f'{index:02d}. {title}', BCG_DARK)}",
+                unsafe_allow_html=True,
+            )
+            _text("Objective", step.objective)
+            _bullets("Changes", step.changes)
+            _text("Coexistence / data strategy",
+                  step.coexistence_or_data_strategy)
+            _text("Exit condition", step.exit_condition)
+            st.divider()
 
 
 def render_review_confidence(state: ArchitectState) -> None:

@@ -256,3 +256,52 @@ def test_returning_to_overview_shows_current_run_unchanged(saved_runs):
     assert "REVIEW PASSED" in " | ".join(
         m.value for m in at.markdown
     )
+
+
+# ── 4. migration steps render read-only in historical runs ────────────────
+
+
+def test_history_renders_migration_steps_read_only(saved_runs):
+    """A saved run carrying structured migration steps shows them in its
+    Architecture tab; the run stays read-only and the current run keeps its
+    own (empty) plan — history never leaks into the present."""
+    from pipeline.state import MigrationStep
+
+    # Give the OLDER saved run a migration sequence.
+    state = _saved_run(
+        "capped", _OLDER_ID, _OLDER_PROJECT, "2026-01-01T09:00:00+00:00"
+    )
+    state.blueprint.migration_steps = [
+        MigrationStep(
+            title="Prepare the seam",
+            objective="Isolate the boundary before extraction.",
+        ),
+    ]
+    persistence.save_state(state)
+
+    at = _select_view(_finished_app(), "History")
+    at.button(key=f"hist_open_{_OLDER_ID}").click()
+    at.run()
+    assert not at.exception
+
+    # The historical Architecture tab carries the migration expander.
+    labels = [e.label for e in at.expander]
+    assert any("Migration approach — 1 step" in label for label in labels)
+    assert "read-only" in " ".join(c.value for c in at.caption)
+    # And the CURRENT run is untouched, plan included.
+    current = at.session_state["state"]
+    assert current.run_id != _OLDER_ID
+    assert current.blueprint.migration_steps == []
+
+
+def test_history_renders_old_checkpoints_without_migration_steps(saved_runs):
+    """Runs saved before the field existed have no steps and render with no
+    error and no empty section."""
+    at = _select_view(_finished_app(), "History")
+    at.button(key=f"hist_open_{_OLDER_ID}").click()
+    at.run()
+    assert not at.exception
+
+    assert not any(
+        "Migration approach" in e.label for e in at.expander
+    )
