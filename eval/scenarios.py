@@ -164,6 +164,12 @@ def _single_feature_state(
             description=functional_requirement,
             scenario=feature_scenario,
             acceptance_criteria=[acceptance_criterion],
+            # Legacy-compatible: the requirement's own exact text, which
+            # `_check_requirement_feature_coverage` accepts as equivalent to
+            # its canonical catalog ID (see review_checks.py).
+            related_requirement_ids=[
+                functional_requirement, *non_functional_requirements,
+            ],
         )
     ]
     state.blueprint = Blueprint(

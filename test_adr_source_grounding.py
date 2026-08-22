@@ -202,7 +202,7 @@ class _StubLLM:
                 Feature(
                     id="FEAT-001", name="Handle peak load",
                     scenario="Responsive at peak.",
-                    related_requirement_ids=["NFR-001"],
+                    related_requirement_ids=["FR-001"],
                     acceptance_criteria=["Stays available."],
                 )
             ]), tc.fake_usage()

@@ -22,10 +22,11 @@ fallback exists only when callers explicitly enable it for old fixtures.
 from __future__ import annotations
 
 import re
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from pipeline.state import ArchitectState, ReviewIssue
+from pipeline.state import ArchitectState, ContextRecord, ReviewIssue
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -107,6 +108,16 @@ class DeterministicChecks(BaseModel):
     # The exact requirement strings that failed coverage, per group — the
     # actionable form of `constraints_covered` (see `_check_constraints`).
     constraints_uncovered: dict[str, list[str]] = Field(default_factory=dict)
+
+    # Catalog requirements ("FR-xxx"/"NFR-xxx", see `requirement_catalog`)
+    # with no Feature covering them, rendered "<ID> - <text>" (see
+    # `_check_requirement_feature_coverage`). Orthogonal to
+    # `constraints_uncovered`: this proves the requirement entered the
+    # modeled feature set, not that the final design addresses it. Feeds
+    # `score_traceability` (merged into `traceability` in
+    # `run_deterministic_checks`) so a HIGH finding here cannot coexist with
+    # a 2/2 traceability score.
+    requirements_without_feature: list[str] = Field(default_factory=list)
 
     score_all_artifacts_present: int = Field(0, ge=0, le=2)
     score_constraint_coverage: int = Field(0, ge=0, le=2)
@@ -437,10 +448,16 @@ def _check_traceability(
         for adr in state.adrs
         if adr.id.strip()
     }
-    component_names = {
-        component.name.strip()
+    # Canonical identity (lifecycle qualifier and trailing "Service" both
+    # ignored) — the SAME contract `_component_key` gives the target-service
+    # ownership check, so an ADR that names a component bare ("User
+    # Service") resolves against a Component Description declared with a
+    # display qualifier ("User Service (New)") instead of failing on a raw
+    # string mismatch that was never a real gap.
+    component_keys = {
+        _component_key(component.name)
         for component in state.components
-        if component.name.strip()
+        if _component_key(component.name)
     }
 
     blueprint_feature_ids = {
@@ -543,9 +560,8 @@ def _check_traceability(
             {
                 value.strip()
                 for value in adr.related_component_names
-                if value.strip()
+                if value.strip() and _component_key(value) not in component_keys
             }
-            - component_names
         )
         for adr in state.adrs
     }
@@ -605,7 +621,16 @@ def _check_traceability(
 # prose, and blocking on them would flag valid designs.
 # ─────────────────────────────────────────────────────────────────────────
 
-_TARGET_SINGULAR_RE = re.compile(r"\b([A-Z][A-Za-z0-9-]*)\s+Service\b")
+#
+# COMPOSITE NAMES ("Order/Payment Service") ARE ONE UNIT (regression, final
+# run 20260822T222414Z-1788d214): the bare pattern captured only the LAST
+# slash-joined word ("Payment"), splitting a single declared composite
+# component into a phantom reference to half its name. The slash-continuation
+# group captures the whole "Order/Payment" span as one base so the reference
+# resolves to the composite component, not a fragment of it.
+_TARGET_SINGULAR_RE = re.compile(
+    r"\b([A-Z][A-Za-z0-9-]*(?:/[A-Z][A-Za-z0-9-]*)*)\s+Service\b"
+)
 # The plural/list form. Continuation accepts ", and" (Oxford comma) as well
 # as "," and "and", so "Order, Payment, and Notification services" captures
 # the WHOLE enumeration rather than only its last name.
@@ -670,10 +695,32 @@ def _name_tokens(name: str) -> tuple[str, ...]:
     )
 
 
-def _component_key(name: str) -> tuple[str, ...]:
-    """Identity tokens of a component name, ignoring a 'Service' suffix."""
+# Component Description names sometimes carry a trailing display/lifecycle
+# qualifier ("User Service (New)", "Django Monolith (Legacy)") that a target
+# reference to the SAME component never repeats ("User Service"). The
+# qualifier describes STATUS, not identity, so it is stripped before identity
+# tokens are computed (regression, final run 20260822T222414Z-1788d214: four
+# declared components were reported missing because their name's trailing
+# "(New)" token survived tokenizing and a bare reference's did not).
+_LIFECYCLE_QUALIFIER_RE = re.compile(
+    r"\s*\((?:new|legacy|existing|current|updated|deprecated|proposed|planned)\)\s*$",
+    re.IGNORECASE,
+)
 
-    tokens = _name_tokens(name)
+
+def _strip_lifecycle_qualifier(name: str) -> str:
+    """Drop a trailing '(New)'/'(Legacy)'-style display qualifier. Pure."""
+
+    return _LIFECYCLE_QUALIFIER_RE.sub("", name)
+
+
+def _component_key(name: str) -> tuple[str, ...]:
+    """Identity tokens of a component name: lifecycle qualifier and a
+    trailing 'Service' both ignored. Applied symmetrically to defined
+    Component Description names and extracted target references so the
+    same name in either form resolves to the same identity."""
+
+    tokens = _name_tokens(_strip_lifecycle_qualifier(name))
     while tokens and tokens[-1] == "service":
         tokens = tokens[:-1]
     return tokens
@@ -873,12 +920,20 @@ def _check_target_service_ownership(
     if not references:
         return {}
 
-    component_keys = [
-        _component_key(component.name)
+    # (key, is_composite) per declared component. A composite name
+    # ("Order/Payment Service") is ONE declared component covering two
+    # capabilities; only EXACT identity may satisfy a reference to it — the
+    # ordinary suffix match ("Payment" satisfies "Shopping Cart Service"-style
+    # compounds) would otherwise let a bare "Payment Service" reference
+    # silently ride on a composite it was never declared to cover, hiding a
+    # genuinely undeclared "Payment Service" (regression, final run
+    # 20260822T222414Z-1788d214).
+    component_entries = [
+        (_component_key(component.name), "/" in component.name)
         for component in state.components
         if _component_key(component.name)
     ]
-    owner_word_sets = [set(key) for key in component_keys]
+    owner_word_sets = [set(key) for key, _composite in component_entries]
     sentences = [
         sentence.lower() for sentence in _design_sentences(state)
     ]
@@ -886,7 +941,10 @@ def _check_target_service_ownership(
     unowned: dict[str, list[str]] = {}
     for display, locations in references.items():
         key = _component_key(display)
-        if any(existing[-len(key):] == key for existing in component_keys):
+        if any(
+            existing == key or (not composite and existing[-len(key):] == key)
+            for existing, composite in component_entries
+        ):
             continue
         if _has_explicit_disposition(key, sentences, owner_word_sets):
             continue
@@ -1097,6 +1155,130 @@ def _check_constraints(
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# Rubric item: Context requirement -> Feature coverage
+#
+# `_check_constraints` proves the final DESIGN addresses a requirement via
+# loose token overlap (>=50% of a requirement's significant tokens appearing
+# anywhere in the design text) — evidence enough to catch a design that never
+# mentions "GDPR", but too loose to prove a requirement was actually MODELED:
+# a requirement like "Product reviews" passes that check on the incidental
+# word "Product" appearing elsewhere, even when reviews were never modeled as
+# a feature at all. This check is orthogonal and STRUCTURAL: every explicit
+# functional/non-functional requirement must be named, in some Feature's
+# `related_requirement_ids` — the field that already exists for exactly this
+# purpose. Cloud/budget/compliance/existing-system are design constraints,
+# not features, and stay out of scope here.
+#
+# CATALOG, NOT RAW TEXT (contract fix). The Architect's own contract for
+# `related_requirement_ids` is IDs ("NFR-001"), and existing Architect tests
+# already used that shape — a raw-text-only Reviewer rule was never
+# satisfiable by a correct Architect output. `requirement_catalog` is the ONE
+# deterministic ID scheme both sides read: the Architect prompt shows it, the
+# Architect writer boundary validates phase-1 output against it BEFORE phase
+# 2 ever runs (see architect.py), and this check reads the SAME catalog. A
+# genuinely missing mapping can therefore no longer reach the Reviewer from a
+# normal run — it is caught, fail-fast, at the source. This check still
+# exists for persisted/legacy/directly-built states the Architect boundary
+# never validated (and for the unit tests that build them directly).
+# ─────────────────────────────────────────────────────────────────────────
+
+
+class RequirementCatalogEntry(BaseModel):
+    """One deterministic entry in a Context Record's requirement catalog.
+
+    The single identity both the Architect and the Reviewer read: the
+    Architect prompt lists it, the Architect writer boundary validates
+    phase-1 `related_requirement_ids` against it, and this module's
+    coverage check reads the same catalog — one contract, never three.
+    """
+
+    id: str
+    text: str
+    kind: Literal["functional", "non_functional"]
+
+
+def requirement_catalog(
+    context: ContextRecord | None,
+) -> list[RequirementCatalogEntry]:
+    """Deterministic FR-xxx/NFR-xxx catalog from the frozen Context Record. Pure.
+
+    IDs are assigned by LIST ORDER, independently per kind:
+    `functional_requirements` numbers FR-001, FR-002, ...;
+    `non_functional_requirements` numbers NFR-001, NFR-002, ... Cloud
+    provider, budget, compliance, and existing-system fields are DESIGN
+    CONSTRAINTS, not modeled capabilities, and never get a catalog entry.
+
+    DUPLICATE TEXT, anywhere in the record (either field): the first
+    occurrence gets the entry; a later occurrence with byte-identical
+    (whitespace-stripped) text is folded into it rather than minted a
+    second, ambiguous ID — two IDs naming the same requirement would let a
+    Feature "cover" only one of them and still look complete.
+    """
+
+    if context is None:
+        return []
+
+    seen: set[str] = set()
+    entries: list[RequirementCatalogEntry] = []
+
+    counter = 0
+    for requirement in context.functional_requirements:
+        text = requirement.strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        counter += 1
+        entries.append(
+            RequirementCatalogEntry(id=f"FR-{counter:03d}", text=text, kind="functional")
+        )
+
+    counter = 0
+    for requirement in context.non_functional_requirements:
+        text = requirement.strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        counter += 1
+        entries.append(
+            RequirementCatalogEntry(
+                id=f"NFR-{counter:03d}", text=text, kind="non_functional"
+            )
+        )
+
+    return entries
+
+
+def _check_requirement_feature_coverage(state: ArchitectState) -> list[str]:
+    """Catalog requirements with no Feature covering them, rendered
+    "<ID> - <text>" for a reader/refinement instruction. Pure.
+
+    Coverage is by the SAME deterministic catalog `requirement_catalog`
+    gives the Architect: a Feature's `related_requirement_ids` entry counts
+    when it is the entry's canonical ID ("FR-001") OR — compatibility for
+    persisted/legacy/directly-built states written before the catalog
+    contract existed — the entry's exact (whitespace-normalised) text.
+    Never fuzzy/token matching, and nothing is inferred onto the "closest"
+    feature.
+    """
+
+    catalog = requirement_catalog(state.context_record)
+    if not catalog:
+        return []
+
+    mapped = {
+        value.strip()
+        for feature in state.features
+        for value in feature.related_requirement_ids
+        if value.strip()
+    }
+    return [
+        f"{entry.id} - {entry.text}"
+        for entry in catalog
+        if entry.id not in mapped and entry.text not in mapped
+    ]
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # Rubric item: brownfield implementation-language/framework drift
 #
 # Run 20260822T164736Z-1a15e2e4: the detected stack was Python/Django, the
@@ -1297,18 +1479,24 @@ def _check_flow_participants(
     """Arrow-flow endpoints with no Component Description and no external
     marker, mapped to the flows that reference them. Pure.
 
-    Resolution is EXACT (folded) against Component Description names — the
-    same identity the writer-side canonicalizer targets and the diagram
-    draws. A Blueprint.components-only name (listed but never described)
-    does NOT resolve: describing it or marking it external is the fix.
+    Resolution is EXACT against Component Description names under the SAME
+    canonical identity `_component_key` gives the target-service ownership
+    and ADR checks (a trailing lifecycle qualifier like "(New)" ignored) —
+    never fuzzy substring matching. A Blueprint.components-only name (listed
+    but never described) does NOT resolve: describing it or marking it
+    external is the fix.
     """
     if state.blueprint is None:
         return {}
-    described = {_fold(c.name) for c in state.components if c.name.strip()}
+    described = {
+        _component_key(c.name) for c in state.components if _component_key(c.name)
+    }
     unresolved: dict[str, set[str]] = {}
     for flow in _non_empty(state.blueprint.data_flows):
         for endpoint in _flow_endpoints([flow]):
-            if _fold(endpoint) in described or _is_external_participant(endpoint):
+            if _component_key(endpoint) in described or _is_external_participant(
+                endpoint
+            ):
                 continue
             unresolved.setdefault(endpoint, set()).add(flow)
     return {
@@ -1518,6 +1706,13 @@ def run_deterministic_checks(
     constraints_applicable, constraints_covered, constraints_uncovered = (
         _check_constraints(state)
     )
+    requirements_without_feature = _check_requirement_feature_coverage(state)
+    # A missing requirement -> Feature mapping is a traceability failure too:
+    # folding it into `traceability` (the same dict `unowned_target_services`
+    # is merged into above) keeps `score_traceability` internally consistent
+    # with the HIGH issue below — a design can no longer score 2/2 while
+    # carrying a blocking traceability finding.
+    traceability["requirements_without_feature"] = requirements_without_feature
     invalid_sources, score_source_integrity = _check_source_integrity(state)
     repository_expected = bool(state.initial_request.repo_url.strip())
     repository_available = state.repo_representation is not None
@@ -1677,6 +1872,32 @@ def run_deterministic_checks(
             ),
         )
 
+    if requirements_without_feature:
+        # HIGH/blocking: an omitted requirement never entered the modeled
+        # feature set at all, which is a stricter failure than the loose
+        # constraint-text check above catches (regression: "Product reviews"
+        # passed constraint coverage on the word "Product" alone while never
+        # becoming a feature). The Reviewer does not guess which Feature
+        # should own it — that decision belongs to the Architect.
+        add_issue(
+            "high",
+            "traceability",
+            (
+                "Context Record requirement(s) are not represented by any "
+                "Feature's related_requirement_ids: "
+                f"{', '.join(requirements_without_feature)}"
+            ),
+            (
+                "requirements_without_feature="
+                f"{requirements_without_feature}"
+            ),
+            (
+                "Add or adjust a Feature to cover each missing requirement "
+                "and add its canonical ID (e.g. 'FR-002') to that Feature's "
+                "related_requirement_ids."
+            ),
+        )
+
     if repository_expected and not repository_available:
         add_issue(
             "high",
@@ -1687,22 +1908,62 @@ def run_deterministic_checks(
         )
 
     if features_without_component:
-        add_issue(
-            "medium",
-            "traceability",
-            (
-                "Feature(s) have no implementing component: "
-                f"{', '.join(features_without_component)}."
-            ),
-            (
-                "features_without_component="
-                f"{features_without_component}"
-            ),
-            (
-                "Add each missing feature ID to at least one component's "
-                "`related_feature_ids`."
-            ),
-        )
+        # An uncovered `must` feature is a required capability with no
+        # implementation at all — refinement-blocking, like the run that
+        # reached DONE at the refinement-cost cap with FEAT-005 (priority
+        # must) left uncovered and MEDIUM/non-blocking. Lower-priority
+        # features keep the existing non-blocking behavior. The Reviewer
+        # only reports the gap; it never invents a component mapping.
+        feature_priority = {
+            feature.id.strip(): feature.priority
+            for feature in state.features
+            if feature.id.strip()
+        }
+        must_uncovered = [
+            feature_id
+            for feature_id in features_without_component
+            if feature_priority.get(feature_id) == "must"
+        ]
+        other_uncovered = [
+            feature_id
+            for feature_id in features_without_component
+            if feature_id not in must_uncovered
+        ]
+        if must_uncovered:
+            add_issue(
+                "high",
+                "traceability",
+                (
+                    "Required (`must`) feature(s) have no implementing "
+                    f"component: {', '.join(must_uncovered)}."
+                ),
+                (
+                    "features_without_component="
+                    f"{must_uncovered}"
+                ),
+                (
+                    "Add each missing feature ID to at least one "
+                    "component's `related_feature_ids`, or introduce the "
+                    "component that implements it."
+                ),
+            )
+        if other_uncovered:
+            add_issue(
+                "medium",
+                "traceability",
+                (
+                    "Feature(s) have no implementing component: "
+                    f"{', '.join(other_uncovered)}."
+                ),
+                (
+                    "features_without_component="
+                    f"{other_uncovered}"
+                ),
+                (
+                    "Add each missing feature ID to at least one component's "
+                    "`related_feature_ids`."
+                ),
+            )
 
     if components_without_feature:
         add_issue(
@@ -1917,6 +2178,7 @@ def run_deterministic_checks(
         constraints_applicable=constraints_applicable,
         constraints_covered=constraints_covered,
         constraints_uncovered=constraints_uncovered,
+        requirements_without_feature=requirements_without_feature,
         score_all_artifacts_present=score_artifacts,
         score_constraint_coverage=score_constraints,
         score_traceability=score_traceability,

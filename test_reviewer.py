@@ -8,7 +8,7 @@ from jsonschema import validate
 
 import test_clarifier as tc  # reuse the shared canned-usage helper
 from pipeline.agents import reviewer as rev
-from pipeline.review_checks import run_deterministic_checks
+from pipeline.review_checks import requirement_catalog, run_deterministic_checks
 from pipeline.state import (
     ADR,
     Blueprint,
@@ -61,6 +61,9 @@ def _good_design_state():
             name="Survive seasonal peak load",
             scenario="Checkout remains responsive for 50k concurrent users.",
             acceptance_criteria=["Peak checkout remains available."],
+            related_requirement_ids=[
+                "Customers complete purchases", "Handle 50k concurrent users",
+            ],
         ),
         Feature(
             id="FEAT-002",
@@ -279,6 +282,70 @@ def test_prose_mentions_do_not_replace_structured_links_by_default():
     assert strict_checks.blueprint_missing_feature_ids
     assert strict_checks.components_without_feature
     assert compatibility_checks.score_traceability == 2
+
+
+# --- uncovered `must` feature is refinement-blocking ------------------------
+#
+# Regression for the final run 20260822T222414Z-1788d214: FEAT-005
+# ("Traffic-Resilient Infrastructure", priority=must) had no implementing
+# component, but the check classified it MEDIUM with
+# requires_refinement=False — a required capability with literally no
+# implementation reached DONE only because the refinement-cost cap was hit,
+# instead of being blocked. The Reviewer still does not invent a component
+# mapping; it only escalates the severity of an uncovered MUST feature so the
+# Architect receives it as a real blocker.
+
+
+def test_uncovered_must_feature_is_refinement_blocking():
+    state = _good_design_state()
+    assert state.features[0].priority == "must"
+    state.components[0].related_feature_ids = []
+    state.components[0].description = "Justified by ADR-001; implements no feature."
+
+    checks = run_deterministic_checks(state)
+
+    assert "FEAT-001" in checks.features_without_component
+    issue = next(
+        i for i in checks.issues
+        if i.category == "traceability" and "FEAT-001" in i.finding
+        and "no implementing component" in i.finding
+    )
+    assert issue.severity == "high"
+    assert issue.requires_refinement is True
+
+
+def test_uncovered_lower_priority_feature_keeps_existing_non_blocking_behavior():
+    state = _good_design_state()
+    state.features.append(
+        Feature(
+            id="FEAT-003",
+            name="Nice-to-have export",
+            scenario="A shopper exports their order history as CSV.",
+            acceptance_criteria=["CSV export succeeds."],
+            priority="should",
+        )
+    )
+    state.blueprint.addressed_feature_ids.append("FEAT-003")
+
+    checks = run_deterministic_checks(state)
+
+    assert "FEAT-003" in checks.features_without_component
+    issue = next(
+        i for i in checks.issues
+        if i.category == "traceability" and "FEAT-003" in i.finding
+        and "no implementing component" in i.finding
+    )
+    assert issue.severity == "medium"
+    assert issue.requires_refinement is False
+
+
+def test_covered_must_feature_produces_no_uncovered_feature_finding():
+    checks = run_deterministic_checks(_good_design_state())
+
+    assert checks.features_without_component == []
+    assert not any(
+        "no implementing component" in issue.finding for issue in checks.issues
+    )
 
 
 def test_code_assembles_pass_when_every_gate_passes():
@@ -928,6 +995,837 @@ def test_real_adr002_rationale_yields_no_invented_service():
     assert not any(
         "Decouples Service" in issue.finding for issue in checks.issues
     )
+
+
+# --- component/reference canonical identity ---------------------------------
+#
+# Regression for the final run 20260822T222414Z-1788d214 against
+# ecommerce-monolith: the run reached DONE only at the refinement cost cap,
+# with four HIGH findings ("missing User/Product/Order-Payment/Inventory
+# Service") that manual inspection proved were false positives. The final
+# artifacts actually declared all four Component Descriptions, named "User
+# Service (New)", "Product Service (New)", "Order/Payment Service (New)" and
+# "Inventory Service (New)" — the trailing "(New)" display qualifier survived
+# into the component's identity tokens while a bare reference's did not, so
+# the two never matched. Separately, "Order/Payment Service" is ONE declared
+# composite component; the un-widened extraction regex captured only its last
+# slash-joined word ("Payment"), splitting it into a phantom "Payment
+# Service" reference to itself.
+
+
+def test_component_key_folds_new_qualifier_into_bare_identity():
+    from pipeline.review_checks import _component_key
+
+    assert _component_key("User Service (New)") == _component_key("User Service")
+    assert _component_key("Product Service (New)") == _component_key(
+        "Product Service"
+    )
+    assert _component_key("Inventory Service (New)") == _component_key(
+        "Inventory Service"
+    )
+
+
+def test_component_key_folds_legacy_qualifier_into_bare_identity():
+    from pipeline.review_checks import _component_key
+
+    assert _component_key("Django Monolith (Legacy)") == _component_key(
+        "Django Monolith"
+    )
+
+
+def test_composite_slash_name_extracted_as_one_base_not_split():
+    """'Order/Payment Service' must yield ONE base ('Order/Payment'), never a
+    phantom 'Payment'-only reference from splitting on the slash."""
+    from pipeline.review_checks import _extract_service_bases
+
+    bases = _extract_service_bases(
+        "Checkout events are published to the Order/Payment Service."
+    )
+    assert bases == ["Order/Payment"]
+
+
+def _lifecycle_qualified_state():
+    """The final-run shape: four declared components carry a '(New)' display
+    qualifier; every other artifact references them by their bare name."""
+    state = new_run(
+        "Re-architect the ecommerce monolith for seasonal peak traffic."
+    )
+    state.context_record = ContextRecord(
+        project_name="Ecommerce Monolith Modernization",
+        business_goal="Survive seasonal peaks without outages.",
+        summary="brownfield strangler migration of a monolithic shop",
+    )
+    state.features = [
+        Feature(
+            id="FEAT-001",
+            name="Checkout",
+            description=(
+                "A genuinely separate Payment Service must remain "
+                "addressable as its own target service."
+            ),
+            scenario="A customer completes checkout during peak traffic.",
+            acceptance_criteria=["Checkout succeeds under peak load."],
+        ),
+    ]
+    state.blueprint = Blueprint(
+        stakeholder_view="Peak-season shopping keeps working during migration.",
+        technical_view=(
+            "The User Service, Product Service, Order/Payment Service and "
+            "Inventory Service replace the corresponding monolith modules."
+        ),
+        components=[
+            "User Service (New)",
+            "Product Service (New)",
+            "Order/Payment Service (New)",
+            "Inventory Service (New)",
+        ],
+        data_flows=[
+            "The Order/Payment Service publishes CheckoutCompleted to the "
+            "Inventory Service.",
+        ],
+        addressed_feature_ids=["FEAT-001"],
+    )
+    state.adrs = [
+        ADR(
+            id="ADR-001",
+            title="ADR-1: Extract checkout-path services",
+            context=(
+                "The User Service and Product Service publish events "
+                "consumed downstream."
+            ),
+            decision=(
+                "The User Service and Product Service publish domain "
+                "events to the Inventory Service."
+            ),
+            rationale=(
+                "The Order Service and the Payment Service may eventually "
+                "be split for independent scaling."
+            ),
+            alternatives_considered=["Scale the monolith vertically"],
+            positive_consequences=["Extracted capabilities scale independently."],
+            negative_consequences=["Eventual consistency during migration."],
+            related_feature_ids=["FEAT-001"],
+            related_component_names=[
+                "User Service (New)", "Product Service (New)",
+            ],
+        ),
+    ]
+    state.components = [
+        ComponentDescription(
+            id="COMP-001",
+            name="User Service (New)",
+            purpose="Own user accounts after extraction.",
+            description="Implements FEAT-001 and is justified by ADR-001.",
+            related_feature_ids=["FEAT-001"],
+            related_adr_ids=["ADR-001"],
+        ),
+        ComponentDescription(
+            id="COMP-002",
+            name="Product Service (New)",
+            purpose="Own product catalog after extraction.",
+            description="Implements FEAT-001 and is justified by ADR-001.",
+            related_feature_ids=["FEAT-001"],
+            related_adr_ids=["ADR-001"],
+        ),
+        ComponentDescription(
+            id="COMP-003",
+            name="Order/Payment Service (New)",
+            purpose="Own order placement and payment capture together.",
+            description="Implements FEAT-001 and is justified by ADR-001.",
+            related_feature_ids=["FEAT-001"],
+            related_adr_ids=["ADR-001"],
+        ),
+        ComponentDescription(
+            id="COMP-004",
+            name="Inventory Service (New)",
+            purpose="Own inventory availability after extraction.",
+            description="Implements FEAT-001 and is justified by ADR-001.",
+            dependencies=["Order/Payment Service"],
+            related_feature_ids=["FEAT-001"],
+            related_adr_ids=["ADR-001"],
+        ),
+    ]
+    state.stage = Stage.DESIGNING
+    return state
+
+
+def test_bare_reference_to_new_qualified_component_is_not_missing():
+    """Items 1-3: 'User/Product/Inventory Service (New)' each satisfy the
+    bare-name reference the rest of the design actually uses."""
+    checks = run_deterministic_checks(_lifecycle_qualified_state())
+
+    for name in ("User Service", "Product Service", "Inventory Service"):
+        assert name not in checks.unowned_target_services, name
+
+
+def test_declared_composite_satisfies_its_own_bare_reference():
+    """Item 5: the composite component satisfies a bare reference to its
+    own full name, arriving via a Component dependency list (COMP-004
+    depends on "Order/Payment Service" — one of the cross-artifact forms
+    item 8 requires)."""
+    checks = run_deterministic_checks(_lifecycle_qualified_state())
+
+    assert "Order/Payment Service" not in checks.unowned_target_services
+
+
+def test_composite_component_does_not_satisfy_a_split_half_reference():
+    """Item 6: declaring the composite 'Order/Payment Service (New)' must
+    NOT imply that separately-referenced 'Order Service' and 'Payment
+    Service' also exist — both stay reportable, exactly as if no composite
+    had been declared at all."""
+    checks = run_deterministic_checks(_lifecycle_qualified_state())
+
+    assert "Order Service" in checks.unowned_target_services
+    assert "Payment Service" in checks.unowned_target_services
+
+
+def test_separate_payment_service_reference_still_fails_against_composite_only():
+    """Item 7: with only the composite 'Order/Payment Service (New)'
+    declared, an explicit standalone 'Payment Service' reference is a real
+    gap and must still be reported, HIGH and blocking."""
+    checks = run_deterministic_checks(_lifecycle_qualified_state())
+
+    assert "Payment Service" in checks.unowned_target_services
+    assert any(
+        issue.severity == "high" and "Payment Service" in issue.finding
+        for issue in checks.issues
+    )
+
+
+def test_final_run_shape_produces_zero_declared_component_findings():
+    """The fix must make the final-run-style artifact set produce ZERO
+    missing-Component-Description findings for the four defined services —
+    the only remaining unowned references are the genuinely separate
+    'Order Service' / 'Payment Service' (item 6/7), never one of the four
+    declared components."""
+    checks = run_deterministic_checks(_lifecycle_qualified_state())
+
+    assert set(checks.unowned_target_services) == {"Order Service", "Payment Service"}
+
+
+def test_cross_artifact_reference_forms_share_one_canonical_identity():
+    """Item 8: Blueprint data flows (Inventory), Component dependencies
+    (Order/Payment, via COMP-004), and ADR related fields (User, Product)
+    all resolved through the same identity contract — none of the four
+    declared components is reported missing regardless of which artifact
+    referenced it."""
+    checks = run_deterministic_checks(_lifecycle_qualified_state())
+
+    for name in (
+        "User Service", "Product Service", "Order/Payment Service",
+        "Inventory Service",
+    ):
+        assert name not in checks.unowned_target_services, name
+
+
+def test_dangling_services_regression_still_flags_genuinely_missing_services():
+    """Item 9: the pre-existing false-negative regression fixture is
+    unaffected by this fix — genuinely undeclared target services are still
+    reported exactly as before."""
+    checks = run_deterministic_checks(_dangling_services_state())
+
+    assert set(checks.unowned_target_services) == {
+        "Cart Service", "Notification Service", "Inventory Service",
+    }
+
+
+# --- canonical identity reaches ADR/data-flow structured checks -----------
+#
+# Manual review of the previous E2E-blocker repair found `_component_key`
+# wired into target-service ownership only — `_check_traceability`'s
+# `invalid_adr_component_names` and `_check_flow_participants` still compared
+# RAW display strings, so a bare ADR/flow reference to a component declared
+# with a lifecycle qualifier ("User Service (New)") still failed. These
+# fixtures deliberately keep the REFERENCE bare and the COMPONENT qualified —
+# never the reverse — so passing actually proves canonical identity, not
+# coincidental exact-string equality.
+
+
+def _qualified_component_state():
+    state = new_run("Re-architect the ecommerce monolith.")
+    state.context_record = ContextRecord(
+        project_name="Ecommerce Monolith Modernization",
+        business_goal="Survive seasonal peaks without outages.",
+        summary="brownfield strangler migration of a monolithic shop",
+    )
+    state.features = [
+        Feature(
+            id="FEAT-001",
+            name="User accounts",
+            scenario="A customer manages their account during checkout.",
+            acceptance_criteria=["Account changes persist."],
+        ),
+    ]
+    state.blueprint = Blueprint(
+        stakeholder_view="Peak-season shopping keeps working during migration.",
+        technical_view=(
+            "The User Service replaces the legacy monolith's user module."
+        ),
+        components=[
+            "User Service (New)",
+            "Django Monolith (Legacy)",
+            "Inventory Service (New)",
+            "Order/Payment Service (New)",
+        ],
+        data_flows=[
+            # Bare references to qualified components — must resolve.
+            "User Service -> Inventory Service: reserve stock",
+            "Order/Payment Service -> Inventory Service: capture payment",
+            # A genuinely unknown endpoint — must still fail.
+            "Inventory Service -> Ghost Queue: audit log",
+        ],
+        addressed_feature_ids=["FEAT-001"],
+    )
+    state.adrs = [
+        ADR(
+            id="ADR-001",
+            title="ADR-1: Extract user accounts",
+            context="The monolith's user module is a scaling bottleneck.",
+            decision="Extract user accounts into a standalone service.",
+            rationale="Independent scaling for account traffic.",
+            alternatives_considered=["Scale the monolith vertically"],
+            positive_consequences=["Independent scaling"],
+            negative_consequences=["Additional operational complexity"],
+            related_feature_ids=["FEAT-001"],
+            # Bare references to qualified/composite components, PLUS one
+            # genuinely unknown name that must still fail.
+            related_component_names=[
+                "User Service", "Django Monolith", "Order/Payment Service",
+                "Ghost Service",
+            ],
+        ),
+    ]
+    state.components = [
+        ComponentDescription(
+            id="COMP-001",
+            name="User Service (New)",
+            purpose="Own user accounts after extraction.",
+            description="Implements FEAT-001 and is justified by ADR-001.",
+            related_feature_ids=["FEAT-001"],
+            related_adr_ids=["ADR-001"],
+        ),
+        ComponentDescription(
+            id="COMP-002",
+            name="Django Monolith (Legacy)",
+            purpose="Serves capabilities not yet extracted.",
+            description="Implements FEAT-001 and is justified by ADR-001.",
+            related_feature_ids=["FEAT-001"],
+            related_adr_ids=["ADR-001"],
+        ),
+        ComponentDescription(
+            id="COMP-003",
+            name="Inventory Service (New)",
+            purpose="Own inventory availability after extraction.",
+            description="Implements FEAT-001 and is justified by ADR-001.",
+            related_feature_ids=["FEAT-001"],
+            related_adr_ids=["ADR-001"],
+        ),
+        ComponentDescription(
+            id="COMP-004",
+            name="Order/Payment Service (New)",
+            purpose="Own order placement and payment capture together.",
+            description="Implements FEAT-001 and is justified by ADR-001.",
+            related_feature_ids=["FEAT-001"],
+            related_adr_ids=["ADR-001"],
+        ),
+    ]
+    state.stage = Stage.DESIGNING
+    return state
+
+
+def test_bare_adr_reference_resolves_to_qualified_component():
+    """Item 1: ADR bare 'User Service' resolves to Component 'User Service
+    (New)'."""
+    checks = run_deterministic_checks(_qualified_component_state())
+
+    assert "User Service" not in checks.invalid_adr_component_names.get(
+        "ADR-001", []
+    )
+
+
+def test_bare_adr_reference_resolves_to_qualified_legacy_component():
+    """Item 2: ADR bare 'Django Monolith' resolves to 'Django Monolith
+    (Legacy)'."""
+    checks = run_deterministic_checks(_qualified_component_state())
+
+    assert "Django Monolith" not in checks.invalid_adr_component_names.get(
+        "ADR-001", []
+    )
+
+
+def test_unknown_adr_component_name_still_fails():
+    """Item 3: a genuinely unknown ADR component name is still reported —
+    canonical identity resolves real names, it does not stop rejecting
+    fabricated ones."""
+    checks = run_deterministic_checks(_qualified_component_state())
+
+    assert checks.invalid_adr_component_names["ADR-001"] == ["Ghost Service"]
+
+
+def test_bare_flow_endpoint_resolves_to_qualified_component():
+    """Item 4: arrow-flow endpoint 'Inventory Service' resolves to
+    'Inventory Service (New)'."""
+    checks = run_deterministic_checks(_qualified_component_state())
+
+    assert "Inventory Service" not in checks.unresolved_flow_participants
+
+
+def test_unknown_flow_endpoint_still_fails():
+    """Item 5: a genuinely unknown flow endpoint still produces the HIGH
+    unresolved-participant finding."""
+    checks = run_deterministic_checks(_qualified_component_state())
+
+    assert "Ghost Queue" in checks.unresolved_flow_participants
+    assert any(
+        issue.severity == "high" and "Ghost Queue" in issue.finding
+        for issue in checks.issues
+    )
+
+
+def test_composite_protection_reaches_adr_and_flow_resolution_too():
+    """Item 6: the composite-name protection from the previous fix is not
+    limited to target-service ownership — the SAME canonical identity
+    resolves the composite 'Order/Payment Service' bare reference against
+    the declared 'Order/Payment Service (New)' in both the ADR check and the
+    flow-participant check."""
+    checks = run_deterministic_checks(_qualified_component_state())
+
+    assert "Order/Payment Service" not in checks.invalid_adr_component_names.get(
+        "ADR-001", []
+    )
+    assert "Order/Payment Service" not in checks.unresolved_flow_participants
+
+
+# --- deterministic requirement catalog --------------------------------------
+#
+# The Architect's actual contract for `related_requirement_ids` is IDs
+# ("NFR-001"), not raw requirement prose — existing Architect tests already
+# used that shape. `requirement_catalog` is the ONE deterministic ID scheme
+# both the Architect prompt/validation and this Reviewer check read, so the
+# two sides can never silently disagree on what counts as "covered".
+
+
+def test_functional_requirements_get_deterministic_fr_ids():
+    """Item 1."""
+    catalog = requirement_catalog(
+        ContextRecord(
+            project_name="P", business_goal="g",
+            functional_requirements=["Customer registration and login", "Product reviews"],
+        )
+    )
+    assert [(e.id, e.text, e.kind) for e in catalog] == [
+        ("FR-001", "Customer registration and login", "functional"),
+        ("FR-002", "Product reviews", "functional"),
+    ]
+
+
+def test_non_functional_requirements_get_deterministic_nfr_ids():
+    """Item 2."""
+    catalog = requirement_catalog(
+        ContextRecord(
+            project_name="P", business_goal="g",
+            non_functional_requirements=[
+                "Maintain responsive customer-facing interactions",
+                "Handle 50k concurrent users",
+            ],
+        )
+    )
+    assert [(e.id, e.text, e.kind) for e in catalog] == [
+        (
+            "NFR-001", "Maintain responsive customer-facing interactions",
+            "non_functional",
+        ),
+        ("NFR-002", "Handle 50k concurrent users", "non_functional"),
+    ]
+
+
+def test_catalog_ordering_is_stable_and_preserves_context_record_order():
+    """Item 3: FR and NFR numbering are independent per-kind sequences, and
+    calling twice on an unchanged record produces the identical catalog."""
+    context = ContextRecord(
+        project_name="P", business_goal="g",
+        functional_requirements=["B capability", "A capability"],
+        non_functional_requirements=["Z quality", "Y quality"],
+    )
+
+    first = requirement_catalog(context)
+    second = requirement_catalog(context)
+
+    assert [e.id for e in first] == ["FR-001", "FR-002", "NFR-001", "NFR-002"]
+    assert [e.text for e in first] == [
+        "B capability", "A capability", "Z quality", "Y quality",
+    ]
+    assert first == second
+
+
+def test_cloud_budget_compliance_existing_system_get_no_catalog_entry():
+    """Item 4."""
+    catalog = requirement_catalog(
+        ContextRecord(
+            project_name="P", business_goal="g",
+            cloud_provider="AWS", budget="medium",
+            compliance_requirements=["GDPR"],
+            existing_systems=["Legacy monolith"],
+        )
+    )
+    assert catalog == []
+
+
+def test_duplicate_requirement_text_collapses_to_one_canonical_entry():
+    """Documented duplicate-handling: an identical requirement string
+    appearing twice in the record gets ONE canonical entry, never two
+    ambiguous IDs for the same requirement."""
+    catalog = requirement_catalog(
+        ContextRecord(
+            project_name="P", business_goal="g",
+            functional_requirements=["Product reviews", "Product reviews"],
+        )
+    )
+    assert [(e.id, e.text) for e in catalog] == [("FR-001", "Product reviews")]
+
+
+# --- Context requirement -> Feature structured coverage --------------------
+#
+# `_check_constraints` proves the DESIGN addresses a requirement via loose
+# token overlap; that is too loose to prove a requirement was ever MODELED —
+# "Product reviews" can pass on the incidental word "Product" turning up
+# elsewhere while reviews were never built as a feature. This invariant is
+# structural: every explicit functional/non-functional requirement must be
+# covered, by canonical catalog ID or (legacy compatibility) by its exact
+# text, in some Feature's `related_requirement_ids`.
+
+
+def test_all_functional_requirements_mapped_produces_no_finding():
+    """Item 7."""
+    state = new_run("Modernize a monolith.")
+    state.context_record = ContextRecord(
+        project_name="P", business_goal="g",
+        functional_requirements=["Customers complete purchases", "Product reviews"],
+    )
+    state.features = [
+        Feature(
+            id="FEAT-001", name="Checkout", scenario="s",
+            acceptance_criteria=["a"],
+            related_requirement_ids=["Customers complete purchases"],
+        ),
+        Feature(
+            id="FEAT-002", name="Reviews", scenario="s",
+            acceptance_criteria=["a"],
+            related_requirement_ids=["Product reviews"],
+        ),
+    ]
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.requirements_without_feature == []
+    assert not any(
+        "related_requirement_ids" in issue.finding for issue in checks.issues
+    )
+
+
+def test_all_non_functional_requirements_mapped_produces_no_finding():
+    """Item 8."""
+    state = new_run("Modernize a monolith.")
+    state.context_record = ContextRecord(
+        project_name="P", business_goal="g",
+        non_functional_requirements=[
+            "Handle 50k concurrent users",
+            "Maintain responsive customer-facing interactions",
+        ],
+    )
+    state.features = [
+        Feature(
+            id="FEAT-001", name="Scale checkout", scenario="s",
+            acceptance_criteria=["a"],
+            related_requirement_ids=[
+                "Handle 50k concurrent users",
+                "Maintain responsive customer-facing interactions",
+            ],
+        ),
+    ]
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.requirements_without_feature == []
+    assert not any(
+        "related_requirement_ids" in issue.finding for issue in checks.issues
+    )
+
+
+def test_missing_product_reviews_requirement_is_blocking():
+    """Item 9."""
+    state = new_run("Modernize a monolith.")
+    state.context_record = ContextRecord(
+        project_name="P", business_goal="g",
+        functional_requirements=["Customers complete purchases", "Product reviews"],
+    )
+    state.features = [
+        Feature(
+            id="FEAT-001", name="Checkout", scenario="s",
+            acceptance_criteria=["a"],
+            related_requirement_ids=["Customers complete purchases"],
+        ),
+    ]
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.requirements_without_feature == ["FR-002 - Product reviews"]
+    issue = next(
+        i for i in checks.issues if "related_requirement_ids" in i.finding
+    )
+    assert issue.severity == "high"
+    assert issue.requires_refinement is True
+    assert "FR-002" in issue.finding
+    assert "Product reviews" in issue.finding
+
+
+def test_missing_responsive_interactions_nfr_is_blocking():
+    """Item 10."""
+    state = new_run("Modernize a monolith.")
+    state.context_record = ContextRecord(
+        project_name="P", business_goal="g",
+        non_functional_requirements=[
+            "Maintain responsive customer-facing interactions",
+        ],
+    )
+    state.features = [
+        Feature(id="FEAT-001", name="Checkout", scenario="s", acceptance_criteria=["a"]),
+    ]
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.requirements_without_feature == [
+        "NFR-001 - Maintain responsive customer-facing interactions"
+    ]
+    issue = next(
+        i for i in checks.issues if "related_requirement_ids" in i.finding
+    )
+    assert issue.severity == "high"
+    assert issue.requires_refinement is True
+    assert "NFR-001" in issue.finding
+    assert "Maintain responsive customer-facing interactions" in issue.finding
+
+
+def test_incidental_word_match_does_not_satisfy_structured_coverage():
+    """Item 11: 'Product' turning up all over the design text must not
+    satisfy the STRUCTURED invariant for the requirement 'Product reviews' —
+    only an exact `related_requirement_ids` entry does. (The loose
+    constraint-text matcher elsewhere IS satisfied by this fixture, which is
+    exactly the false-coverage gap this check exists to close.)"""
+    state = new_run("Modernize a monolith.")
+    state.context_record = ContextRecord(
+        project_name="P", business_goal="g",
+        functional_requirements=["Product reviews"],
+    )
+    state.features = [
+        Feature(
+            id="FEAT-001", name="Product catalog", scenario="s",
+            acceptance_criteria=["a"],
+            description="Manages the Product catalog end to end.",
+        ),
+    ]
+    state.blueprint = Blueprint(
+        stakeholder_view="Product browsing stays fast.",
+        technical_view="A Product Service serves the Product catalog.",
+        components=["Product Service"],
+        addressed_feature_ids=["FEAT-001"],
+    )
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.requirements_without_feature == ["FR-001 - Product reviews"]
+    # The loose token-overlap check DOES false-pass here — the reason this
+    # structural invariant is necessary, not redundant with it.
+    assert checks.constraints_covered.get("functional") is True
+
+
+def test_cloud_budget_compliance_fields_are_not_required_as_feature_mappings():
+    """Item 12: design constraints, not features — never required in any
+    Feature's `related_requirement_ids`."""
+    state = new_run("Modernize a monolith.")
+    state.context_record = ContextRecord(
+        project_name="P", business_goal="g",
+        cloud_provider="AWS", budget="medium",
+        compliance_requirements=["GDPR"],
+        existing_systems=["Legacy monolith"],
+    )
+    state.features = [
+        Feature(id="FEAT-001", name="Checkout", scenario="s", acceptance_criteria=["a"]),
+    ]
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.requirements_without_feature == []
+
+
+def test_reviewer_does_not_invent_or_mutate_requirement_mappings():
+    """Item 13: the Reviewer reports the gap and never writes a mapping."""
+    state = new_run("Modernize a monolith.")
+    state.context_record = ContextRecord(
+        project_name="P", business_goal="g",
+        functional_requirements=["Product reviews"],
+    )
+    state.features = [
+        Feature(id="FEAT-001", name="Checkout", scenario="s", acceptance_criteria=["a"]),
+    ]
+    before = [feature.model_copy(deep=True) for feature in state.features]
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.requirements_without_feature == ["FR-001 - Product reviews"]
+    assert state.features == before
+    assert state.features[0].related_requirement_ids == []
+
+
+# --- Reviewer aligned with the catalog contract -----------------------------
+#
+# Manual review of the requirement->Feature micro-fix found the Reviewer's
+# raw-text-only rule was incompatible with the Architect's actual contract
+# (IDs, not prose) and, worse, unrepairable: refinement reuses `state.features`
+# verbatim and phase 2 cannot edit Feature objects, so a HIGH finding for a
+# missing mapping could never be closed by the refine loop. These tests pin
+# the Reviewer's half of the fix: catalog-ID coverage, legacy raw-text
+# compatibility, genuine gaps still caught, and the score/diagnostic
+# consequences of a gap that does still reach it (persisted/legacy states).
+
+
+def test_reviewer_accepts_canonical_catalog_ids():
+    """Item 15."""
+    state = new_run("Modernize a monolith.")
+    state.context_record = ContextRecord(
+        project_name="P", business_goal="g",
+        functional_requirements=["Customer registration and login"],
+        non_functional_requirements=["Maintain responsive customer-facing interactions"],
+    )
+    state.features = [
+        Feature(
+            id="FEAT-001", name="Accounts", scenario="s", acceptance_criteria=["a"],
+            related_requirement_ids=["FR-001", "NFR-001"],
+        ),
+    ]
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.requirements_without_feature == []
+
+
+def test_reviewer_still_accepts_exact_legacy_raw_requirement_text():
+    """Item 16: persisted/legacy/directly-built states written before the
+    catalog contract existed must not regress."""
+    state = new_run("Modernize a monolith.")
+    state.context_record = ContextRecord(
+        project_name="P", business_goal="g",
+        functional_requirements=["Customer registration and login"],
+    )
+    state.features = [
+        Feature(
+            id="FEAT-001", name="Accounts", scenario="s", acceptance_criteria=["a"],
+            related_requirement_ids=["Customer registration and login"],
+        ),
+    ]
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.requirements_without_feature == []
+
+
+def test_reviewer_still_rejects_a_genuinely_missing_mapping():
+    """Item 17."""
+    state = new_run("Modernize a monolith.")
+    state.context_record = ContextRecord(
+        project_name="P", business_goal="g",
+        functional_requirements=["Customer registration and login"],
+    )
+    state.features = [
+        Feature(id="FEAT-001", name="Accounts", scenario="s", acceptance_criteria=["a"]),
+    ]
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.requirements_without_feature == [
+        "FR-001 - Customer registration and login"
+    ]
+
+
+def test_missing_mapping_lowers_deterministic_traceability_below_full_score():
+    """Item 18: closes the score/finding inconsistency — a HIGH traceability
+    finding for a missing requirement mapping can no longer coexist with a
+    2/2 deterministic traceability score."""
+    state = new_run("Modernize a monolith.")
+    state.context_record = ContextRecord(
+        project_name="P", business_goal="g",
+        functional_requirements=["Customer registration and login"],
+    )
+    state.features = [
+        Feature(id="FEAT-001", name="Accounts", scenario="s", acceptance_criteria=["a"]),
+    ]
+    state.blueprint = Blueprint(
+        stakeholder_view="sv", technical_view="tv",
+        components=["Accounts Service"], addressed_feature_ids=["FEAT-001"],
+    )
+    state.adrs = [
+        ADR(
+            id="ADR-001", title="ADR-1: Use a standalone accounts service",
+            context="c", decision="d", rationale="r",
+            related_feature_ids=["FEAT-001"],
+            related_component_names=["Accounts Service"],
+        ),
+    ]
+    state.components = [
+        ComponentDescription(
+            id="COMP-001", name="Accounts Service", purpose="p", description="d",
+            related_feature_ids=["FEAT-001"], related_adr_ids=["ADR-001"],
+        ),
+    ]
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.requirements_without_feature
+    assert any(
+        issue.severity == "high" and "related_requirement_ids" in issue.finding
+        for issue in checks.issues
+    )
+    assert checks.score_traceability < 2
+
+
+def test_missing_mapping_diagnostic_shows_id_and_exact_text():
+    """Item 19."""
+    state = new_run("Modernize a monolith.")
+    state.context_record = ContextRecord(
+        project_name="P", business_goal="g",
+        functional_requirements=["Product reviews"],
+    )
+    state.features = [
+        Feature(id="FEAT-001", name="Checkout", scenario="s", acceptance_criteria=["a"]),
+    ]
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.requirements_without_feature == ["FR-001 - Product reviews"]
+    issue = next(
+        i for i in checks.issues if "related_requirement_ids" in i.finding
+    )
+    assert "FR-001" in issue.finding
+    assert "Product reviews" in issue.finding
+
+
+def test_reviewer_check_never_mutates_feature_mappings():
+    """Item 20: pins the check function itself (not only the higher-level
+    behaviour already pinned above) never writes a mapping, canonical or
+    otherwise, onto any Feature it inspects."""
+    state = new_run("Modernize a monolith.")
+    state.context_record = ContextRecord(
+        project_name="P", business_goal="g",
+        functional_requirements=["Customer registration and login"],
+    )
+    state.features = [
+        Feature(id="FEAT-001", name="Accounts", scenario="s", acceptance_criteria=["a"]),
+    ]
+    before = [feature.model_copy(deep=True) for feature in state.features]
+
+    run_deterministic_checks(state)
+
+    assert state.features == before
 
 
 # --- refinement-instruction assembly --------------------------------------

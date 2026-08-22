@@ -55,7 +55,7 @@ def _fake_architect_llm(
                     name="Handle peak load",
                     description="Support high traffic during sale events.",
                     scenario="The platform remains responsive for 50k peak users.",
-                    related_requirement_ids=["NFR-001"],
+                    related_requirement_ids=["FR-001", "NFR-001"],
                     priority="must",
                     acceptance_criteria=[
                         "The platform stays available under peak load.",
@@ -211,6 +211,164 @@ def test_architect_prompts_include_rag_and_repository_context():
     assert "Legacy monolith" in design_prompt
     assert "Architecture KB" in design_prompt
     assert "Event-driven microservices" in design_prompt
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Requirement-catalog contract: no repairable-but-unrepairable Reviewer
+# deadlock (final Reviewer micro-fix)
+#
+# The old Reviewer rule required a Feature's `related_requirement_ids` to
+# name a Context Record requirement VERBATIM, but the Architect's own
+# contract (and existing Architect tests) already used IDs like "NFR-001" —
+# a correct Architect output could never satisfy that rule. Worse: refine
+# reuses `state.features` and phase 2 cannot edit Feature objects, so a
+# Reviewer HIGH for a missing mapping would be a PERMANENT blocker no refine
+# pass could close. The fix is fail-fast: the Architect validates its own
+# phase-1 output against a deterministic requirement catalog BEFORE phase 2
+# ever runs, so a bad mapping fails the run once, with an actionable error,
+# instead of reaching the Reviewer as an unrepairable finding.
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_feature_prompt_includes_the_requirement_catalog():
+    """Item 5. `_base_state()` states functional=["Process customer
+    orders"], non_functional=["Support 50k peak users"]."""
+    prompt = arch._build_feature_prompt(_base_state())
+
+    assert "<requirement_catalog>" in prompt
+    assert "FR-001: Process customer orders" in prompt
+    assert "NFR-001: Support 50k peak users" in prompt
+
+
+def test_normalize_accepts_canonical_catalog_ids_unchanged():
+    """Item 6."""
+    features = [
+        Feature(
+            id="FEAT-001", name="Orders", scenario="s",
+            related_requirement_ids=["FR-001", "NFR-001"],
+        ),
+    ]
+
+    normalized = arch._normalize_and_validate_requirement_coverage(
+        _base_state(), features
+    )
+
+    assert normalized[0].related_requirement_ids == ["FR-001", "NFR-001"]
+
+
+def test_normalize_converts_exact_raw_text_to_canonical_id():
+    """Item 7: robustness for prompt behaviour predating the catalog
+    contract — never fuzzy, only an exact (whitespace-normalised) match."""
+    features = [
+        Feature(
+            id="FEAT-001", name="Orders", scenario="s",
+            related_requirement_ids=[
+                "Process customer orders", "Support 50k peak users",
+            ],
+        ),
+    ]
+
+    normalized = arch._normalize_and_validate_requirement_coverage(
+        _base_state(), features
+    )
+
+    assert normalized[0].related_requirement_ids == ["FR-001", "NFR-001"]
+    # The original Feature is untouched — normalization copies, not mutates.
+    assert features[0].related_requirement_ids == [
+        "Process customer orders", "Support 50k peak users",
+    ]
+
+
+def test_normalize_rejects_unknown_synthetic_requirement_id():
+    """Item 8."""
+    features = [
+        Feature(
+            id="FEAT-001", name="Orders", scenario="s",
+            related_requirement_ids=["REQ-1", "FR-001", "NFR-001"],
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="REQ-1"):
+        arch._normalize_and_validate_requirement_coverage(_base_state(), features)
+
+
+def _incomplete_coverage_llm(calls: list[str], missing: str):
+    """A phase-1 stub covering only ONE of the two catalog entries `_base_state`
+    declares. Phase 2 must never be reached — it raises if it is, so a passing
+    test proves the fail-fast path, not merely a call-count assertion after
+    the fact."""
+
+    def stub(state, prompt, *, system="", model="", response_schema=None):
+        calls.append("phase1" if response_schema is arch.FeatureDesign else "phase2")
+        if response_schema is arch.FeatureDesign:
+            covered = ["NFR-001"] if missing == "functional" else ["FR-001"]
+            return (arch.FeatureDesign(features=[
+                Feature(
+                    id="FEAT-001",
+                    name="Handle peak load",
+                    scenario="The platform remains responsive for 50k peak users.",
+                    related_requirement_ids=covered,
+                    acceptance_criteria=["The platform stays available."],
+                )
+            ]), tc.fake_usage())
+        raise AssertionError(
+            "phase 2 must never be called when phase-1 coverage is invalid"
+        )
+
+    return stub
+
+
+def test_omitted_functional_requirement_fails_before_phase_two():
+    """Items 9, 11."""
+    calls: list[str] = []
+    arch.llm_call = _incomplete_coverage_llm(calls, missing="functional")
+
+    output = arch.architect_node(_base_state())
+
+    assert output["stage"] is Stage.FAILED
+    assert calls == ["phase1"]
+    assert output["errors"]
+    assert "FR-001" in output["errors"][0]
+    assert "Process customer orders" in output["errors"][0]
+
+
+def test_omitted_non_functional_requirement_fails_before_phase_two():
+    """Item 10."""
+    calls: list[str] = []
+    arch.llm_call = _incomplete_coverage_llm(calls, missing="non_functional")
+
+    output = arch.architect_node(_base_state())
+
+    assert output["stage"] is Stage.FAILED
+    assert calls == ["phase1"]
+    assert "NFR-001" in output["errors"][0]
+    assert "Support 50k peak users" in output["errors"][0]
+
+
+def test_fail_fast_preserves_phase_one_token_accounting():
+    """Item 12: the already-billed phase-1 tokens survive the validation
+    failure — the same `attach_usage`/`@node` guarantee every other Architect
+    exception already gets, not a new mechanism."""
+    calls: list[str] = []
+    arch.llm_call = _incomplete_coverage_llm(calls, missing="functional")
+
+    output = arch.architect_node(_base_state())
+
+    assert output["input_tokens"] == tc.FAKE_INPUT_TOKENS
+    assert output["output_tokens"] == tc.FAKE_OUTPUT_TOKENS
+    step = output["history"][0]
+    assert step.input_tokens == output["input_tokens"]
+    assert step.output_tokens == output["output_tokens"]
+
+
+# Items 13 and 14 (a valid initial design still makes exactly two calls; a
+# normal refine pass still makes exactly one phase-2 call and skips phase 1)
+# are already covered by the pre-existing convergence regression tests below
+# — `test_initial_design_still_runs_both_phases` and
+# `test_refine_pass_reuses_features_and_skips_phase_one` — which still pass
+# unchanged after this fix (the requirement-catalog validation runs only on
+# the phase-1-executed path and does not add or remove any LLM call).
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # Refine passes reuse the feature set instead of re-deriving it
@@ -447,3 +605,43 @@ def test_the_revision_rules_reach_the_model():
     # unconditionally would stop the loop ever fixing a wrong architecture.
     assert "yields to the findings" in arch.ARCHITECTURE_SYSTEM_PROMPT
     assert "revision_note" in arch.ARCHITECTURE_SYSTEM_PROMPT
+
+
+# --- Architect output discipline (final run 20260822T222414Z-1788d214) -----
+#
+# The final run generated unsupported numeric SLOs ("500ms", "sub-second",
+# "Zero request loss") the approved Context Record never stated — it only
+# said "substantially higher peak traffic", "high availability", "responsive
+# interactions", with the exact peak magnitude explicitly unknown — and
+# labelled its pattern "Modular Monolith" while describing extraction of
+# independently deployable services. These are prompt-contract regressions:
+# no new LLM call, just narrow rule additions pinned by asserting they reach
+# the model.
+
+
+def test_requirement_coverage_rule_reaches_the_feature_model():
+    assert "<requirement_catalog>" in arch.FEATURE_SYSTEM_PROMPT
+    assert "must contain ids from that catalog" in arch.FEATURE_SYSTEM_PROMPT.lower()
+    assert "never an invented id" in arch.FEATURE_SYSTEM_PROMPT.lower()
+    assert '"req-1"' in arch.FEATURE_SYSTEM_PROMPT.lower()
+    assert "do not silently omit" in arch.FEATURE_SYSTEM_PROMPT.lower()
+
+
+def test_feature_coverage_rule_reaches_the_architecture_model():
+    assert (
+        "a feature with no\n  implementing component is an incomplete design"
+        in arch.ARCHITECTURE_SYSTEM_PROMPT.lower()
+    )
+
+
+def test_no_invented_quantitative_targets_rule_reaches_the_model():
+    assert "QUANTITATIVE TARGETS" in arch.ARCHITECTURE_SYSTEM_PROMPT
+    assert "500ms" in arch.ARCHITECTURE_SYSTEM_PROMPT
+    assert "zero request loss" in arch.ARCHITECTURE_SYSTEM_PROMPT.lower()
+    assert "measured or agreed later" in arch.ARCHITECTURE_SYSTEM_PROMPT
+
+
+def test_pattern_name_consistency_rule_reaches_the_model():
+    assert "PATTERN-NAME CONSISTENCY" in arch.ARCHITECTURE_SYSTEM_PROMPT
+    assert '"Modular Monolith"' in arch.ARCHITECTURE_SYSTEM_PROMPT
+    assert "SAME architectural\n  direction" in arch.ARCHITECTURE_SYSTEM_PROMPT

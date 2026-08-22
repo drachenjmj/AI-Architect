@@ -167,7 +167,7 @@ def _architect_response(
                     scenario=(
                         "The webshop remains responsive for 50k peak users."
                     ),
-                    related_requirement_ids=["NFR-001"],
+                    related_requirement_ids=["FR-001", "NFR-001"],
                     priority="must",
                     acceptance_criteria=[
                         "The webshop remains available during peak traffic.",

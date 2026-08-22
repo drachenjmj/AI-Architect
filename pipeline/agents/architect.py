@@ -133,7 +133,16 @@ Derive concrete, testable system features from the supplied Context Record.
 Rules:
 - Do not design technical components yet.
 - Every feature must have a stable ID in the format FEAT-001, FEAT-002, etc.
-- Every feature must trace to one or more requirement IDs.
+- The supplied <requirement_catalog> is the ONLY valid source of requirement
+  IDs. `related_requirement_ids` MUST contain IDs from that catalog exactly
+  as shown (e.g. "FR-001", "NFR-002") — never an invented ID, and never a
+  copied label such as "REQ-1" or the requirement's own prose text.
+- Every requirement in <requirement_catalog> must be covered by at least one
+  feature's related_requirement_ids before you return. Check the full
+  catalog before returning — do not silently omit an entry (for example
+  "Product reviews") just because it is smaller than the others.
+- One feature may cover multiple requirement IDs, and one requirement may be
+  covered by multiple features.
 - Use priority values only from: must, should, could.
 - Each feature needs a concrete scenario and observable acceptance criteria.
 - Do not invent requirements that are unsupported by the context.
@@ -183,6 +192,28 @@ SOURCE PROVENANCE (strict):
   and must not dress that reasoning up as a cited one.
 - Invalid source references are removed deterministically after you return;
   a removed reference never becomes evidence.
+
+QUANTITATIVE TARGETS (strict):
+- Do not invent numeric SLOs, throughput figures, latency budgets (e.g.
+  "500ms", "sub-second"), availability percentages, or absolute guarantees
+  such as "zero request loss" or "zero downtime" unless the approved
+  Context Record or supplied evidence states that number explicitly.
+- When the Context Record gives only a qualitative signal (for example
+  "substantially higher peak traffic", "high availability", "responsive
+  interactions", with the exact magnitude stated as unknown), write
+  qualitative acceptance criteria or state explicitly that the target must
+  be measured or agreed later. A precise-sounding fabricated figure is
+  worse than an honest qualitative one.
+
+PATTERN-NAME CONSISTENCY (strict):
+- The Blueprint's `selected_pattern` label and the technical view,
+  components, and migration steps must all describe the SAME architectural
+  direction. Do not label the pattern "Modular Monolith" while the
+  technical view or components describe extracting independently
+  deployable services, or label it a services/microservices pattern while
+  keeping everything inside one deployable monolith. If the design is a
+  staged migration (e.g. Strangler Fig) from one to the other, the pattern
+  label must name the transition, not just its starting or ending state.
 
 SERVICE-BOUNDARY DISCIPLINE (brownfield especially):
 - Existing application modules, packages and apps are evidence about
@@ -294,6 +325,19 @@ DATA-FLOW FIDELITY (Blueprint `data_flows`):
 """.strip()
 
 
+def _requirement_catalog_block(state: ArchitectState) -> str:
+    """Render `<requirement_catalog>` — the ONE deterministic ID scheme the
+    Architect prompt shows and the writer boundary validates output against
+    (see `_normalize_and_validate_requirement_coverage`), reusing
+    `review_checks.requirement_catalog` rather than re-deriving IDs here."""
+
+    from pipeline.review_checks import requirement_catalog
+
+    catalog = requirement_catalog(state.context_record)
+    lines = "\n".join(f"{entry.id}: {entry.text}" for entry in catalog)
+    return f"<requirement_catalog>\n{lines}\n</requirement_catalog>"
+
+
 def _build_feature_prompt(state: ArchitectState) -> str:
     if state.context_record is None:
         raise ValueError("Architect requires a Context Record before feature design.")
@@ -303,8 +347,93 @@ def _build_feature_prompt(state: ArchitectState) -> str:
 {state.context_record.model_dump_json(indent=2)}
 </context_record>
 
-Derive the complete feature set before any architecture is designed.
+{_requirement_catalog_block(state)}
+
+Derive the complete feature set before any architecture is designed. Map
+every <requirement_catalog> entry to at least one feature's
+related_requirement_ids, using ONLY the IDs shown there.
 """.strip()
+
+
+def _normalize_and_validate_requirement_coverage(
+    state: ArchitectState, features: list[Feature]
+) -> list[Feature]:
+    """Normalize phase-1 `related_requirement_ids` against the deterministic
+    requirement catalog and validate full coverage — BEFORE phase 2 ever
+    runs. Pure; `features` is copied, never mutated.
+
+    WHY THIS IS FAIL-FAST, NOT A REVIEWER REPAIR TASK: a refine pass reuses
+    `state.features` verbatim and never re-runs phase 1, and phase 2 cannot
+    create or edit Feature objects at all. So a bad requirement mapping that
+    reached the Reviewer as a finding would be a PERMANENT, unrepairable
+    blocker — the refine loop has no move that closes it. Catching it here,
+    before phase 2 is even called, means the run fails once with an
+    actionable error instead of looping forever on a gap it can never fix.
+
+    Compatibility normalization: a value already equal to a catalog ID is
+    kept as-is; a value equal (whitespace-normalised) to a catalog entry's
+    exact TEXT is converted to that entry's ID — robustness for prompt
+    behaviour before this catalog contract existed. No fuzzy matching, no
+    inference from feature prose: anything else is left untouched and
+    counted as unknown below.
+
+    Raises ValueError listing every unknown ID referenced and every catalog
+    requirement no feature covers, so the error is actionable on its own.
+    """
+
+    from pipeline.review_checks import requirement_catalog
+
+    catalog = requirement_catalog(state.context_record)
+    if not catalog:
+        return features
+
+    id_by_text = {entry.text: entry.id for entry in catalog}
+    catalog_ids = {entry.id for entry in catalog}
+
+    normalized: list[Feature] = []
+    unknown: set[str] = set()
+    for feature in features:
+        new_ids: list[str] = []
+        for value in feature.related_requirement_ids:
+            stripped = value.strip()
+            if not stripped:
+                continue
+            if stripped in catalog_ids:
+                new_ids.append(stripped)
+            elif stripped in id_by_text:
+                new_ids.append(id_by_text[stripped])
+            else:
+                new_ids.append(stripped)
+                unknown.add(stripped)
+        if new_ids != feature.related_requirement_ids:
+            feature = feature.model_copy(update={"related_requirement_ids": new_ids})
+        normalized.append(feature)
+
+    covered_ids = {
+        value
+        for feature in normalized
+        for value in feature.related_requirement_ids
+        if value in catalog_ids
+    }
+    missing = [entry for entry in catalog if entry.id not in covered_ids]
+
+    if unknown or missing:
+        problems: list[str] = []
+        if missing:
+            problems.append(
+                "uncovered requirement(s): "
+                + ", ".join(f"{entry.id} - {entry.text}" for entry in missing)
+            )
+        if unknown:
+            problems.append(
+                "unknown requirement ID(s) referenced: " + ", ".join(sorted(unknown))
+            )
+        raise ValueError(
+            "Architect phase-1 requirement-catalog coverage is invalid: "
+            + "; ".join(problems)
+        )
+
+    return normalized
 
 
 def _build_architecture_prompt(
@@ -726,6 +855,11 @@ def architect_node(state: ArchitectState) -> dict:
             if not feature_result.features:
                 raise ValueError("Architect produced no features.")
             features = feature_result.features
+
+            # FAIL FAST, BEFORE PHASE 2: see
+            # `_normalize_and_validate_requirement_coverage` for why a bad
+            # requirement mapping must never reach the Reviewer at all.
+            features = _normalize_and_validate_requirement_coverage(state, features)
 
         # Phase 2 — architecture derived from those features
         design_result: ArchitectureDesign
