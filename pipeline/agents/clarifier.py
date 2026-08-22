@@ -22,9 +22,22 @@ THE ASSUME-VS-ASK RULE (the core invariant, enforced by the system prompt)
 --------------------------------------------------------------------------
 Every gap is one of two kinds:
   * architecture-critical (would change the design: brownfield/greenfield,
-    scale/users, compliance, cloud, budget, availability) → NEVER assume → ask.
-  * low-stakes / safely inferable → make a LABELLED assumption a human can veto.
-Never SILENTLY assume, and never assume anything architecture-critical.
+    scale/users, compliance, cloud, budget, availability) → NEVER assume → ask,
+    unless the ask cap is already spent (see ASK ONCE, THEN ASSUME below), in
+    which case the fact is left UNKNOWN and CODE — never the model — writes a
+    labelled "unresolved" entry a human can see.
+  * low-stakes / safely inferable → persisted ONLY when the entire line
+    positively matches one of the three structurally safe categories
+    (`_SAFE_ASSUMPTION_PATTERNS`: display/UI-language metadata,
+    non-technical project naming, stakeholder-label normalization), and
+    then labelled with `CLARIFIER_LABEL` so a human can strike it. A
+    negative keyword blacklist can never enumerate every future
+    architecture decision, so model prose that matches none of the safe
+    shapes is dropped rather than sanitized after the fact. Everything
+    else non-critical is simply left EMPTY, and an empty, non-critical
+    field never becomes a question either.
+Never silently turn an unknown into a fabricated fact, critical or not — an
+unresolved gap stays visibly unresolved instead of being narrated away.
 
 THE CONTEXT-LOCK GATE (where the veto in that sentence finally happens)
 -----------------------------------------------------------------------
@@ -76,12 +89,14 @@ made the veto the most expensive button in the app.
 ASK ONCE, THEN ASSUME
 ---------------------
 After the first lock the clarifier LOSES the power to pause with questions
-(`_can_ask`). On a re-judge, a critical gap becomes a labelled assumption plus
-an `open_questions` entry instead of a new round of questions. This is not a
+(`_can_ask`). On a re-judge, a critical gap becomes a code-written, labelled
+"unresolved" entry in `assumptions` plus a matching `open_questions` line —
+never a guessed value — instead of a new round of questions. This is not a
 weakening of the invariant: the invariant was never "always ask", it was "never
-assume SILENTLY", and a gap written into a record that a human is at that
-moment looking at is the opposite of silent. Enforced in code, because a rule
-that lives only in a prompt is a request, not an invariant.
+turn an unknown into a fact", and a gap written into a record that a human is
+at that moment looking at, still marked unknown, is the opposite of silent.
+Enforced in code, because a rule that lives only in a prompt is a request, not
+an invariant.
 
 It also contains a known clarifier bug for free: the model can report
 `missing_critical` while returning NO `questions`, which used to park the run at
@@ -90,6 +105,7 @@ no question to ask, so the gap is absorbed the same way and the run continues.
 """
 from __future__ import annotations
 
+import re
 from typing import Literal, Sequence
 
 from pipeline.agents.base import make_step, node
@@ -97,7 +113,9 @@ from pipeline.llm import LLMUsage, attach_usage, llm_call
 from pipeline.state import (
     AdvisoryTurn,
     ArchitectState,
+    CapturedContext,
     ClarificationResult,
+    ClarifyingQuestion,
     ContextEdits,
     ContextRecord,
     PendingDecision,
@@ -134,15 +152,264 @@ MAX_ASK_ROUNDS = 3
 # `_CLARIFIER_BASE` below, and the two ARE capable of drifting apart — one is
 # prose for a model, one is data for a router. They are kept adjacent in this
 # file for exactly that reason: change one, read the other.
+#
+# STABLE ORDER MATTERS: this tuple's order IS the order gaps are asked in and
+# the order `missing_critical_slots` returns them, so re-ordering it is a
+# product-visible change, not a refactor.
 CRITICAL_RECORD_FIELDS: tuple[str, ...] = (
     "business_goal",
     "problem_statement",
+    "functional_requirements",      # what the system must actually do
     "non_functional_requirements",  # scale, availability, performance targets
     "cloud_provider",
     "budget",
     "compliance_requirements",
     "existing_systems",             # brownfield vs greenfield
 )
+
+# Human-readable label per critical field — used in the labelled assumption /
+# open-question text a person actually reads, so a veto list says "compliance
+# requirements" rather than a raw Python attribute name.
+_CRITICAL_SLOT_LABELS: dict[str, str] = {
+    "business_goal": "business goal",
+    "problem_statement": "problem statement",
+    "functional_requirements": "functional scope",
+    "non_functional_requirements": "scale/availability/performance targets",
+    "cloud_provider": "cloud or hosting preference",
+    "budget": "budget or cost constraint",
+    "compliance_requirements": "compliance/regulatory requirements",
+    "existing_systems": "existing system details",
+}
+
+# Deterministic question text per critical field — see `missing_critical_slots`.
+# THE model no longer decides what is critical or writes the question that
+# gets asked about it; it only extracts facts. A fixed template guarantees
+# every code-computed gap has something to ask, in stable wording, and closes
+# the known bug where the model reported `missing_critical` with no matching
+# `questions` entry (see the module docstring).
+_CRITICAL_SLOT_QUESTIONS: dict[str, ClarifyingQuestion] = {
+    "business_goal": ClarifyingQuestion(
+        question="What business goal or outcome should this system support?",
+        why_needed="Everything the architecture optimises for follows from this.",
+    ),
+    "problem_statement": ClarifyingQuestion(
+        question="What current problem or limitation are you trying to fix?",
+        why_needed="Without a concrete problem, the design has nothing to improve on.",
+    ),
+    "functional_requirements": ClarifyingQuestion(
+        question="What are the core capabilities the system must provide?",
+        why_needed="Defines the scope the architecture has to cover.",
+    ),
+    "non_functional_requirements": ClarifyingQuestion(
+        question="What scale, availability, or performance targets does this need to meet?",
+        why_needed="Scale and availability targets materially change the architecture.",
+    ),
+    "cloud_provider": ClarifyingQuestion(
+        question="Is there a required or preferred cloud provider (or on-prem), or is that open?",
+        why_needed="The hosting environment shapes the whole deployment model.",
+    ),
+    "budget": ClarifyingQuestion(
+        question="Is there a budget level or cost constraint the design should stay within?",
+        why_needed="Cost constraints change which technologies and services are viable.",
+    ),
+    "compliance_requirements": ClarifyingQuestion(
+        question=(
+            "Are there regulatory, security, or compliance requirements "
+            "(e.g. GDPR, HIPAA, PCI-DSS) this system must meet?"
+        ),
+        why_needed="Compliance requirements can force specific data-handling and infrastructure choices.",
+    ),
+    "existing_systems": ClarifyingQuestion(
+        question=(
+            "What does the existing system look like — its stack, structure, "
+            "and what should be kept vs. replaced?"
+        ),
+        why_needed="A brownfield redesign has to account for what already exists.",
+    ),
+}
+
+# A field is conditionally critical when relevance is decided by a signal
+# code can check WITHOUT judging content — never by scanning the prompt for
+# meaning. `business_goal`, `problem_statement` and `functional_requirements`
+# are the ONLY fields that stay unconditionally critical: virtually every real
+# design needs a goal, a problem to solve, and a scope. Everything else in
+# `CRITICAL_RECORD_FIELDS` — scale/availability targets, hosting, budget,
+# compliance, existing-system detail — genuinely does not apply to every
+# request (a small greenfield internal tool has no scale target worth naming
+# and no compliance regime), so forcing those questions on every project was
+# exactly the "ask every architecture field on every project" behaviour
+# section 2 of the hardening review exists to stop.
+#
+# Each conditional field is gated by a small, FIXED, literal vocabulary — not
+# a rules engine: it never grows a new category on its own, it is checked
+# against `_signal_text` (the raw prompt plus any clarification answers so
+# far — an answer can make a dimension relevant after the first pass), and it
+# never extracts or invents content, only gates whether a field is asked
+# about at all.
+#
+#   * `existing_systems` — a repo URL is the SAME signal the orchestrator
+#     already uses to decide brownfield vs greenfield (see repo_ingestor),
+#     reused here rather than re-derived; absent a repo, brownfield/
+#     modernization/legacy/migration wording is the fallback signal.
+#   * `compliance_requirements` — a regulated-domain/sensitive-data allowlist.
+#   * `non_functional_requirements` — scale/performance/availability wording.
+#   * `cloud_provider` — hosting/cloud-provider wording.
+#   * `budget` — cost/budget wording.
+_COMPLIANCE_SIGNAL_TERMS = frozenset({
+    "health", "medical", "clinical", "patient", "hipaa",
+    "financial", "bank", "banking", "payment card", "pci",
+    "gdpr", "personal data", "pii", "privacy",
+    "government", "insurance", "regulated", "regulation", "compliance",
+})
+
+_NFR_SIGNAL_TERMS = frozenset({
+    "scale", "scalability", "scalable", "performance", "latency",
+    "throughput", "availability", "reliability", "sla", "concurrency",
+    "peak load", "downtime", "uptime",
+})
+
+_CLOUD_SIGNAL_TERMS = frozenset({
+    "cloud", "cloud provider", "on-prem", "on-premise", "on premise", "on prem",
+    "aws", "azure", "gcp", "google cloud", "hosting", "hosted",
+})
+
+_BUDGET_SIGNAL_TERMS = frozenset({
+    "budget", "cost", "costs", "cost-constrained", "price", "pricing",
+})
+
+_BROWNFIELD_SIGNAL_TERMS = frozenset({
+    "brownfield", "modernization", "modernize", "modernise", "legacy",
+    "current system", "monolith", "migration", "migrate",
+})
+
+
+def _term_present(text: str, term: str) -> bool:
+    """Phrase-aware containment: `term` must appear as whole word(s), not as a
+    substring inside an unrelated word. Plain `in` would let a short token
+    like "aws" fire on "flaws" or "draws"; this requires non-alphanumeric (or
+    string-edge) boundaries on both sides, which also works for hyphenated
+    terms like "on-prem" since a hyphen is not alphanumeric either.
+    """
+    return re.search(r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])", text) is not None
+
+
+def _signal_text(state: ArchitectState) -> str:
+    """The text conditional relevance is checked against — the raw prompt plus
+    any clarification answers gathered so far, lowercased. Pure.
+
+    Including answers (not just the original prompt) is deliberate: a field
+    that was not in play on the first pass can become relevant once the human
+    says something in a later answer, and relevance has to see that too.
+    """
+    parts = [state.initial_request.raw_prompt, *state.clarification_answers.values()]
+    return " ".join(parts).lower()
+
+
+def _slot_is_relevant(field: str, state: ArchitectState) -> bool:
+    """Is this critical field even in play for this request? Pure, code-owned.
+
+    Deliberately checks STATE SIGNALS (a URL being set, fixed vocabulary
+    membership), never free-form semantic judgment — that is what keeps this
+    a lookup rather than a rules engine.
+    """
+    if field == "existing_systems":
+        if state.initial_request.repo_url.strip():
+            return True
+        return any(term in _signal_text(state) for term in _BROWNFIELD_SIGNAL_TERMS)
+    if field == "compliance_requirements":
+        return any(term in _signal_text(state) for term in _COMPLIANCE_SIGNAL_TERMS)
+    if field == "non_functional_requirements":
+        return any(term in _signal_text(state) for term in _NFR_SIGNAL_TERMS)
+    if field == "cloud_provider":
+        # Phrase-aware: a short token like "aws" or "gcp" must not fire on an
+        # unrelated word ("flaws", "draws"), and a generic "provider" was
+        # removed from `_CLOUD_SIGNAL_TERMS` entirely — "payment provider" and
+        # "identity provider" are real phrases with nothing to do with
+        # hosting, and `cloud_provider` must not go critical on either.
+        text = _signal_text(state)
+        return any(_term_present(text, term) for term in _CLOUD_SIGNAL_TERMS)
+    if field == "budget":
+        return any(term in _signal_text(state) for term in _BUDGET_SIGNAL_TERMS)
+    # business_goal, problem_statement, functional_requirements: always.
+    return True
+
+
+def _slot_is_filled(captured: CapturedContext, field: str) -> bool:
+    """Does `captured` already have a grounded value for this field? Pure."""
+    value = getattr(captured, field)
+    return bool(value.strip()) if isinstance(value, str) else bool(value)
+
+
+def missing_critical_slots(
+    state: ArchitectState, captured: CapturedContext
+) -> list[str]:
+    """The architecture-critical fields still unknown, in stable order. Pure.
+
+    THIS function is the deterministic replacement for letting the model's
+    own `ClarificationResult.missing_critical` drive routing: the LLM still
+    EXTRACTS `captured`, but whether a gap in it is critical, and which gaps
+    those are, is now a plain fact about `(state, captured)` — the same
+    inputs always produce the same ordered list, which `result.missing_critical`
+    could never promise across otherwise-identical runs.
+    """
+    return [
+        field
+        for field in CRITICAL_RECORD_FIELDS
+        if _slot_is_relevant(field, state) and not _slot_is_filled(captured, field)
+    ]
+
+
+# ── Architecture decisions are never a Clarifier assumption ──────────────
+# Section 3 of the hardening review: a NEGATIVE keyword blacklist (drop any
+# assumption line matching a list of forbidden architecture terms) can never
+# enumerate every future architecture decision — "Use PostgreSQL", "Use
+# Django", "Expose REST APIs", "Deploy in a single region" and "Use
+# OAuth/OIDC" are all real examples that slipped straight past the old regex
+# without ever being on it, and the fix for a missed term is always "add one
+# more term", forever.
+#
+# Dropping every model-authored `assumptions` line unconditionally (the first
+# attempt at a fix) over-corrected: it also threw away the genuinely
+# low-stakes, harmless ones — "assume English-only UI" is not an architecture
+# decision, and a human losing that visibility is not a feature.
+#
+# The actual POSITIVE replacement: a model-authored `assumptions` line
+# survives freezing ONLY if it is affirmatively classified as one of a tiny,
+# fixed set of SAFE, non-architectural categories (`_SAFE_ASSUMPTION_PATTERNS`
+# below) — display/UI-language metadata, non-technical project naming, and
+# stakeholder-label normalization. Nothing else qualifies; an assumption that
+# cannot be positively classified is dropped, exactly like before.
+#
+# The classification is STRUCTURAL, not "contains a safe marker anywhere in
+# the line" (an earlier version of this check): a marker-anywhere test can be
+# smuggled past — "Project name: Sneaker Hub; use CockroachDB for storage."
+# contains the marker "project name" and names a database choice in the same
+# breath, and no amount of widening a secondary unsafe-term blacklist closes
+# that hole for good (the fix for a missed term is always "add one more
+# term", the exact failure mode section 3 already rejected once). So each
+# safe category is instead a tiny, fixed set of FULL-LINE shapes: the ENTIRE
+# line — not a fragment of it — must match, and the payload each shape
+# accepts is deliberately short and plain (letters/digits/spaces/apostrophes/
+# hyphens only, capped length) with nothing else permitted before or after
+# it, so a second clause has nowhere to attach. A line that carries a safe
+# phrase AND extra content simply fails the full-line match and is dropped,
+# the same fate as a line with no safe phrase at all.
+#
+# What this preserves, on purpose (see the module docstring's hardening
+# review reference):
+#   1. deterministic code-generated "unresolved" entries for absorbed
+#      critical gaps after the ask cap — still written, still labelled,
+#      still visible and vetoable at the gate;
+#   2. an explicit "you recommend" request from a human at the gate for a
+#      genuinely non-architectural field — still labelled, still vetoable,
+#      and a real value ONLY when the field itself cannot express an
+#      architecture decision (see `_freeze_context_record`'s handling of
+#      `recommend_requested`); a recommend request for an architecture-
+#      critical field (e.g. `cloud_provider`) still never gets a fabricated
+#      value, no matter how explicitly it was asked for;
+#   3. a record already persisted before this policy existed — this module
+#      only ever WRITES assumptions on a fresh freeze; it never reaches back
+#      into an already-stored `ContextRecord.assumptions` to re-filter it.
 
 # Fields a human may set directly at the gate. DERIVED from the schema rather
 # than listed, so adding a field to `ContextRecord` makes it editable without a
@@ -169,6 +436,109 @@ EDITABLE_RECORD_FIELDS: tuple[str, ...] = tuple(
 # label is what the approval panel groups its strike list by.
 CLARIFIER_LABEL = "[assumed by clarifier]"
 
+# A payload a safe-shape template accepts: short and plain on purpose — a
+# name or a single word, never a clause. Starts with a letter/digit, then up
+# to 29 more letters/digits/apostrophes/spaces/hyphens (30 chars total). No
+# colons, semicolons, or other connective punctuation are in this class,
+# which is what keeps a second clause from attaching to a matched shape.
+_SAFE_PAYLOAD = r"[A-Za-z0-9][A-Za-z0-9' \-]{0,29}"
+
+# The tiny POSITIVE allowlist an `assumptions` line must match to survive
+# freezing (see the "Architecture decisions are never a Clarifier assumption"
+# comment above). Each category name ties to one of the two
+# `EDITABLE_RECORD_FIELDS` that are NOT in `CRITICAL_RECORD_FIELDS`
+# (`project_name`, `users`) — no category here can express anything that
+# changes the target design, deployment, migration, security, scalability,
+# cost, compliance, or technology, because neither of those two fields can
+# either. Every pattern is FULL-LINE anchored (`^...$`): matching a fixed
+# shape somewhere inside a longer line is not enough, the shape has to BE the
+# line. Deliberately small and literal, and the fix for a missed SAFE
+# phrasing is to add one more exact shape with eyes open, never to loosen an
+# existing one.
+_SAFE_ASSUMPTION_PATTERNS: dict[str, re.Pattern[str]] = {
+    "display/UI-language metadata": re.compile(
+        rf"^assume ({_SAFE_PAYLOAD})-only ui(?: \(low-stakes\))?\.?$"
+        rf"|^assume (?:the )?(?:default )?(?:display|ui|interface) language is"
+        rf" ({_SAFE_PAYLOAD})\.?$"
+        rf"|^use ({_SAFE_PAYLOAD}) as (?:the )?(?:default )?"
+        rf"(?:display|ui|interface) language\.?$",
+        re.IGNORECASE,
+    ),
+    "non-technical project naming": re.compile(
+        rf"^assume (?:the )?(?:project name|working title) is ({_SAFE_PAYLOAD})\.?$"
+        rf"|^(?:project name|working title): ({_SAFE_PAYLOAD})\.?$",
+        re.IGNORECASE,
+    ),
+    "stakeholder-label normalization": re.compile(
+        rf"^assume (?:the )?(?:stakeholder|user group|role|user) label is"
+        rf" ({_SAFE_PAYLOAD})\.?$"
+        rf"|^(?:stakeholder|user group|role|user) label: ({_SAFE_PAYLOAD})\.?$",
+        re.IGNORECASE,
+    ),
+}
+
+# Human-readable label for the two safe, non-critical fields a recommendation
+# can actually produce a value for — see `_freeze_context_record`.
+_SAFE_FIELD_LABELS: dict[str, str] = {
+    "project_name": "project name",
+    "users": "users / stakeholders",
+}
+_SAFE_FIELD_LABELS_BY_LABEL: dict[str, str] = {
+    label: field for field, label in _SAFE_FIELD_LABELS.items()
+}
+
+# The fixed suffix of a code-generated safe-field recommendation (see
+# `_build_safe_recommendation_text`). Kept as its own constant so the builder
+# and the parser below can never drift apart from each other.
+_SAFE_RECOMMENDATION_SUFFIX = (
+    " — proposed by the clarifier at your request; not confirmed until you "
+    "accept or edit it."
+)
+
+
+def _build_safe_recommendation_text(field: str, rendered: str) -> str:
+    """The one, code-generated shape a safe-field recommendation is ever
+    written in. `_parse_safe_recommendation_text` is this function's exact
+    inverse — one is never edited without checking the other."""
+    label = _SAFE_FIELD_LABELS.get(field, field.replace("_", " "))
+    return f"{CLARIFIER_LABEL} [recommended] {label}: {rendered}{_SAFE_RECOMMENDATION_SUFFIX}"
+
+
+def _parse_safe_recommendation_text(text: str) -> tuple[str, str] | None:
+    """Recover `(field, rendered_value)` from a line built by
+    `_build_safe_recommendation_text`, or `None` if `text` was not built by
+    it. Structural, not a guess: it undoes the exact fixed prefix/suffix and
+    looks the label up in `_SAFE_FIELD_LABELS_BY_LABEL`, so it can only ever
+    match a line this module itself generated — never a human's own prose or
+    a model-authored `assumptions` line that happens to look similar. This is
+    what lets `apply_user_edits` know WHICH field a struck recommendation
+    came from, deterministically, without re-deriving it from the model.
+    """
+    prefix = f"{CLARIFIER_LABEL} [recommended] "
+    if not text.startswith(prefix) or not text.endswith(_SAFE_RECOMMENDATION_SUFFIX):
+        return None
+    middle = text[len(prefix):-len(_SAFE_RECOMMENDATION_SUFFIX)]
+    label, sep, rendered = middle.partition(": ")
+    if not sep:
+        return None
+    field = _SAFE_FIELD_LABELS_BY_LABEL.get(label)
+    if field is None:
+        return None
+    return field, rendered
+
+
+def _is_safe_low_stakes_assumption(text: str) -> bool:
+    """Positive, STRUCTURAL classification for ONE model-authored
+    `assumptions` line.
+
+    Survives ONLY if the ENTIRE line matches one of the tiny fixed safe
+    shapes above — never by default, never because a fragment of it merely
+    names a safe-sounding topic. See the module comment above `CLARIFIER_LABEL`
+    for why "contains a safe marker" was not enough on its own.
+    """
+    stripped = text.strip()
+    return any(pattern.match(stripped) for pattern in _SAFE_ASSUMPTION_PATTERNS.values())
+
 
 # ── System prompts: one policy, two modes ────────────────────────────────
 # The POLICY (assume-vs-ask, what to capture, how to read a repo digest) is
@@ -190,9 +560,33 @@ Split every gap into exactly one of two kinds:
    targets, regulatory or compliance constraints (e.g. GDPR, HIPAA), cloud or
    on-prem preference, and hard budget limits.
 
-2. LOW-STAKES — a detail that is safely inferable or would not change the design.
-   For these, do NOT ask. Instead record a short, explicit entry in
-   `assumptions` so a human can later veto it. NEVER assume anything silently.
+2. LOW-STAKES — a detail that is safely inferable or would not change the
+   design. For these, do NOT ask, and do NOT invent a value for `captured` —
+   leave the matching field empty and move on. Recording anything about a
+   low-stakes detail in `assumptions` is OPTIONAL, and most of the time you
+   should write nothing there. If you do, the caller keeps the line ONLY when
+   it EXACTLY fits one of these three narrow shapes — anything else you write
+   to `assumptions`, including a close paraphrase, is silently dropped, so if
+   you are not confident it fits, say nothing instead:
+     * "Assume <value>-only UI (low-stakes)." / "Assume the default display
+       language is <value>." / "Use <value> as the default display language."
+     * "Assume the project name is <value>." / "Project name: <value>."
+     * "Assume the stakeholder label is <value>." / "Stakeholder label: <value>."
+   `<value>` must be a short, plain name or word — letters/digits/spaces only,
+   no punctuation, and nothing else appended before or after it: one clause,
+   nothing more. NEVER use `assumptions` — in these shapes or any other — for
+   architecture, technology, deployment, security, scale/NFR, cost/budget,
+   compliance, migration, or service-boundary content; a fact like that
+   belongs in `captured` if genuinely stated, or in `missing_critical` if it
+   is not — never narrated as a low-stakes aside.
+
+Never let a `captured` field, or anything you write, choose or imply an
+architecture pattern, service/component boundary, deployment model, specific
+cloud product, programming language/framework, database/cache/message-broker
+choice, communication style (sync/async, event-driven), consistency model, or
+migration approach (e.g. Strangler). Those are the Architect's decisions, not
+yours — if the only way to fill a field would be to make one of them, leave
+the field unknown instead.
 
 Also fill the `captured` object with everything you DID ground in the request:
 `business_goal`, `problem_statement`, `users`, `functional_requirements` (the
@@ -226,22 +620,27 @@ _ASSUME_MODE = """
 This is a RE-JUDGE, and on a re-judge you may NOT ask. A human has already seen
 this Context Record and is looking at it right now; `questions` will be ignored.
 
-So for every architecture-critical fact that is still unknown — including any
-field the human explicitly asked you to recommend — do all three of these:
-
-  * put your BEST PROFESSIONAL DEFAULT into the matching `captured` field. A
-    plausible, conventional value for this kind of system, not a hedge and not
-    an empty string.
-  * add ONE line to `assumptions` naming the field, the value you chose, and a
-    ONE-SENTENCE rationale. Example: "cloud_provider: AWS — the request names no
-    provider and AWS is the default for a team with no existing cloud estate."
-  * still list the fact in `missing_critical`, so the caller can show the human
-    exactly which values are proposals rather than things they told us.
+For every architecture-critical fact that is still unknown — including any
+field the human explicitly asked you to recommend — leave the matching
+`captured` field EMPTY. Do NOT invent a "best professional default", a
+plausible number, or any other stand-in value for it, technical or not: an
+unresolved fact stays a fact you do not have, not a guess dressed up as one.
+Deterministic code enforces this after your response regardless of what you
+write, but do not rely on that — do not propose the value in the first place.
+Still list the fact in `missing_critical` so the caller can see exactly which
+facts remain unconfirmed; the caller (not you) writes the labelled
+"unresolved" entry that goes with it, because a value a human never confirmed
+must never reach the record looking like one they did.
 
 Treat the CONTEXT RECORD block in the user turn as ground truth: it carries the
 human's own edits. Do not re-fill a field they deliberately cleared with the old
-value, do not contradict a value they set, and never re-propose an assumption
-listed as rejected.
+value, and do not contradict a value they set.
+
+The rule above is about ARCHITECTURE-CRITICAL facts only. A
+"[recommendation requested]" open question about `project_name` or `users` is
+NOT architecture-critical — you MAY propose a value for either, clearly your
+own proposal (a plain, sensible one, not a guess dressed up), because neither
+field can express an architecture decision.
 """
 
 CLARIFIER_SYSTEM = _CLARIFIER_BASE + _ASK_MODE
@@ -351,6 +750,7 @@ def _freeze_context_record(
     *,
     absorbed_gaps: Sequence[str] = (),
     vetoed_assumptions: Sequence[str] = (),
+    recommend_requested: Sequence[str] = (),
     previous: ContextRecord | None = None,
     revision_reason: str = "",
 ) -> ContextRecord:
@@ -362,16 +762,55 @@ def _freeze_context_record(
     `questions` become `open_questions` the Architect should keep in mind.
 
     `absorbed_gaps` are the architecture-critical facts the clarifier was NOT
-    allowed to ask about (see "ask once, then assume"). Each one is guaranteed —
-    by code, not by the prompt — to leave BOTH a labelled assumption and an open
-    question, so a value the human never confirmed can never reach the Architect
-    looking like one they did. Every assumption is stamped with
-    `CLARIFIER_LABEL` in this mode, since in this mode every one of them stands
-    in for a question that was not asked.
+    allowed to ask about (see "ask once, then assume"). Each one is guaranteed
+    — by code, not by the prompt, and unconditionally — to leave BOTH a
+    labelled "unresolved" entry in `assumptions` and a matching entry in
+    `open_questions`, so a value the human never confirmed can never reach the
+    Architect looking like one they did.
 
-    `vetoed_assumptions` are struck verbatim. A model re-proposing something the
-    human just rejected is the ordinary case, not the exotic one, and the prompt
-    asking it not to is not a guarantee.
+    `recommend_requested` names the `EDITABLE_RECORD_FIELDS` the human
+    EXPLICITLY delegated via `apply_user_edits(..., recommend=[...])` on this
+    turn (the node reads this off the `[recommendation requested] {field}:`
+    open-question marker `apply_user_edits` writes). It splits into two
+    entirely different outcomes:
+
+      * a field in `CRITICAL_RECORD_FIELDS` — filling it would mean the
+        Clarifier making an architecture/domain decision (a cloud product, a
+        scale target, a compliance posture, ...), which is forbidden no
+        matter how explicitly it was asked for. It is forced empty exactly
+        like an ordinary ask-cap gap, but the `assumptions`/`open_questions`
+        text says so explicitly — "not safe to auto-recommend" — rather than
+        the generic "unresolved after the cap" text, so a human can tell the
+        two situations apart (they asked for one; the cap chose the other).
+      * a field NOT in `CRITICAL_RECORD_FIELDS` (`project_name`, `users` —
+        the only two `EDITABLE_RECORD_FIELDS`) — neither can express an
+        architecture decision, so a real, model-proposed value MAY survive,
+        but only labelled as a recommendation, never as a stated fact, and
+        still struck by `struck_assumptions` like any other assumption.
+
+    The record's `assumptions` list is built from three sources, all of them
+    either code-generated or positively classified — never raw model prose
+    passed through unfiltered:
+      1. the mandatory `absorbed_gaps` / critical-`recommend_requested`
+         "unresolved" entries above;
+      2. `result.assumptions` lines that positively match the tiny SAFE
+         allowlist (`_is_safe_low_stakes_assumption`) — display/UI-language
+         metadata, non-technical project naming, stakeholder-label
+         normalization; everything else is dropped, the same fate a
+         "Use PostgreSQL" or "Expose REST APIs" line always had, just no
+         longer the fate of "assume English-only UI" too;
+      3. a labelled recommendation for a safe `recommend_requested` field,
+         built from the value the model put in `captured` for it.
+
+    `vetoed_assumptions` (the human's strike ledger) is applied to sources 2
+    and 3 — text a human already struck must not resurrect on the next
+    freeze — but NEVER to source 1: an ask-cap "unresolved" entry is a status
+    notice about a gap, not a proposal, and "the cap always leaves the gap
+    visible" must hold with no exception. The ledger also reaches the field
+    VALUES for safe recommendations: a vetoed `[recommended]` line names its
+    field and value exactly, and when a later re-judge returns that same
+    value while the superseded record still has the field empty, the value
+    itself stays off the new record (see VETO PERSISTENCE below).
 
     `previous` is the record this one SUPERSEDES, when there is one, and it makes
     the new record the next VERSION rather than a silent replacement — with
@@ -380,50 +819,158 @@ def _freeze_context_record(
     trail say "the v1 design was correct given what we knew at v1"; the caller
     (the node) is what keeps the outgoing version by pushing it onto
     `context_history`.
+
+    ONE deterministic pass runs here, after the LLM call and before anything is
+    written: every field forced empty below is forced back to its empty value
+    — REGARDLESS of what the model wrote to `captured` for it — because an
+    ask-cap gap (or an architecture-critical recommend request) is still an
+    unknown, not a fact, for EVERY such field: "ask cap stops the loop; it
+    must not turn unknown facts into fake facts" (see the module docstring).
     """
     c = result.captured
-    vetoed = set(vetoed_assumptions)
-
-    assumptions = [a for a in result.assumptions if a not in vetoed]
     open_questions = [q.question for q in result.questions]
+    assumptions: list[str] = []
+    vetoed = set(vetoed_assumptions)
+    recommend_set = set(recommend_requested)
+    critical_recommend = recommend_set & set(CRITICAL_RECORD_FIELDS)
 
-    if absorbed_gaps:
-        assumptions = [
-            a if a.startswith(CLARIFIER_LABEL) else f"{CLARIFIER_LABEL} {a}"
-            for a in assumptions
-        ]
-        for gap in absorbed_gaps:
-            # Best-effort de-duplication: the prompt asks the model to name the
-            # field in its own assumption line, so this usually finds it. When it
-            # does not, the cost is one redundant line — never a missing
-            # guarantee, which is the direction this has to fail in.
-            if not any(gap.lower() in a.lower() for a in assumptions):
-                filled = f"{CLARIFIER_LABEL} {gap}: filled without confirmation."
-                if filled not in vetoed:
-                    assumptions.append(filled)
-            open_questions.append(
-                f"{gap} — proposed by the clarifier, not confirmed by you."
+    # VETO PERSISTENCE — the strike ledger applied to field VALUES, not just
+    # to labels. `_parse_safe_recommendation_text` recovers exactly which
+    # field and which value a vetoed code-generated recommendation named.
+    # When a later re-judge returns that SAME value and the human has not
+    # since set the field themselves (the superseded record still has it
+    # empty), the value must not silently re-enter the frozen record as a
+    # plain fact — the label is already suppressed above; without this the
+    # rejected value would come back wearing no label at all, which is
+    # worse. A NON-EMPTY value on the superseded record means a human set
+    # it AFTER the veto: their edit wins, even if it happens to equal the
+    # old recommendation. The incoming `result` is read, never mutated.
+    vetoed_recommendations: dict[str, set[str]] = {}
+    for text in vetoed:
+        parsed = _parse_safe_recommendation_text(text)
+        if parsed is not None:
+            field, value = parsed
+            vetoed_recommendations.setdefault(field, set()).add(value)
+    safe_field_values: dict[str, list[str] | str] = {
+        "project_name": c.project_name,
+        "users": list(c.users),
+    }
+    for field, vetoed_values in vetoed_recommendations.items():
+        incoming = safe_field_values.get(field)
+        if incoming is None:
+            continue
+        rendered = (
+            "; ".join(v for v in incoming if v)
+            if isinstance(incoming, list) else incoming
+        )
+        if rendered not in vetoed_values:
+            continue  # a DIFFERENT value is a new proposal, judged normally
+        human_set_since_veto = (
+            previous is not None and bool(getattr(previous, field))
+        )
+        if not human_set_since_veto:
+            safe_field_values[field] = (
+                [] if isinstance(incoming, list) else ""
             )
 
+    captured_values = {field: getattr(c, field) for field in CRITICAL_RECORD_FIELDS}
+    # Union: an ordinary cap-absorbed gap, OR an explicit recommend request
+    # for a field that can only be filled by an architecture/domain decision
+    # — never fabricated, regardless of whether the field even reads as
+    # "relevant" right now (see `_slot_is_relevant`; a recommend request
+    # bypasses relevance on purpose, because the human asking IS the signal).
+    must_blank = set(absorbed_gaps) | critical_recommend
+    for gap in sorted(must_blank, key=CRITICAL_RECORD_FIELDS.index):
+        # Blank the field regardless of what the model proposed — this gap
+        # never becomes a fact, for any critical field.
+        captured_values[gap] = [] if isinstance(captured_values[gap], list) else ""
+        label = _CRITICAL_SLOT_LABELS.get(gap, gap)
+        if gap in critical_recommend:
+            assumptions.append(
+                f"{CLARIFIER_LABEL} [recommendation requested] {label} ({gap}): "
+                "not safe to auto-recommend — filling this would require an "
+                "architecture/domain decision only a human can make."
+            )
+            open_questions.append(
+                f"{label} ({gap}) — you asked the clarifier to recommend this, "
+                "but it requires an architecture/domain decision the clarifier "
+                "cannot make; still unconfirmed."
+            )
+        else:
+            assumptions.append(
+                f"{CLARIFIER_LABEL} {label} ({gap}): unresolved after the "
+                "clarification cap — treat as an unconfirmed constraint, not a "
+                "fact, until a human confirms it."
+            )
+            open_questions.append(
+                f"{label} ({gap}) — proposed by the clarifier, not confirmed by you."
+            )
+
+    # Positive allowlist: a model-authored `assumptions` line survives only if
+    # it names a tiny SAFE, non-architectural category. See the
+    # "Architecture decisions are never a Clarifier assumption" comment above
+    # `CLARIFIER_LABEL`.
+    for text in result.assumptions:
+        stripped = text.strip()
+        if not stripped or not _is_safe_low_stakes_assumption(stripped):
+            continue
+        labelled = f"{CLARIFIER_LABEL} {stripped}"
+        if stripped in vetoed or labelled in vetoed:
+            continue
+        assumptions.append(labelled)
+
+    # Explicit recommendation for a safe, non-critical field: the value the
+    # model proposed for it MAY survive, but only as a labelled, vetoable
+    # recommendation — never silently indistinguishable from a stated fact.
+    for field in sorted(recommend_set - set(CRITICAL_RECORD_FIELDS)):
+        value = getattr(c, field)
+        rendered = "; ".join(v for v in value if v) if isinstance(value, list) else value
+        rendered = rendered.strip() if isinstance(rendered, str) else rendered
+        label = _SAFE_FIELD_LABELS.get(field, field.replace("_", " "))
+        if not rendered:
+            # The model had nothing to propose. This must still be VISIBLE —
+            # silently `continue`-ing here is exactly the bug: the human's
+            # request just vanishes with no trace. Leave the field empty (no
+            # fabricated value) and leave a deterministic unresolved marker
+            # instead — never a fresh pause/ask, this is still a lock.
+            assumptions.append(
+                f"{CLARIFIER_LABEL} [recommendation requested] {label} ({field}): "
+                "the clarifier had no proposal to make — still unconfirmed."
+            )
+            open_questions.append(
+                f"{label} ({field}) — you asked the clarifier to recommend this, "
+                "but it had nothing to propose; still unconfirmed."
+            )
+            continue
+        text = _build_safe_recommendation_text(field, rendered)
+        if text in vetoed:
+            continue
+        assumptions.append(text)
+
     record = ContextRecord(
-        project_name=c.project_name,
-        business_goal=c.business_goal,
-        problem_statement=c.problem_statement,
-        users=c.users,
-        functional_requirements=c.functional_requirements,
-        non_functional_requirements=c.non_functional_requirements,
-        cloud_provider=c.cloud_provider,
-        budget=c.budget,
-        compliance_requirements=c.compliance_requirements,
-        existing_systems=c.existing_systems,
+        project_name=safe_field_values["project_name"],
+        business_goal=captured_values["business_goal"],
+        problem_statement=captured_values["problem_statement"],
+        users=safe_field_values["users"],
+        functional_requirements=captured_values["functional_requirements"],
+        non_functional_requirements=captured_values["non_functional_requirements"],
+        cloud_provider=captured_values["cloud_provider"],
+        budget=captured_values["budget"],
+        compliance_requirements=captured_values["compliance_requirements"],
+        existing_systems=captured_values["existing_systems"],
         assumptions=assumptions,
         open_questions=open_questions,
-        summary=_summary_line(c),
+        summary="",
         version=(previous.version + 1) if previous is not None else 1,
         # Only a revision has a reason to give. On a first freeze there is
         # nothing being revised, so an explanation here would be fiction.
         revision_reason=revision_reason if previous is not None else "",
     )
+    # Computed from the RECORD's own (possibly-blanked) fields, not the raw
+    # `captured` — otherwise a fabricated value the field-blanking above just
+    # erased could still leak into the one line of the record most likely to
+    # be read (the DONE screen, logs, the approval-panel header).
+    record.summary = _summary_line(record)
     return record
 
 
@@ -447,6 +994,18 @@ def apply_user_edits(record: ContextRecord, edits: ContextEdits) -> ContextRecor
     then the summary is recomputed. Setting a field and asking for a
     recommendation on it in the same pass therefore resolves to the
     recommendation — the more specific request wins.
+
+    Striking a CODE-GENERATED safe-field recommendation (see
+    `_build_safe_recommendation_text`) also clears the field it recommended a
+    value for — not just the assumption text describing it. Leaving
+    `record.project_name == "Sneaker Hub"` on the record after the human
+    struck the very line that proposed "Sneaker Hub" would mean the veto
+    removed the label but not the thing it labelled. `_parse_safe_recommendation_text`
+    recovers the field deterministically from the struck text's own fixed
+    shape — never from guessing — and the field is cleared only if it still
+    holds EXACTLY the value that was recommended, so an unrelated struck
+    assumption, or a field the human has since set to something else in this
+    same edit, is left untouched.
     """
     updated = record.model_copy(deep=True)
 
@@ -482,6 +1041,17 @@ def apply_user_edits(record: ContextRecord, edits: ContextEdits) -> ContextRecor
             updated.open_questions.append(request)
 
     struck = set(edits.struck_assumptions)
+    for assumption in struck:
+        if assumption not in updated.assumptions:
+            continue  # a no-op strike of text that isn't actually there
+        parsed = _parse_safe_recommendation_text(assumption)
+        if parsed is None:
+            continue  # not a code-generated safe-field recommendation
+        field, recommended_value = parsed
+        current = getattr(updated, field)
+        current_rendered = "; ".join(current) if isinstance(current, list) else current
+        if current_rendered == recommended_value:
+            setattr(updated, field, [] if isinstance(current, list) else "")
     updated.assumptions = [a for a in updated.assumptions if a not in struck]
 
     answered = set(edits.answered_questions)
@@ -844,15 +1414,18 @@ def _revision_reason(state: ArchitectState) -> str:
     return "Re-judged after the record was reopened by an edit at the context gate."
 
 
-def _can_ask(state: ArchitectState, result: ClarificationResult) -> bool:
+def _can_ask(state: ArchitectState, critical_gaps: list[str]) -> bool:
     """May this turn pause, AND is there anything to pause with?
 
-    `_may_ask` is permission; this adds the one thing that is about the reply
-    rather than the run: the model reported gaps but produced no questions. That
-    is the known clarifier bug, and there is literally nothing to put on screen;
-    pausing would park the run somewhere no answer can reach it.
+    `_may_ask` is permission; `critical_gaps` is the deterministic (code-owned,
+    see `missing_critical_slots`) list of what is still unknown. Every entry in
+    it has a fixed question in `_CRITICAL_SLOT_QUESTIONS`, so unlike the old
+    "did the model also write a `questions` entry" check, there is no longer a
+    way to have a critical gap with nothing to ask — that was the known
+    clarifier bug (see the module docstring), and a fixed template closes it
+    structurally rather than working around it.
     """
-    return _may_ask(state) and bool(result.questions)
+    return _may_ask(state) and bool(critical_gaps)
 
 
 @node("clarifier")
@@ -878,15 +1451,20 @@ def clarifier_node(state: ArchitectState) -> dict:
             response_schema=ClarificationResult,
         )
 
-        # 2. CODE ROUTES — the deterministic gate.
-        if result.missing_critical and _can_ask(state, result):
+        # 2. CODE ROUTES — the deterministic gate. `critical_gaps` is computed
+        # from `captured` and `state` alone (see `missing_critical_slots`):
+        # the model's own `missing_critical`/`questions` are no longer read
+        # for this decision, which is what makes it reproducible — identical
+        # captured facts always produce the identical ordered gap list.
+        critical_gaps = missing_critical_slots(state, result.captured)
+        if critical_gaps and _can_ask(state, critical_gaps):
             # Something architecture-critical is still unknown → pause and ask.
-            questions = [q.question for q in result.questions]
+            questions = [_CRITICAL_SLOT_QUESTIONS[field].question for field in critical_gaps]
             step = make_step(
                 "clarifier",
                 state.stage,
                 Stage.AWAITING_HUMAN,
-                f"missing {len(result.missing_critical)} critical fact(s); asked {len(questions)}",
+                f"missing {len(critical_gaps)} critical fact(s); asked {len(questions)}",
                 usage,
             )
             return {
@@ -905,13 +1483,29 @@ def clarifier_node(state: ArchitectState) -> dict:
         # Enough is known — or we are no longer allowed to ask, in which case the
         # remaining gaps become labelled assumptions the human can see and veto
         # rather than questions nobody will answer. Either way: LOCK.
-        absorbed = list(result.missing_critical)
+        absorbed = critical_gaps
         superseded = state.context_record
+        # Fields the human explicitly delegated THIS turn via
+        # `apply_user_edits(..., recommend=[...])` — read off the
+        # `[recommendation requested] {field}:` marker `apply_user_edits`
+        # writes into the record being re-judged. Read from `superseded`
+        # (the ground truth going into this call), not the fresh `result`:
+        # this is what the human asked for, not anything the model judged.
+        recommend_requested = [
+            field
+            for field in EDITABLE_RECORD_FIELDS
+            if superseded is not None
+            and any(
+                q.startswith(f"[recommendation requested] {field}:")
+                for q in superseded.open_questions
+            )
+        ]
         corrections = state.pending_feedback("requirements")
         context_record = _freeze_context_record(
             result,
             absorbed_gaps=absorbed,
             vetoed_assumptions=state.vetoed_assumptions,
+            recommend_requested=recommend_requested,
             previous=superseded,
             revision_reason=_revision_reason(state),
         )

@@ -31,7 +31,13 @@ from pipeline.agents import reviewer as rev
 from pipeline import orchestrator
 
 
-PROMPT = "Build me a system to sell sneakers online."
+# Deliberately carries an NFR signal ("scale") and a cloud signal ("cloud
+# hosting") so the two conditionally-critical fields this suite exercises
+# (`non_functional_requirements`, `cloud_provider`; see
+# `clarifier._slot_is_relevant`) are actually IN PLAY for this request. A
+# prompt with no such wording at all asks only the three unconditionally
+# critical fields — see test_clarifier_hybrid_determinism.py for that case.
+PROMPT = "Build me a system to sell sneakers online, sized for real scale, with a cloud hosting preference."
 
 
 # ── canned token usage ───────────────────────────────────────────────────
@@ -60,11 +66,36 @@ def fake_usage() -> LLMUsage:
 
 
 # ── canned Clarifier judgments ──────────────────────────────────────────
+#
+# `captured` is what actually drives routing now (see
+# `clarifier.missing_critical_slots`): the deterministic gate recomputes
+# critical gaps FROM `captured`, ignoring whatever `questions`/
+# `missing_critical` the canned response also carries. Those two fields are
+# kept below only because `ClarificationResult` still has them and a couple
+# of assertions read `open_questions` off the frozen record, not because
+# they drive the ask/lock decision any more.
+#
+# `_missing` deliberately leaves exactly `non_functional_requirements` and
+# `cloud_provider` empty. Both are CONDITIONALLY critical fields (see
+# `clarifier._slot_is_relevant`), relevant here only because `PROMPT` above
+# carries their signal wording ("scale", "cloud hosting") — so this fixture
+# reproducibly maps to exactly two deterministic gaps for THIS prompt.
+# `compliance_requirements` is NOT used for this fixture's gap even though the
+# ORIGINAL fixture used it, because compliance is conditionally critical too
+# (only relevant when the raw prompt itself signals a regulated/sensitive
+# domain) and PROMPT below never does.
 def _missing(state, prompt, *, system="", model="", response_schema=None):
     """Something architecture-critical is unknown."""
 
     return ClarificationResult(
-        captured=CapturedContext(business_goal="Sell sneakers online"),
+        captured=CapturedContext(
+            business_goal="Sell sneakers online",
+            problem_statement="The current setup cannot handle sale-day traffic",
+            functional_requirements=["Browse and buy sneakers online"],
+            budget="medium",
+            # non_functional_requirements and cloud_provider deliberately
+            # left empty — the two gaps this fixture exists to represent.
+        ),
         assumptions=["Assume REST API (low-stakes)."],
         questions=[
             ClarifyingQuestion(
@@ -72,23 +103,40 @@ def _missing(state, prompt, *, system="", model="", response_schema=None):
                 why_needed="Sets scale.",
             ),
             ClarifyingQuestion(
-                question="GDPR in scope?",
-                why_needed="Compliance shapes design.",
+                question="Preferred cloud provider?",
+                why_needed="Shapes hosting.",
             ),
         ],
-        missing_critical=["expected scale", "compliance"],
+        missing_critical=["expected scale", "cloud provider"],
     ), fake_usage()
 
 
 def _complete(state, prompt, *, system="", model="", response_schema=None):
-    """Everything critical is known."""
+    """Everything critical is known — for EVERY caller of this fixture, not
+    just the ones whose own prompt happens to mention it.
+
+    `existing_systems` is filled even though most callers' prompts never ask
+    about it: `existing_systems` is conditionally critical (see
+    `clarifier._slot_is_relevant`) on brownfield/modernization/legacy/monolith
+    wording, and several suites elsewhere (persistence, token accounting) run
+    this exact fixture against a prompt that says "monolithic" — which makes
+    `existing_systems` a real, relevant gap. Leaving it empty here would make
+    "everything critical is known" a lie for those prompts, and the run would
+    pause on a fact this fixture's own name says is settled. A filled field is
+    never a gap regardless of relevance, so this is a safe superset for every
+    other caller too.
+    """
 
     return ClarificationResult(
         captured=CapturedContext(
             business_goal="Sell sneakers online",
+            problem_statement="The monolith falls over on peak sale days",
+            functional_requirements=["Browse and buy sneakers online"],
             non_functional_requirements=["50k peak users"],
             cloud_provider="AWS",
+            budget="medium",
             compliance_requirements=["GDPR"],
+            existing_systems=["Legacy monolith being replaced"],
         ),
         assumptions=["Assume English-only UI (low-stakes)."],
         questions=[],
@@ -256,9 +304,11 @@ def test_pauses_when_critical_missing():
     out = clar.clarifier_node(new_run(PROMPT))
 
     assert out["stage"] is Stage.AWAITING_HUMAN
+    # Deterministic template text, in `CRITICAL_RECORD_FIELDS` order — not the
+    # model's own (unused) `questions` wording. See `missing_critical_slots`.
     assert out["clarifying_questions"] == [
-        "Expected peak users?",
-        "GDPR in scope?",
+        clar._CRITICAL_SLOT_QUESTIONS["non_functional_requirements"].question,
+        clar._CRITICAL_SLOT_QUESTIONS["cloud_provider"].question,
     ]
     assert "context_record" not in out
 
@@ -275,7 +325,14 @@ def test_advances_and_locks_context_when_complete():
     assert cr.cloud_provider == "AWS"
     assert "50k peak users" in cr.non_functional_requirements
     assert cr.compliance_requirements == ["GDPR"]
-    assert cr.assumptions == ["Assume English-only UI (low-stakes)."]
+    # Nothing was absorbed (every critical field is filled). The positive
+    # assumption policy still drops model-authored prose that is not
+    # positively classified as safe, but "Assume English-only UI (low-stakes)."
+    # from `_complete` IS safe (display/UI-language metadata), so it survives
+    # labelled. See test_clarifier_hybrid_determinism.py.
+    assert cr.assumptions == [
+        f"{clar.CLARIFIER_LABEL} Assume English-only UI (low-stakes)."
+    ]
     assert "Goal: Sell sneakers online" in cr.summary
     assert out["clarifying_questions"] == []
 
@@ -405,7 +462,7 @@ def test_rejudge_never_pauses_with_questions():
     assert out["clarifying_questions"] == []
 
     record = out["context_record"]
-    for gap in ("expected scale", "compliance"):
+    for gap in ("non_functional_requirements", "cloud_provider"):
         assert any(gap in q for q in record.open_questions), gap
         assert any(gap in a for a in record.assumptions), gap
     # Every assumption on a re-judge stands in for a question that was not
@@ -413,36 +470,49 @@ def test_rejudge_never_pauses_with_questions():
     assert all(a.startswith(clar.CLARIFIER_LABEL) for a in record.assumptions)
 
 
-def test_missing_critical_without_questions_does_not_park_the_run():
-    """The known clarifier bug, contained: gaps but no questions -> lock, not pause.
+def test_deterministic_questions_survive_even_when_the_model_writes_none():
+    """The known clarifier bug is now impossible by construction.
 
-    Pausing here used to leave the run somewhere no answer could reach it (see
-    run.py's docstring). There is nothing to ask, so the gaps are absorbed the
-    same way a re-judge absorbs them and the run keeps moving.
+    The model could always report `missing_critical` while returning NO
+    `questions` — nothing on screen for a gap that used to park the run where
+    no answer could reach it (see run.py's docstring). Routing no longer reads
+    the model's own `questions`/`missing_critical` at all: `critical_gaps` is
+    computed from `captured`, and `_CRITICAL_SLOT_QUESTIONS` has a fixed
+    question for every one of `CRITICAL_RECORD_FIELDS`, so a critical gap can
+    never have nothing to ask — the model returning `questions=[]` here still
+    produces a proper pause with real questions on screen.
     """
 
     def _gaps_but_no_questions(state, prompt, **kwargs):
         return ClarificationResult(
             captured=CapturedContext(business_goal="Sell sneakers online"),
             questions=[],
-            missing_critical=["expected scale"],
+            missing_critical=[],
         ), fake_usage()
 
     clar.llm_call = _gaps_but_no_questions
 
     out = clar.clarifier_node(new_run(PROMPT))
 
-    assert out["stage"] is Stage.CLARIFYING
-    assert out["context_record"] is not None
-    assert any("expected scale" in a for a in out["context_record"].assumptions)
+    assert out["stage"] is Stage.AWAITING_HUMAN
+    assert out["pending_decision"] is PendingDecision.CLARIFICATION
+    assert out["clarifying_questions"] == [
+        clar._CRITICAL_SLOT_QUESTIONS[field].question
+        for field in clar.missing_critical_slots(new_run(PROMPT), CapturedContext(business_goal="Sell sneakers online"))
+    ]
+    assert out["clarifying_questions"]  # non-empty: something IS on screen
 
 
 def test_vetoed_assumption_is_not_re_proposed():
-    """A strike outlives the record it was cast against.
+    """A struck line never reappears.
 
-    The model re-proposes the struck line verbatim, which is the ordinary case
-    rather than the exotic one. Code filters it; the prompt asking nicely is not
-    a guarantee.
+    "Assume English-only UI (low-stakes)." positively classifies as SAFE
+    (display/UI-language metadata) and would normally survive a freeze (see
+    `test_advances_and_locks_context_when_complete`) — which is exactly why
+    the veto ledger still has to be checked for it: a human who struck it must
+    never see it come back on the next re-judge. See
+    test_clarifier_hybrid_determinism.py for the positive-allowlist policy
+    itself.
     """
     clar.llm_call = _complete
 
@@ -451,7 +521,7 @@ def test_vetoed_assumption_is_not_re_proposed():
 
     out = clar.clarifier_node(state)
 
-    assert "Assume English-only UI (low-stakes)." not in out["context_record"].assumptions
+    assert out["context_record"].assumptions == []
 
 
 if __name__ == "__main__":
@@ -476,8 +546,8 @@ if __name__ == "__main__":
     test_rejudge_never_pauses_with_questions()
     print("PASS  re-judge assumes instead of asking")
 
-    test_missing_critical_without_questions_does_not_park_the_run()
-    print("PASS  gaps without questions do not park the run")
+    test_deterministic_questions_survive_even_when_the_model_writes_none()
+    print("PASS  deterministic questions survive when the model writes none")
 
     test_vetoed_assumption_is_not_re_proposed()
     print("PASS  a struck assumption stays struck")
@@ -513,15 +583,13 @@ def test_the_cap_converts_remaining_gaps_into_assumptions_not_silence():
     record = output["context_record"]
     assert record is not None
 
-    for gap in ("expected scale", "compliance"):
+    for gap in ("non_functional_requirements", "cloud_provider"):
         assert any(gap.lower() in a.lower() for a in record.assumptions), gap
         assert any(gap.lower() in q.lower() for q in record.open_questions), gap
-    # Labelled, so the human can tell what they are being asked to veto.
-    assert all(
-        a.startswith(clar.CLARIFIER_LABEL)
-        for a in record.assumptions
-        if "filled without confirmation" in a
-    )
+    # Labelled AND explicit that the value is unresolved, never a guessed
+    # fact — see Problem C / `_freeze_context_record`.
+    assert all(a.startswith(clar.CLARIFIER_LABEL) for a in record.assumptions)
+    assert all("unresolved" in a for a in record.assumptions)
 
 
 def test_asking_is_still_allowed_below_the_cap():

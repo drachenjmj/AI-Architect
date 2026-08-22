@@ -442,7 +442,7 @@ def test_requirements_feedback_asks_nothing_and_labels_the_gap():
     assert state.pending_decision is PendingDecision.CONTEXT_LOCK
     record = state.context_record
     assert record.version == 2
-    for gap in ("expected scale", "compliance"):
+    for gap in ("non_functional_requirements", "cloud_provider"):
         assert any(gap in line for line in record.assumptions), gap
         assert any(gap in line for line in record.open_questions), gap
     assert all(a.startswith(clar.CLARIFIER_LABEL) for a in record.assumptions)

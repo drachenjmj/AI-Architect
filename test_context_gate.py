@@ -49,7 +49,11 @@ from test_clarifier import (
     fake_usage,
 )
 
-PROMPT = "Build me a system to sell sneakers online."
+# Carries an NFR signal ("scale") and a cloud signal ("cloud hosting") so
+# `non_functional_requirements` / `cloud_provider` — both conditionally
+# critical, see `clarifier._slot_is_relevant` — are genuinely in play for the
+# `_missing` re-judge scenario below. Matches test_clarifier.PROMPT.
+PROMPT = "Build me a system to sell sneakers online, sized for real scale, with a cloud hosting preference."
 
 
 def _record(**overrides) -> ContextRecord:
@@ -263,7 +267,7 @@ def test_edit_that_empties_a_critical_field_re_judges_without_asking(monkeypatch
     assert resumed.clarifying_questions == []
 
     record = resumed.context_record
-    for gap in ("expected scale", "compliance"):
+    for gap in ("non_functional_requirements", "cloud_provider"):
         assert any(gap in a for a in record.assumptions), f"no assumption for {gap}"
         assert any(gap in q for q in record.open_questions), f"no open question for {gap}"
     assert all(a.startswith(clar.CLARIFIER_LABEL) for a in record.assumptions)
