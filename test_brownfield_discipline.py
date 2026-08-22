@@ -257,3 +257,68 @@ def test_architect_output_schema_carries_migration_steps():
     produce the sequence without any second call or mapping layer."""
     assert "migration_steps" in Blueprint.model_fields
     assert arch.ArchitectureDesign.model_fields["blueprint"].annotation is Blueprint
+
+
+# ── 7. Data-flow fidelity (audit of run 20260822T163342Z-953d62e7) ─────────
+#
+# A PASSING run still produced flows with a collapsed placeholder node,
+# two Blueprint components absent from every flow, and unnamed aggregate
+# event consumers — so the deterministic diagram showed a materially
+# emptier architecture than the artifacts. The fix is this prompt contract.
+
+
+def test_data_flow_rule_requires_concrete_component_names():
+    prompt = _ARCH_PROMPT
+    assert "DATA-FLOW FIDELITY" in prompt
+    assert "concrete Blueprint component names" in prompt
+    # …and the flows must carry the same architecture as the artifacts.
+    assert "SAME" in prompt and "architecture a reader of the full artifacts" in prompt
+
+
+def test_data_flow_rule_forbids_collapsed_grouping_nodes():
+    prompt = _ARCH_PROMPT
+    assert "Do NOT collapse multiple" in prompt
+    # The generic forbidden examples are named so the failure mode is
+    # unmistakable (placeholders, not any benchmark architecture).
+    for example in ("Backend Services", "Downstream Systems"):
+        assert example in prompt, example
+    assert "write a separate flow per component" in prompt
+
+
+def test_data_flow_rule_requires_named_event_owners():
+    prompt = _ARCH_PROMPT
+    assert "concrete named owners" in prompt
+    assert "never unnamed aggregate labels" in prompt
+
+
+def test_data_flow_rule_requires_component_coverage_with_exceptions():
+    prompt = _ARCH_PROMPT
+    assert "Every non-external Blueprint component must appear" in prompt
+    assert "state that exception explicitly" in prompt
+    # Architecture-level only, external participants preserved.
+    assert "architecture-level" in prompt
+    assert "explicit external participants" in prompt
+
+
+def test_data_flow_rule_carries_diagram_fidelity_intent():
+    prompt = _ARCH_PROMPT
+    assert "feeds a deterministic diagram" in prompt
+
+
+def test_data_flow_rule_adds_no_call_and_no_schema_change():
+    """Prompt-only: the response schema still embeds Blueprint unchanged
+    (no new field, no second model call, no mapping layer)."""
+    design_fields = set(arch.ArchitectureDesign.model_fields)
+    assert design_fields == {
+        "blueprint", "adrs", "components", "directive_objection",
+    }
+    assert "data_flows" in Blueprint.model_fields  # the EXISTING field
+    assert arch.ArchitectureDesign.model_fields["blueprint"].annotation is Blueprint
+
+
+def test_data_flow_rule_examples_contain_no_benchmark_names():
+    """The forbidden-placeholder examples are generic; no reference-repo
+    architecture leaks into the prompt through the new rule."""
+    prompt = _ARCH_PROMPT
+    for name in _BENCHMARK_NAMES:
+        assert name not in prompt, name

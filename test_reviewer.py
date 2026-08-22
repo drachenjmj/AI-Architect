@@ -970,7 +970,12 @@ def test_instruction_names_the_missing_constraint_not_just_the_generic_fix():
 
     # Not merely the generic fix any more, which was the entire old output.
     assert instruction != constraint_issue.suggested_fix
-    assert constraint_issue.suggested_fix in instruction  # the fix still rides along
+    # The fix rides along as far as the assembler's per-field clip allows
+    # (the enriched fix leads with the uncovered strings, so what survives
+    # clipping is the actionable head, not a truncated tail).
+    from pipeline.agents.reviewer import _clip as reviewer_clip
+
+    assert reviewer_clip(constraint_issue.suggested_fix, 240) in instruction
 
 
 def test_medium_issues_survive_a_high_and_are_ranked_after_it():

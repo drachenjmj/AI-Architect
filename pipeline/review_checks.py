@@ -86,8 +86,16 @@ class DeterministicChecks(BaseModel):
     # external, or ownership disposition anywhere in the design.
     unowned_target_services: dict[str, list[str]] = Field(default_factory=dict)
 
+    # New implementation languages (canonical name) with no explicit
+    # deviation justification against the detected stack. Empty when the
+    # design stays in the stack, justifies the change, or none was detected.
+    unjustified_language_drift: dict[str, list[str]] = Field(default_factory=dict)
+
     constraints_applicable: dict[str, bool] = Field(default_factory=dict)
     constraints_covered: dict[str, bool] = Field(default_factory=dict)
+    # The exact requirement strings that failed coverage, per group — the
+    # actionable form of `constraints_covered` (see `_check_constraints`).
+    constraints_uncovered: dict[str, list[str]] = Field(default_factory=dict)
 
     score_all_artifacts_present: int = Field(0, ge=0, le=2)
     score_constraint_coverage: int = Field(0, ge=0, le=2)
@@ -928,6 +936,30 @@ def _normalise_source(value: str) -> str:
     return value.strip().replace("\\", "/").lower()
 
 
+def resolve_source_reference(
+    reference: str,
+    kb_sources: set[str],
+    repository_text: str,
+) -> bool:
+    """Does one ADR source reference resolve to evidence supplied this run?
+
+    THE ONE RESOLUTION RULE, shared deliberately: the Reviewer's integrity
+    check and the Architect's output sanitizer both call this function, so
+    "what counts as a real source" cannot drift between the writer and the
+    judge. A reference resolves when its normalised form (case-insensitive,
+    forward slashes) is a supplied KB chunk source, shares a basename with
+    one, or appears verbatim in the repository representation. Pure.
+    """
+    normalised = _normalise_source(reference)
+    basename = normalised.rsplit("/", 1)[-1]
+    kb_basenames = {source.rsplit("/", 1)[-1] for source in kb_sources}
+    return (
+        normalised in kb_sources
+        or basename in kb_basenames
+        or bool(repository_text and normalised in repository_text)
+    )
+
+
 def _check_source_integrity(
     state: ArchitectState,
 ) -> tuple[dict[str, list[str]], int]:
@@ -938,7 +970,6 @@ def _check_source_integrity(
         for chunk in state.retrieved_knowledge
         if chunk.source.strip()
     }
-    kb_basenames = {source.rsplit("/", 1)[-1] for source in kb_sources}
     repository_text = ""
     if state.repo_representation is not None:
         repository_text = state.repo_representation.model_dump_json().lower()
@@ -949,14 +980,7 @@ def _check_source_integrity(
     for adr in state.adrs:
         for reference in _non_empty(adr.source_references):
             total_references += 1
-            normalised = _normalise_source(reference)
-            basename = normalised.rsplit("/", 1)[-1]
-            resolves = (
-                normalised in kb_sources
-                or basename in kb_basenames
-                or bool(repository_text and normalised in repository_text)
-            )
-            if resolves:
+            if resolve_source_reference(reference, kb_sources, repository_text):
                 valid_references += 1
             else:
                 invalid.setdefault(adr.id or adr.title, []).append(reference)
@@ -976,8 +1000,16 @@ def _check_source_integrity(
 
 def _check_constraints(
     state: ArchitectState,
-) -> tuple[dict[str, bool], dict[str, bool]]:
-    """Identify stated constraints and check only design artifacts for evidence."""
+) -> tuple[dict[str, bool], dict[str, bool], dict[str, list[str]]]:
+    """Identify stated constraints and check only design artifacts for evidence.
+
+    Returns (applicable, covered, uncovered). `uncovered` maps each group to
+    the EXACT requirement strings that failed the evidence match — the
+    actionable form of the diagnosis. The architect's refinement pass gets
+    these strings verbatim (via the issue evidence/suggested fix), so it can
+    close the gap in one round instead of re-paraphrasing a group label.
+    Pass/fail semantics are exactly the previous two-value behaviour.
+    """
 
     context = state.context_record
     design_text = _design_text(state)
@@ -1039,14 +1071,142 @@ def _check_constraints(
         group: bool(values)
         for group, values in requirements.items()
     }
-    covered = {
-        group: bool(values) and all(
-            evidenced(requirement)
-            for requirement in values
-        )
+    uncovered = {
+        group: [
+            requirement for requirement in values
+            if not evidenced(requirement)
+        ]
         for group, values in requirements.items()
     }
-    return applicable, covered
+    covered = {
+        group: bool(values) and not uncovered[group]
+        for group, values in requirements.items()
+    }
+    return applicable, covered, uncovered
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Rubric item: brownfield implementation-language/framework drift
+#
+# Run 20260822T164736Z-1a15e2e4: the detected stack was Python/Django, the
+# technical view said "new Go-based microservices", and the review PASSED —
+# the conservatism rule was advisory prompt text with no code-owned
+# counterpart. This check is deliberately NARROW: only substantial
+# implementation-LANGUAGE drift for new internal services counts. Managed
+# infrastructure (SQS/SNS/Redis/API Gateway/…), databases, and frameworks
+# of the SAME primary language are not drift; a justified deviation — an
+# explicit ADR/rationale that names the new language AND the existing one
+# together — passes. Nothing is banned; only unjustified drift blocks.
+# ─────────────────────────────────────────────────────────────────────────
+
+# Well-known implementation-language tokens → canonical name. Detection is
+# token-shaped, not tied to any one ecosystem; the map exists because a
+# language needs a canonical display name for the finding text.
+_LANGUAGE_TOKENS: dict[str, str] = {
+    "python": "Python", "django": "Python", "flask": "Python",
+    "fastapi": "Python",  # frameworks indicate their implementation language
+    "java": "Java", "spring": "Java", "kotlin": "Kotlin", "scala": "Scala",
+    "go": "Go", "golang": "Go",
+    "javascript": "JavaScript", "typescript": "TypeScript",
+    "node": "JavaScript", "nodejs": "JavaScript", "express": "JavaScript",
+    "react": "JavaScript", "vue": "JavaScript", "angular": "TypeScript",
+    "c#": "C#", ".net": "C#", "dotnet": "C#", "rust": "Rust", "ruby": "Ruby",
+    "rails": "Ruby", "php": "PHP", "laravel": "PHP",
+}
+# Never treated as implementation-language drift: infrastructure/managed
+# services, data stores, and generic descriptors — regardless of how they
+# are phrased in the design. A database or a queue is not a language.
+_NON_LANGUAGE_TOKENS = frozenset({
+    "aws", "sns", "sqs", "eventbridge", "kinesis", "lambda", "gateway",
+    "redis", "elasticsearch", "aurora", "rds", "postgres", "postgresql",
+    "mysql", "mongodb", "dynamodb", "kafka", "rabbitmq", "docker",
+    "kubernetes", "s3", "cloudfront", "cognito", "iam", "service", "api",
+})
+
+
+def _design_technology_text(state: ArchitectState) -> str:
+    """All technology-bearing design text: component technology choices,
+    technical view, pattern, and every ADR title/decision/rationale."""
+    parts: list[str] = []
+    for component in state.components:
+        parts.extend(component.technology_choices)
+        parts.append(component.component_type)
+    if state.blueprint is not None:
+        parts.append(state.blueprint.selected_pattern)
+        parts.append(state.blueprint.technical_view)
+    for adr in state.adrs:
+        parts.extend((adr.title, adr.decision, adr.rationale))
+    return " ".join(_non_empty(parts))
+
+
+def _languages_in(text: str) -> set[str]:
+    """Canonical implementation-language names present in `text`."""
+    tokens = re.findall(r"[a-z#][a-z0-9#./+]*", text.lower())
+    languages: set[str] = set()
+    for token in tokens:
+        if token in _LANGUAGE_TOKENS and token not in _NON_LANGUAGE_TOKENS:
+            languages.add(_LANGUAGE_TOKENS[token])
+    return languages
+
+
+def _check_technology_drift(
+    state: ArchitectState,
+) -> dict[str, list[str]]:
+    """New implementation languages with no explicit deviation rationale.
+
+    Returns {new_language: [where_it_appears]}. Empty when the design stays
+    in the detected stack, justifies its deviation, or no stack was
+    detected. Pure.
+    """
+    repo = state.repo_representation
+    if repo is None:
+        return {}
+    existing = _languages_in(
+        " ".join(
+            [*repo.structure.tech_stack.languages.keys(),
+             *repo.structure.tech_stack.frameworks]
+        )
+    )
+    if not existing:
+        return {}  # no clear detected stack → nothing to drift from
+
+    design_text = _design_technology_text(state)
+    proposed = _languages_in(design_text)
+    new_languages = proposed - existing
+    if not new_languages:
+        return {}
+
+    # JUSTIFICATION: an ADR/rationale that names the new language AND the
+    # existing language together, in the same artifact, is an explicit
+    # comparison of the two — the conservatism rule's requirement. A
+    # pattern title naming a language alone is not a rationale.
+    justifications: dict[str, list[str]] = {}
+    for adr in state.adrs:
+        adr_text = " ".join(
+            _non_empty([adr.title, adr.context, adr.decision, adr.rationale])
+        ).lower()
+        for language in new_languages:
+            if language.lower() in adr_text and any(
+                existing_name.lower() in adr_text
+                for existing_name in existing
+            ):
+                justifications.setdefault(language, []).append(adr.id)
+
+    unjustified = {
+        language: where
+        for language, where in (
+            (language, sorted(
+                [component.name for component in state.components
+                 if language.lower() in " ".join(
+                     component.technology_choices
+                 ).lower()]
+                or ["design text"]
+            ))
+            for language in new_languages
+        )
+        if language not in justifications
+    }
+    return unjustified
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -1074,8 +1234,12 @@ def run_deterministic_checks(
     # claims a service that no Component Description traces to.
     traceability["unowned_target_services"] = unowned_target_services
 
+    unjustified_language_drift = _check_technology_drift(state)
+
     malformed_adrs, incomplete_adrs, duplicate_numbers = _check_adrs(state)
-    constraints_applicable, constraints_covered = _check_constraints(state)
+    constraints_applicable, constraints_covered, constraints_uncovered = (
+        _check_constraints(state)
+    )
     invalid_sources, score_source_integrity = _check_source_integrity(state)
     repository_expected = bool(state.initial_request.repo_url.strip())
     repository_available = state.repo_representation is not None
@@ -1199,6 +1363,21 @@ def run_deterministic_checks(
     ]
 
     if uncovered:
+        # The exact uncovered requirement strings, per group — the
+        # actionable form of this finding. A group label alone ("functional")
+        # invites the architect to paraphrase the group again; the string
+        # tells it precisely what the design never said (run
+        # 20260822T160643Z-8e49d732: 'executing checkouts' failed two refine
+        # rounds while the group label was all the instruction carried).
+        # The strings LEAD both fields: the refinement instruction clips
+        # long fields from the tail, so the payload must survive it.
+        uncovered_detail = "; ".join(
+            f"{group}: "
+            + ", ".join(f"'{requirement}'"
+                        for requirement in constraints_uncovered[group])
+            for group in uncovered
+            if constraints_uncovered[group]
+        )
         add_issue(
             "high",
             "constraint",
@@ -1207,12 +1386,16 @@ def run_deterministic_checks(
                 f"{', '.join(uncovered)}."
             ),
             (
-                "No matching structured value or design text found for: "
+                f"Uncovered requirement(s): {uncovered_detail}"
+                if uncovered_detail
+                else "No matching structured value or design text found for: "
                 f"{', '.join(uncovered)}"
             ),
             (
-                "Address each stated constraint explicitly in the Blueprint, "
-                "ADRs, or Component Descriptions."
+                "Name every uncovered requirement verbatim in the design "
+                "text (Blueprint, ADRs, or Components): "
+                + (uncovered_detail if uncovered_detail else
+                   "each requirement the Context Record states.")
             ),
         )
 
@@ -1296,6 +1479,27 @@ def run_deterministic_checks(
                     "from the target architecture, explicitly keep it in "
                     "the legacy monolith, or map its ownership to an "
                     "existing component."
+                ),
+            )
+
+    if unjustified_language_drift:
+        # HIGH, like the other brownfield design-quality blockers: it routes
+        # the run to REFINING until the deviation is justified or removed.
+        for language, where in sorted(unjustified_language_drift.items()):
+            add_issue(
+                "high",
+                "constraint",
+                (
+                    f"The design introduces {language} for new services "
+                    "without justifying the change from the detected "
+                    "existing implementation stack."
+                ),
+                f"{language} appears in: {', '.join(where)}",
+                (
+                    f"Either keep the existing stack or add an explicit "
+                    f"ADR comparing {language} with the detected stack and "
+                    "linking the change to a concrete requirement or "
+                    "trade-off."
                 ),
             )
 
@@ -1388,8 +1592,10 @@ def run_deterministic_checks(
         repository_available=repository_available,
         invalid_source_references=invalid_sources,
         unowned_target_services=unowned_target_services,
+        unjustified_language_drift=unjustified_language_drift,
         constraints_applicable=constraints_applicable,
         constraints_covered=constraints_covered,
+        constraints_uncovered=constraints_uncovered,
         score_all_artifacts_present=score_artifacts,
         score_constraint_coverage=score_constraints,
         score_traceability=score_traceability,

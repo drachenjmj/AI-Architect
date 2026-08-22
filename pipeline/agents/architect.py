@@ -77,6 +77,8 @@ does read makes that a live leak rather than a hypothetical one.
 
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, Field
 
 from pipeline.agents.base import make_step, node
@@ -92,6 +94,10 @@ from pipeline.state import (
 
 
 ARCHITECT_MODEL = "flash-lite"
+
+# The arrow spellings a data flow may use; canonicalization rebuilds flows
+# with the canonical " → " form (what the diagram parser accepts regardless).
+_FLOW_SPLIT_RE = re.compile(r"\s*(?:→|->)\s*")
 
 
 class FeatureDesign(BaseModel):
@@ -162,6 +168,22 @@ Rules:
   whenever they are present.
 - Clearly label assumptions and open risks.
 
+SOURCE PROVENANCE (strict):
+- `source_references` on an ADR is PROVENANCE, not prose: it names the
+  evidence this design was actually given. Use ONLY source identifiers that
+  appear verbatim among the supplied <retrieved_knowledge> chunk sources or
+  the <repository_representation> content — copy them exactly.
+- NEVER invent descriptive source labels ("internal best practices",
+  "industry best practices", "architecture best practices" and the like are
+  fabrications unless that string is literally a supplied source).
+- If no supplied evidence supports a source reference, leave
+  `source_references` EMPTY rather than fabricating one. Reasoning belongs
+  in the ADR's `rationale` — a decision justified by user requirements,
+  Context Record facts, or general architectural reasoning needs no source
+  and must not dress that reasoning up as a cited one.
+- Invalid source references are removed deterministically after you return;
+  a removed reference never becomes evidence.
+
 SERVICE-BOUNDARY DISCIPLINE (brownfield especially):
 - Existing application modules, packages and apps are evidence about
   CAPABILITIES, not automatic service boundaries. Never map one
@@ -183,7 +205,9 @@ SERVICE-BOUNDARY DISCIPLINE (brownfield especially):
   fit it better.
 
 TECHNOLOGY CONSERVATISM (brownfield especially):
-- Existing technologies remain the DEFAULT. Change a technology from the
+- Existing technologies remain the DEFAULT. When a
+  <detected_existing_stack> block is supplied, apply this rule to exactly
+  those named technologies. Change a technology from the
   detected stack only when a concrete requirement, repository-evidenced
   problem, or architecture trade-off justifies it: a scaling need the
   current stack cannot meet cleanly; a security/compliance requirement; a
@@ -209,6 +233,35 @@ MIGRATION SEQUENCE (brownfield modernization):
 - Do not fabricate operational detail the repo and requirements do not
   support. For greenfield or designs with no migration objective, leave
   `migration_steps` empty.
+
+MIGRATION DISPOSITION (brownfield):
+- Every new internal target service/component that does not already exist
+  in the legacy system must carry an explicit migration disposition in the
+  design: extracted in a named migration step, explicitly deferred to a
+  later phase, explicitly retained in the legacy system for now, or
+  external/already existing. A target architecture must never silently
+  introduce a service with no stated migration path.
+
+DATA-FLOW FIDELITY (Blueprint `data_flows`):
+- `data_flows` is the target architecture's communication map and feeds a
+  deterministic diagram: a reader of the flows must see the SAME
+  architecture a reader of the full artifacts sees.
+- Use concrete Blueprint component names as flow participants whenever the
+  participant is an architecture component — spelled EXACTLY as in the
+  Blueprint's `components`, with no parenthetical descriptors or suffixes
+  appended. Do NOT collapse multiple
+  components into placeholder or grouping nodes (e.g. "Backend Services",
+  "Downstream Systems", "Legacy Monolith | New Microservices"). If one
+  interaction targets several real components, write a separate flow per
+  component (or otherwise name each owning component explicitly).
+- Every non-external Blueprint component must appear in at least one
+  meaningful flow; if a component genuinely has no runtime interaction,
+  state that exception explicitly rather than silently omitting it.
+- Event producers and consumers must have concrete named owners — never
+  unnamed aggregate labels for who receives or emits an event.
+- Keep flows architecture-level (services, gateways, stores, actors), not
+  method-level implementation noise. Preserve external actors and external
+  systems as explicit external participants where appropriate.
 
 - When <current_design> is present you are REVISING that design, not creating a
   new one. Keep component names, ADR IDs, the selected pattern, and every
@@ -315,6 +368,9 @@ def _build_architecture_prompt(
         else "None — create the initial architecture design."
     )
 
+    detected_stack = _format_detected_stack(state)
+    refinement_discipline = _REFINEMENT_DISCIPLINE if current_design else ""
+
     return f"""
 <context_record>
 {context_json}
@@ -323,7 +379,7 @@ def _build_architecture_prompt(
 <repository_representation>
 {repository_json}
 </repository_representation>
-
+{detected_stack}
 <retrieved_knowledge>
 {knowledge_json}
 </retrieved_knowledge>
@@ -339,9 +395,76 @@ def _build_architecture_prompt(
 <refinement_instruction>
 {refinement_instruction or no_instruction}
 </refinement_instruction>
-
+{refinement_discipline}
 Create the structured Architecture Blueprint, ADRs, and Component Descriptions.
 """.strip()
+
+
+def _format_detected_stack(state: ArchitectState) -> str:
+    """The run's ACTUAL detected technology stack as an explicit anchor.
+
+    The TECHNOLOGY CONSERVATISM rules in the system prompt are generic ("the
+    detected existing stack"); this block names it. Derived entirely from
+    `repo_representation.structure.tech_stack` — languages by LOC plus
+    frameworks — with nothing invented and nothing hard-coded (run
+    20260822T160643Z-8e49d732 chose Go over a detected Django/React stack
+    while the guidance stayed abstract). Empty for greenfield runs, where
+    there is no existing stack to preserve and the block is omitted rather
+    than fabricated. Pure.
+    """
+    repo = state.repo_representation
+    if repo is None:
+        return ""
+    stack = repo.structure.tech_stack
+    languages = sorted(
+        stack.languages.items(), key=lambda item: -item[1]
+    ) if stack.languages else []
+    lines = []
+    if languages:
+        lines.append(
+            "Languages: "
+            + ", ".join(f"{name} ({loc:,} LOC)" for name, loc in languages)
+        )
+    if stack.frameworks:
+        lines.append("Frameworks: " + ", ".join(stack.frameworks))
+    if not lines:
+        # A repo was analysed but recognised no language/framework — say
+        # only that, and invent nothing.
+        lines.append(
+            "No specific language or framework was identified in the "
+            "repository analysis."
+        )
+    return (
+        "\n<detected_existing_stack>\n"
+        "The repository analysis detected this existing technology stack:\n"
+        + "\n".join(lines)
+        + "\nPreserve these technologies by default. If you propose a "
+        "substantial change to any of them, the relevant ADR must explain "
+        "why the existing technology is insufficient for a stated "
+        "requirement — a generic claim such as 'better scalability' is not "
+        "enough without requirement- or repository-linked evidence.\n"
+        "</detected_existing_stack>\n"
+    )
+
+
+# REFINEMENT-TURN DISCIPLINE. Appended to the built prompt ONLY when a
+# <current_design> block exists (the initial-design prompt never sees it).
+# Forensic background (run 20260822T160643Z-8e49d732, refine 2): the model
+# attempted every fix but degraded structurally — 19 required ADR/component
+# fields came back empty and all technology choices were dropped, the round
+# scored WORSE, and the best-round restore discarded the attempted fixes.
+# Pydantic defaults absorb omitted fields silently, so this checklist makes
+# full re-emission an explicit instruction rather than an assumption.
+_REFINEMENT_DISCIPLINE = """
+<refinement_discipline>
+This is a REFINEMENT pass. Work blocker by blocker:
+1. Address EVERY supplied HIGH/blocking finding in the <refinement_instruction>, one by one.
+2. Preserve everything already correct in the current design — make the SMALLEST changes that resolve the blockers.
+3. Before returning, verify each supplied blocker against your revised artifacts; if one cannot be resolved, say so in the relevant rationale rather than silently dropping it.
+4. Re-emit ALL required fields for EVERY ADR and Component Description in full — context, rationale, alternatives, consequences, inputs/outputs/dependencies, technology choices — even for parts you did not change. Never leave a required field blank merely because it was unchanged.
+5. Preserve existing technology choices, migration steps, and component details unless you are intentionally changing them to resolve a finding. Do not drop them due to response compression.
+</refinement_discipline>
+""".strip() + "\n\n"
 
 
 def _format_current_design(state: ArchitectState) -> str:
@@ -383,6 +506,142 @@ def _format_current_design(state: ArchitectState) -> str:
         f"COMPONENTS:\n{component_json}\n"
         "</current_design>\n\n"
     )
+
+
+def sanitize_adr_sources(
+    adrs: list[ADR], state: ArchitectState
+) -> tuple[list[ADR], list[str]]:
+    """Drop ADR `source_references` that do not resolve to supplied evidence.
+
+    THE OUTPUT BOUNDARY OF PROVENANCE: the prompt forbids fabricated source
+    labels, and the Reviewer would eventually flag them — but between the
+    two sits the stored artifact, and provenance that is wrong should never
+    be written to it. This runs on EVERY phase-2 result (initial design and
+    every refine pass), so an invented name cannot enter the run even on a
+    revision.
+
+    Resolution uses `review_checks.resolve_source_reference` — the SAME
+    rule the Reviewer judges by, imported rather than reimplemented, so
+    writer and judge cannot drift apart.
+
+    Behavior for an unresolvable reference (chosen small and safe): REMOVE
+    it. No guessed substitute, no repair model call, no crash — the ADR
+    simply stands on its own reasoning with no claimed source, which is the
+    honest state for a requirement-derived decision. Removed names are
+    returned so the caller can record the fact in the run trace.
+
+    Pure with respect to `state`; ADRs are copied, never mutated.
+    """
+    from pipeline.review_checks import resolve_source_reference
+
+    kb_sources = {
+        chunk.source.strip().replace("\\", "/").lower()
+        for chunk in state.retrieved_knowledge
+        if chunk.source.strip()
+    }
+    repository_text = (
+        state.repo_representation.model_dump_json().lower()
+        if state.repo_representation is not None
+        else ""
+    )
+
+    sanitized: list[ADR] = []
+    removed: list[str] = []
+    for adr in adrs:
+        kept = [
+            reference
+            for reference in adr.source_references
+            if reference.strip()
+            and resolve_source_reference(reference, kb_sources, repository_text)
+        ]
+        # Blank entries are dropped as noise but not reported as removals.
+        dropped = [
+            reference
+            for reference in adr.source_references
+            if reference not in kept and reference.strip()
+        ]
+        removed.extend(dropped)
+        sanitized.append(
+            adr if not dropped and len(kept) == len(adr.source_references)
+            else adr.model_copy(update={"source_references": kept})
+        )
+    return sanitized, removed
+
+
+def canonicalize_data_flow_endpoints(
+    flows: list[str], component_names: list[str]
+) -> tuple[list[str], int]:
+    """Resolve decorated flow endpoints back to exact Blueprint component
+    names. Pure.
+
+    Root cause this fixes (run 20260822T164736Z-1a15e2e4): the model writes
+    "Order Service (New order flow)" against a component named
+    "Order Service". The string parses as an endpoint, so the deterministic
+    diagram draws a PHANTOM duplicate node beside the real one.
+
+    Rule: strip ONE trailing parenthetical descriptor, and map the remaining
+    text to a component ONLY when it matches one component exactly, or is a
+    proper PREFIX of exactly one component's name (case-insensitive,
+    whitespace-collapsed). Anything ambiguous — a prefix of two components,
+    an empty remainder, a non-matching name — is left UNCHANGED: an
+    uncanonicalized endpoint is honest; a guessed one is corrupt. External
+    actors ("Client") and genuinely external systems never match the
+    component catalog and therefore pass through untouched. Exact component
+    names are fixed points of the rule.
+
+    Returns (canonical_flows, number_of_endpoints_resolved).
+    """
+    catalog: list[str] = [name.strip() for name in component_names if name.strip()]
+
+    def resolve(endpoint: str) -> tuple[str, bool]:
+        text = endpoint.strip()
+        # One trailing parenthetical descriptor at most; nested/inner ones
+        # belong to the name itself and stay.
+        if text.endswith(")") and "(" in text:
+            head, _, _tail = text.rpartition("(")
+            candidate = head.strip()
+            if candidate:
+                text = candidate
+        folded = " ".join(text.lower().split())
+        if not folded:
+            return endpoint, False
+        exact = [name for name in catalog if " ".join(name.lower().split()) == folded]
+        if len(exact) == 1:
+            return exact[0], exact[0] != endpoint.strip()
+        prefixed = [
+            name for name in catalog
+            if " ".join(name.lower().split()).startswith(folded)
+            and folded
+        ]
+        if len(prefixed) == 1:
+            return prefixed[0], prefixed[0] != endpoint.strip()
+        return endpoint, False
+
+    canonical: list[str] = []
+    resolved_count = 0
+    for flow in flows:
+        text = str(flow or "").strip()
+        if not text:
+            canonical.append(flow)
+            continue
+        label = ""
+        if ":" in text:
+            text, _, label = text.partition(":")
+            label = label.strip()
+        parts = [part.strip() for part in _FLOW_SPLIT_RE.split(text)]
+        out_parts: list[str] = []
+        for part in parts:
+            if not part:
+                out_parts.append(part)
+                continue
+            resolved, changed = resolve(part)
+            resolved_count += 1 if changed else 0
+            out_parts.append(resolved)
+        rebuilt = " → ".join(p for p in out_parts if p)
+        if label:
+            rebuilt = f"{rebuilt}: {label}"
+        canonical.append(rebuilt)
+    return canonical, resolved_count
 
 
 def _is_revision(state: ArchitectState) -> bool:
@@ -485,6 +744,28 @@ def architect_node(state: ArchitectState) -> dict:
         if not design_result.components:
             raise ValueError("Architect produced no Component Descriptions.")
 
+        # PROVENANCE AT THE BOUNDARY: drop any ADR source reference that does
+        # not resolve to evidence this run actually supplied (see
+        # `sanitize_adr_sources`). Runs on the initial design AND on every
+        # refine pass, so an invented name cannot (re-)enter the artifacts.
+        design_result.adrs, dropped_sources = sanitize_adr_sources(
+            design_result.adrs, state
+        )
+
+        # DIAGRAM FIDELITY AT THE BOUNDARY: resolve decorated flow endpoints
+        # ("Order Service (New order flow)") back to exact Blueprint
+        # component names, so the deterministic diagram draws one node per
+        # component instead of phantom duplicates. Ambiguous endpoints are
+        # left unchanged by design (see `canonicalize_data_flow_endpoints`).
+        blueprint = design_result.blueprint
+        canonical_flows, resolved_endpoints = canonicalize_data_flow_endpoints(
+            blueprint.data_flows, blueprint.components
+        )
+        if canonical_flows != blueprint.data_flows:
+            blueprint = blueprint.model_copy(
+                update={"data_flows": canonical_flows}
+            )
+
         # An objection is only meaningful about a directive that was actually in
         # this prompt. With no directive it is the model volunteering a caveat
         # it was told not to write, and there is no entry to record it against —
@@ -501,6 +782,16 @@ def architect_node(state: ArchitectState) -> dict:
         )
         if directives:
             note += f"; applied {len(directives)} user directive(s)"
+        if dropped_sources:
+            # The deterministic diagnostic: what was removed, by name, in the
+            # run's own trail — never silently, and never with source bodies.
+            note += (
+                f"; removed {len(dropped_sources)} unresolvable ADR "
+                f"source reference(s): " + "; ".join(dropped_sources[:4])
+                + ("; …" if len(dropped_sources) > 4 else "")
+            )
+        if resolved_endpoints:
+            note += f"; canonicalized {resolved_endpoints} data-flow endpoint(s)"
         if objection:
             # In the trace as well as on the entry: "the design deviates from
             # what was asked" is a fact about the RUN, and the run's trail is
@@ -515,7 +806,7 @@ def architect_node(state: ArchitectState) -> dict:
         )
 
         update = {
-            "blueprint": design_result.blueprint,
+            "blueprint": blueprint,
             "adrs": design_result.adrs,
             "components": design_result.components,
             "stage": Stage.DESIGNING,
