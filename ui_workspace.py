@@ -131,7 +131,8 @@ from ui_sections import (
 # vocabulary, and a second block above it replayed the pipeline stages. The
 # groups answer the two questions a reader arrives with: what is the
 # architecture (PROJECT), what is it built on (EVIDENCE), and only then the
-# tooling (WORKSPACE placeholders) and the machinery (TECHNICAL).
+# tooling (WORKSPACE: the read-only History browser and the Architecture
+# Chat) and the machinery (TECHNICAL).
 #
 # `Design` is now `Architecture` in every user-facing label: that view IS
 # the deliverable. Backend names (stages, agents, schemas) are untouched —
@@ -775,30 +776,52 @@ def _render_history_view(current: ArchitectState) -> None:
 _SCOPE_LABELS = {"current": "Current run", "history": "History", "kb": "KB"}
 
 
-def _render_chat_sources(sources: list[dict]) -> None:
-    """`Sources used` under one assistant answer: the citation ids the
-    answer was grounded in, labelled with scope, run/date and KB metadata."""
+def _render_chat_source_rows(sources: list[dict]) -> None:
+    """One caption row per source: the citation id, its scope, label and
+    KB metadata. Shared by `Sources used` and `Additional context`."""
 
-    if not sources:
-        return
-    with st.expander(f"Sources used — {len(sources)}"):
-        for source in sources:
-            meta = [
-                _SCOPE_LABELS.get(source.get("scope", ""), "Source"),
-                html.escape(str(source.get("label", ""))),
-            ]
-            if source.get("run_date"):
-                meta.append(html.escape(str(source["run_date"])))
-            box = source.get("box") or 0
-            if box:
-                meta.append(f"box {box}")
-            distance = source.get("distance")
-            if distance is not None:
-                meta.append(f"distance {distance:.4f}")
-            st.caption(
-                f"`[{html.escape(str(source.get('sid', '')))}]` · "
-                + " · ".join(meta)
-            )
+    for source in sources:
+        meta = [
+            _SCOPE_LABELS.get(source.get("scope", ""), "Source"),
+            html.escape(str(source.get("label", ""))),
+        ]
+        if source.get("run_date"):
+            meta.append(html.escape(str(source["run_date"])))
+        box = source.get("box") or 0
+        if box:
+            meta.append(f"box {box}")
+        distance = source.get("distance")
+        if distance is not None:
+            meta.append(f"distance {distance:.4f}")
+        st.caption(
+            f"`[{html.escape(str(source.get('sid', '')))}]` · "
+            + " · ".join(meta)
+        )
+
+
+def _render_chat_sources(sources: list[dict], context: list[dict]) -> None:
+    """The evidence footer under one assistant answer.
+
+    `Sources used` lists only what the answer CITED (matched by bracket id
+    back to this message's provided sources — hallucinated or stale ids
+    resolve to nothing). Uncited evidence is never claimed as used; it
+    renders separately as `Additional context provided`, and an answer
+    with no citations at all shows a neutral line instead of a false
+    "sources used" list.
+    """
+
+    if sources:
+        with st.expander(f"Sources used — {len(sources)}"):
+            _render_chat_source_rows(sources)
+    elif context:
+        st.caption(
+            "The answer cited no specific source. The context below was "
+            "provided, but nothing in it was claimed as used."
+        )
+
+    if context:
+        with st.expander(f"Additional context provided — {len(context)}"):
+            _render_chat_source_rows(context)
 
 
 def _render_chat_view(current: ArchitectState) -> str | None:
@@ -828,7 +851,10 @@ def _render_chat_view(current: ArchitectState) -> str | None:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
             if message["role"] == "assistant":
-                _render_chat_sources(message.get("sources") or [])
+                _render_chat_sources(
+                    message.get("sources") or [],
+                    message.get("context") or [],
+                )
 
     if st.button("Clear chat", help="Clears this run's conversation only."):
         architecture_chat.clear_chat(current.run_id)

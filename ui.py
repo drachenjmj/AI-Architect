@@ -59,15 +59,17 @@ THE FINISHED-RUN SCREEN (what the DONE branch shows)
 This file stays the event/DRAW spine; the sections themselves live in
 ui_sections.py as small DRAW-only functions, and the finished-run screen is
 now a multi-view WORKSPACE (see ui_workspace.py): a persistent left-side
-navigation in the sidebar picks one view — Overview, Context, Knowledge,
-Repository, Design, Review, and the History/Chat placeholders — and only the
-selected view renders. The screen had grown past what one page should carry,
-and the upcoming History and Chat workstreams would only have added to it.
+navigation in the sidebar picks one view — Overview, Architecture, Review,
+Context, Repository, Knowledge, the read-only History browser, and the
+Architecture Chat — and only the selected view renders. The screen had
+grown past what one page should carry, and the History and Chat
+workstreams are exactly what the split was built for.
 
 The views are a table of contents, not a rewrite: each one is a thin
 orchestration over the same section renderers as before, every action the
 single-page screen had lives in exactly one view, and the intent handling
-below (question, feedback, sign-off) is the same code the long page used.
+below (question, feedback, sign-off, chat) is the same code the long page
+used.
 
 The screen still has one job: make what the run actually DID visible. Four of
 the five agentic behaviours happen inside the pipeline and used to leave no
