@@ -64,7 +64,7 @@ Imagine asking a librarian (vector store): "What is good about microservices?" H
 **Measured facts (2026-08-21 rebuild):**
 
 - 503 vectors total (440 Box 1, 63 Box 2); chunk size 1000, overlap 200; embeddings `models/gemini-embedding-2`.
-- Retrieval: raw Chroma top-k with `DISTANCE_THRESHOLD = 0.65`; chunks carry `{content, source, page, box, distance}` (Box-3 chunks: `box=3`, `distance=null`).
+- Retrieval: raw Chroma top-k with `DISTANCE_THRESHOLD = 0.65`; retrieved passages keep source metadata and, where available, page information (`{content, source, page, box, distance}` — direct PDFs carry real page numbers; prepared Markdown files load with `page=0`; Box-3 chunks: `box=3`, `distance=null`).
 - Validation on 10 e-commerce queries: 9 STRONG / 1 GOOD / 0 WEAK / 0 MISS; best-distance 0.3170–0.5487 (mean 0.4000). On 6 out-of-domain negatives: best-distance 0.6914–0.7944 (mean 0.7448) — no overlap with the positives, so 0.65 sits inside a clean separation gap.
 - Every fallback outcome is logged with an explicit status (`web_fallback`, `web_fallback_empty`, `web_fallback_error`, `web_fallback_disabled`); `kb_gap_report.py` groups any of them into a frequency table of internal-KB gaps ("consider adding to KB box 1/2").
 - Raw upstream sources (full PDFs, v1 pattern file) are preserved in `Rag Database/raw_source_archive/`, outside the ingestion globs — the active index contains only curated content.

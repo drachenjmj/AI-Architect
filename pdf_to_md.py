@@ -1,6 +1,38 @@
 """pdf_to_md.py - Convert a PDF to clean Markdown for RAG ingestion.
 
-Deterministic, rule-based extraction with pypdf. No LLM, no network.
+Deterministic, rule-based extraction with pypdf. No LLM, no network, no
+external ChatGPT step — this script IS the repo-owned preparation stage of
+the standalone ingestion workflow:
+
+    PDF source
+    -> python pdf_to_md.py input.pdf -o "Rag Database/<box folder>"
+    -> clean Markdown with page boundaries preserved as "---" separators
+    -> REVIEW the .md by hand (nothing becomes permanent KB content unseen)
+    -> rerun Rag_Setup.ipynb, which chunks (1000/200), embeds, and persists
+       to chroma_db/ via the existing pipeline.
+
+Box selection is purely the output DIRECTORY:
+    - "Rag Database/box1_patterns/"  -> box 1 (general architecture patterns)
+    - "Rag Database/box2_domain/"    -> box 2 (domain knowledge)
+
+Future Box-2 domains need no code change: the loader keys on the two box
+folder names only, never on domain names — additional domains are added as
+flat, domain-prefixed files (the existing convention, e.g.
+"ecommerce_*.md", "healthcare_*.md") inside box2_domain/.
+
+Page provenance: each PDF page becomes one block separated by a horizontal
+rule ("---"), so the ORIGINAL page boundaries stay visible inline in the
+prepared Markdown and in the chunks built from it. Chunk metadata is
+assigned by the ingestion loader, NOT here, and differs by source type:
+direct PDFs (PyPDFLoader in Rag_Setup.ipynb) get real per-page `source` +
+`page` metadata; prepared Markdown (TextLoader) keeps `source=<filename>`
+but sets `page=0` — exact original PDF page numbers are NOT reconstructed
+as chunk metadata. That limitation is acceptable for this prototype and can
+be improved later if page-level Markdown citation ever becomes necessary.
+
+Limits: text extraction only — scanned/image-only PDFs have no extractable
+text and fail with a clear error (no OCR; the project does not depend on
+any OCR library).
 
 Cleanup rules:
   - Running headers/footers (lines recurring in the top/bottom margin of
@@ -19,6 +51,7 @@ import sys
 from collections import Counter
 
 from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 
 
 def _extract_pages(pdf_path: str) -> list[str]:
@@ -86,8 +119,26 @@ def main(argv=None) -> int:
         print(f"Error: input PDF not found: {args.pdf}", file=sys.stderr)
         return 1
 
-    pages = _extract_pages(args.pdf)
+    try:
+        pages = _extract_pages(args.pdf)
+    except (PdfReadError, ValueError, OSError) as e:
+        print(
+            f"Error: cannot read {args.pdf} as a PDF: {e}", file=sys.stderr
+        )
+        return 1
+
     markdown = convert_pages_to_markdown(pages, args.margin, args.min_repeat)
+    if not markdown:
+        # An empty result would otherwise be written as a silent 0-byte
+        # "success". Text extraction found nothing — typically a scanned,
+        # image-only PDF (no OCR in this project) — so fail loudly instead
+        # of producing a source that would ingest as nothing.
+        print(
+            f"Error: no extractable text found in {args.pdf} — it is empty or "
+            "a scanned/image-only PDF (OCR is not supported).",
+            file=sys.stderr,
+        )
+        return 1
 
     base = os.path.splitext(os.path.basename(args.pdf))[0]
     os.makedirs(args.outdir, exist_ok=True)

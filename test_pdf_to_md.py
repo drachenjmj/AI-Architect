@@ -198,3 +198,113 @@ def test_main_writes_markdown_named_after_input(tmp_path, capsys):
     assert out.is_file()
     assert "only page" in out.read_text(encoding="utf-8")
     assert "Wrote" in capsys.readouterr().out
+
+
+# ── standalone-workflow hardening: deterministic, provenance, failure ──────
+
+
+def test_conversion_is_deterministic_for_the_same_file(tmp_path):
+    pdf = tmp_path / "sample.pdf"
+    _make_pdf(pdf, ["alpha body text", "beta body text", "gamma body text"])
+
+    first = p2m.pdf_to_markdown(str(pdf))
+    second = p2m.pdf_to_markdown(str(pdf))
+
+    assert first == second
+
+
+def test_page_provenance_survives_as_separators(tmp_path):
+    """Each PDF page becomes exactly one block; the '---' separators are the
+    page boundaries the ingestion pipeline's chunks will carry inline."""
+    pdf = tmp_path / "pages.pdf"
+    _make_pdf(pdf, ["page one text", "page two text", "page three text"])
+
+    md = p2m.pdf_to_markdown(str(pdf))
+    blocks = md.split("\n\n---\n\n")
+
+    assert len(blocks) == 3
+    assert blocks[0].strip() == "page one text"
+    assert blocks[2].strip() == "page three text"
+
+
+def test_main_fails_clearly_on_unreadable_pdf(tmp_path, capsys):
+    """A non-PDF file (here: plain text) must fail with a clear error, not a
+    traceback or a bogus empty output."""
+    bogus = tmp_path / "not-a-real.pdf"
+    bogus.write_bytes(b"this is definitely not a pdf")
+
+    rc = p2m.main([str(bogus)])
+
+    assert rc == 1
+    assert "cannot read" in capsys.readouterr().err
+    assert not (tmp_path / "not-a-real.md").exists()
+
+
+def test_main_fails_clearly_on_textless_pdf(tmp_path, capsys):
+    """A structurally VALID PDF whose pages contain no extractable text
+    (the scanned/image-only shape): a silent 0-byte .md would ingest as
+    nothing — fail loudly instead. The fixture builds a real one-page PDF
+    with an EMPTY content stream."""
+    scanned = tmp_path / "scanned.pdf"
+    _make_pdf(scanned, [""])  # valid page, no text drawn
+
+    rc = p2m.main([str(scanned)])
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "no extractable text" in err
+    assert "OCR is not supported" in err
+    assert not (tmp_path / "scanned.md").exists()
+
+
+def test_single_bad_page_does_not_drop_the_document(tmp_path):
+    """One empty page among real ones: the document still converts, the
+    empty page is skipped rather than aborting everything."""
+    pdf = tmp_path / "mixed.pdf"
+    _make_pdf(pdf, ["real page one", "", "real page three"])
+
+    md = p2m.pdf_to_markdown(str(pdf))
+
+    assert "real page one" in md and "real page three" in md
+    assert md.count("\n\n---\n\n") == 1  # the empty page leaves no separator
+
+
+# ── the prepared output feeds the EXISTING ingestion path unchanged ────────
+
+
+def test_ingestion_constants_are_pinned():
+    """The accepted chunking/retrieval design lives in Rag_Setup.ipynb. This
+    parses the notebook source (offline, no execution) and pins the values
+    this workflow must NOT change: chunk size/overlap and the Box folder
+    mapping."""
+    import json
+    from pathlib import Path
+
+    nb = json.loads(
+        (Path(__file__).parent / "Rag_Setup.ipynb").read_text(encoding="utf-8")
+    )
+    src = "\n".join("".join(c["source"]) for c in nb["cells"])
+
+    assert "chunk_size = 1000" in src.replace(", ", " = ").replace(
+        "chunk_size=1000", "chunk_size = 1000"
+    ) or "chunk_size = 1000" in src or "chunk_size=1000" in src
+    assert "chunk_overlap = 200" in src or "chunk_overlap=200" in src
+    assert '"box1_patterns": 1' in src
+    assert '"box2_domain": 2' in src
+
+
+def test_prepared_output_matches_the_box2_domain_convention():
+    """B6: nothing in the converter's LOGIC hard-codes a domain — the module
+    docstring may name the existing file-naming convention as documentation,
+    but the functions themselves must stay domain-agnostic. Future Box-2
+    domains are flat, domain-prefixed .md files inside box2_domain/, which
+    the converter's output (basename + '.md') fits as-is."""
+    import inspect
+
+    for function in (
+        p2m._extract_pages, p2m._recurring_lines, p2m._clean_page,
+        p2m.convert_pages_to_markdown, p2m.pdf_to_markdown, p2m.main,
+    ):
+        source = inspect.getsource(function)
+        for domain in ("ecommerce", "healthcare", "finance"):
+            assert domain not in source, (function.__name__, domain)

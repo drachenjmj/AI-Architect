@@ -113,6 +113,43 @@ Rag Database/      curated knowledge base: box1_patterns/ (general architecture)
                    architect.py when the KB has no usable match. See setup_report.md.
 ```
 
+### KB maintenance workflow (PDF → Markdown → KB)
+
+Adding a new source is fully standalone — repository code only, no external
+ChatGPT/manual transformation, no LLM call:
+
+```powershell
+# 1. Prepare: deterministic PDF → clean Markdown (pypdf; recurring
+#    headers/footers removed; page boundaries kept as '---' separators).
+python pdf_to_md.py path\to\source.pdf -o "Rag Database/box1_patterns/"   # box 1
+python pdf_to_md.py path\to\source.pdf -o "Rag Database/box2_domain/"     # box 2
+```
+
+The output **directory is the box selector** — nothing else. Box 2 keeps a
+flat, domain-prefixed naming convention (`ecommerce_*.md`; a future domain
+would be e.g. `healthcare_*.md`) — no code change needed. Scanned/image-only
+PDFs (no extractable text) fail with a clear error; OCR is not supported.
+
+Provenance: prepared Markdown keeps `source=<filename>` metadata and the
+original PDF page boundaries inline as `---` separators, but the Markdown
+loader sets `page=0` — exact original page numbers are not reconstructed as
+chunk metadata (direct PDF ingestion via PyPDFLoader still has per-page
+metadata). Acceptable for the prototype.
+
+2. **Review the prepared `.md` by hand** — nothing becomes permanent KB
+   content unseen.
+3. **Rebuild the index** by rerunning `Rag_Setup.ipynb` (chunks at
+   1000/200, embeds with the configured model, persists to `chroma_db/`).
+
+When Box 1/2 cannot answer a query, Box 3 performs a grounded web search and
+the gap plus its candidate sources are logged. Recurring gaps and their
+candidate sources are surfaced for human review — nothing from Box 3 is ever
+auto-ingested:
+
+```powershell
+python kb_gap_report.py            # grouped gaps + candidate Box-3 sources
+```
+
 ## Quick start
 
 Full environment instructions are in **[SETUP.md](SETUP.md)** (Python 3.12,
