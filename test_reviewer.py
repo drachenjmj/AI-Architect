@@ -823,6 +823,113 @@ def test_services_with_component_descriptions_pass_review(monkeypatch):
     assert output["stage"] is Stage.DONE
 
 
+# --- generic plural "… services" must not invent named services ------------
+#
+# Regression for the real E2E run 20260822T103036Z-dc6e159d against
+# ecommerce-monolith: ADR-002's rationale "Decouples services, allowing
+# individual scaling to handle spikes." was parsed as a reference to a
+# component named "Decouples Service", producing a false HIGH finding.
+# Generic prose (a verb/adjective before the plural "services") is not a
+# named reference; only an explicit ENUMERATION of TitleCase names is.
+
+
+def test_generic_plural_services_produces_no_named_services():
+    from pipeline.review_checks import _extract_service_bases
+
+    for phrase in (
+        "Decouples services, allowing individual scaling to handle spikes.",
+        "Allows services to evolve independently.",
+        "Services communicate asynchronously through the Event Bus.",
+        "Runs on Amazon Web Services.",
+    ):
+        assert _extract_service_bases(phrase) == [], phrase
+
+
+def test_enumerated_services_remain_detected():
+    from pipeline.review_checks import _extract_service_bases
+
+    bases = _extract_service_bases(
+        "The Shared Event Bus fans out order events to the Order, "
+        "Payment, and Notification services for downstream consumers."
+    )
+    assert set(bases) == {"Order", "Payment", "Notification"}
+
+    # The two-name "and" form is an enumeration too.
+    bases = _extract_service_bases(
+        "Events flow to the Payment and Notification services."
+    )
+    assert set(bases) == {"Payment", "Notification"}
+
+
+def test_real_adr002_rationale_yields_no_invented_service():
+    """The exact real ADR-002 text, against the run's real component list:
+    no 'Decouples Service' may be invented or flagged."""
+    state = new_run(
+        "Re-architect the ecommerce monolith to handle seasonal spikes."
+    )
+    state.context_record = ContextRecord(
+        project_name="Ecommerce Monolith Modernization",
+        business_goal="Survive seasonal peaks without outages.",
+        summary="event-driven modernization of a Django monolith",
+    )
+    state.features = [
+        Feature(
+            id="FEAT-001",
+            name="Decouple order processing",
+            description="Orders are accepted asynchronously at peak.",
+            scenario="A customer order is queued instead of blocking checkout.",
+            acceptance_criteria=["Orders are persisted asynchronously."],
+        ),
+    ]
+    state.blueprint = Blueprint(
+        project_name="Ecommerce Monolith Modernization",
+        selected_pattern="Event-driven services behind a central event bus",
+        stakeholder_view="Peak-season shopping keeps working during migration.",
+        technical_view="Services communicate through EventBridge.",
+        components=["Event Bus", "Order Service"],
+        addressed_feature_ids=["FEAT-001"],
+    )
+    state.adrs = [
+        ADR(
+            id="ADR-002",
+            title="ADR-002: Event-Driven Architecture for Scalability",
+            context="The monolith's synchronous coupling saturates at peak.",
+            decision="Use Amazon EventBridge as the central Event Bus.",
+            rationale=(
+                "Decouples services, allowing individual scaling to handle "
+                "spikes."
+            ),
+            alternatives_considered=["Point-to-point REST integration"],
+            positive_consequences=["Independent scaling per module."],
+            negative_consequences=["Eventual consistency."],
+            related_component_names=["Event Bus", "Order Service"],
+        )
+    ]
+    state.components = [
+        ComponentDescription(
+            id="COMP-001", name="Event Bus",
+            purpose="Backbone for domain events.",
+            description="Implements the event-driven pattern.",
+            related_feature_ids=["FEAT-001"],
+            related_adr_ids=["ADR-002"],
+        ),
+        ComponentDescription(
+            id="COMP-002", name="Order Service",
+            purpose="Accept orders asynchronously.",
+            description="Handles order placement.",
+            related_feature_ids=["FEAT-001"],
+            related_adr_ids=["ADR-002"],
+        ),
+    ]
+
+    checks = run_deterministic_checks(state)
+
+    assert "Decouples Service" not in checks.unowned_target_services
+    assert not any(
+        "Decouples Service" in issue.finding for issue in checks.issues
+    )
+
+
 # --- refinement-instruction assembly --------------------------------------
 #
 # These pin the fix for run 20260818T194159Z-107ff26e, where the instruction

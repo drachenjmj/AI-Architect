@@ -587,8 +587,11 @@ def _check_traceability(
 # ─────────────────────────────────────────────────────────────────────────
 
 _TARGET_SINGULAR_RE = re.compile(r"\b([A-Z][A-Za-z0-9-]*)\s+Service\b")
+# The plural/list form. Continuation accepts ", and" (Oxford comma) as well
+# as "," and "and", so "Order, Payment, and Notification services" captures
+# the WHOLE enumeration rather than only its last name.
 _TARGET_LIST_RE = re.compile(
-    r"\b([A-Z][A-Za-z0-9-]*(?:(?:\s*,\s*|\s+and\s+|\s+)[A-Z][A-Za-z0-9-]*)*)"
+    r"\b([A-Z][A-Za-z0-9-]*(?:(?:\s*,\s*(?:and\s+)?|\s+and\s+|\s+)[A-Z][A-Za-z0-9-]*)*)"
     r"\s+[Ss]ervices\b"
 )
 
@@ -661,26 +664,39 @@ def _extract_service_bases(text: str) -> list[str]:
     """Pull candidate target-service names out of one text field.
 
     Matches 'Cart Service' (single TitleCase word before 'Service') and
-    lists like 'Order, Payment, and Notification services'. Non-name words
-    ('The', 'Managed', 'External', sentence-start verbs) are dropped so
-    ordinary prose cannot manufacture a service.
-    """
+    enumerations like 'Order, Payment, and Notification services'.
 
+    PLURAL PROSE IS NOT A REFERENCE (regression, run 20260822T103036Z):
+    'Decouples services', 'Allows services to evolve' — a lone TitleCase
+    verb/adjective before the plural 'services' is sentence-initial
+    capitalization, not a name, and treating it as one invented a
+    'Decouples Service' and a false HIGH finding. Structurally, the plural
+    form yields names ONLY when the surrounding syntax explicitly
+    ENUMERATES service entities: a comma or 'and' joining at least two
+    TitleCase tokens that survive the non-name filter. A single word
+    before 'services' is therefore never a name; a genuine singular
+    reference ('Payment Service') is caught by the singular regex.
+    """
     bases: set[str] = set()
     for match in _TARGET_SINGULAR_RE.finditer(text):
-        bases.add(match.group(1))
+        base = match.group(1)
+        if base.lower() not in _NON_NAME_WORDS and base.lower() != "service":
+            bases.add(base)
     for match in _TARGET_LIST_RE.finditer(text):
-        bases.update(
+        enumeration = match.group(1)
+        names = [
             part
-            for part in re.split(r",|\s+and\s+|\s+", match.group(1))
+            for part in re.split(r",|\s+and\s+|\s+", enumeration)
             if part
+            and part.lower() not in _NON_NAME_WORDS
+            and part.lower() != "service"
+        ]
+        is_explicit_list = ("," in enumeration) or (
+            re.search(r"\s+and\s+", enumeration) is not None
         )
-    return sorted(
-        base
-        for base in bases
-        if base.lower() not in _NON_NAME_WORDS
-        and base.lower() != "service"
-    )
+        if is_explicit_list and len(names) >= 2:
+            bases.update(names)
+    return sorted(bases)
 
 
 def _sentence_spans(text: str) -> list[str]:

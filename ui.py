@@ -477,8 +477,19 @@ def _demo_variant() -> str | None:
 # ── session init ──────────────────────────────────────────────────────────
 st.session_state.setdefault("state", None)
 
+# Set by the New run button (after its session clear) so an EXPLICIT new run
+# outranks the `--demo` auto-seeder below: without it, clicking New run under
+# `-- --demo` cleared the session and the seeder immediately re-loaded the
+# same demo state — the button appeared to do nothing. A plain page refresh
+# starts a fresh session, so demo seeding still works exactly as before.
+_NEW_RUN_KEY = "new_run_requested"
+
 _DEMO = _demo_variant()
-if _DEMO is not None and st.session_state["state"] is None:
+if (
+    _DEMO is not None
+    and st.session_state["state"] is None
+    and not st.session_state.get(_NEW_RUN_KEY)
+):
     from ui_demo import build_demo_state
 
     st.session_state["state"] = build_demo_state(_DEMO)
@@ -550,6 +561,10 @@ with st.sidebar:
         request_submit_round = render_pending_feedback_panel(state)
     if state is not None and st.button("🔄 New run"):
         st.session_state.clear()  # Event 3: forget everything → fresh start
+        # Set AFTER the clear, so it survives it: this is what stops the
+        # `--demo` seeder from re-loading a finished run over the fresh
+        # start the human just asked for (see the note by _NEW_RUN_KEY).
+        st.session_state[_NEW_RUN_KEY] = True
         st.rerun()
 
 # A submit request from the sidebar panel. Handled OUTSIDE the `with
