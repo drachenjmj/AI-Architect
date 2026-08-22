@@ -11,6 +11,9 @@ Covered rubric items:
 4. ADR presence and structure
 5. Source-reference integrity
 6. Cross-artifact target-service ownership
+7. Data-flow participant resolution (every flow endpoint is a Component or
+   is clearly external)
+8. Migration disposition for new internal target services (brownfield)
 
 The checks use the frozen structured schemas owned by Maheen. A limited legacy
 fallback exists only when callers explicitly enable it for old fixtures.
@@ -90,6 +93,14 @@ class DeterministicChecks(BaseModel):
     # deviation justification against the detected stack. Empty when the
     # design stays in the stack, justifies the change, or none was detected.
     unjustified_language_drift: dict[str, list[str]] = Field(default_factory=dict)
+
+    # Arrow-flow endpoints with no Component Description and no external
+    # marker, mapped to the flows that reference them (invariant A).
+    unresolved_flow_participants: dict[str, list[str]] = Field(default_factory=dict)
+
+    # New internal application services with no explicit migration
+    # disposition, by name (invariant B).
+    services_without_migration_disposition: list[str] = Field(default_factory=list)
 
     constraints_applicable: dict[str, bool] = Field(default_factory=dict)
     constraints_covered: dict[str, bool] = Field(default_factory=dict)
@@ -1210,6 +1221,270 @@ def _check_technology_drift(
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# Rubric item: cross-artifact data-flow participant resolution (invariant A)
+#
+# Run 20260822T170536Z-04942cfe passed review while `data_flows` referenced
+# "Product Service" and "Product Database" that had no Component
+# Description — the ownership check let them through on a text-disposition
+# sentence that happened to contain the right tokens. This invariant is
+# independent of prose dispositions: an arrow-flow ENDPOINT either matches
+# a Component Description (the catalog a reader and the diagram see), is a
+# clearly-external participant, or produces a finding. Nothing is inferred,
+# guessed, or silently added.
+#
+# Arrow-splitting mirrors the canonicalizer/renderer spelling (→ and ->);
+# sentence-style flows without arrows carry no endpoints and are not
+# parsed — they predate the diagram contract and are judged elsewhere.
+# ─────────────────────────────────────────────────────────────────────────
+
+_FLOW_ARROW_SPLIT_RE = re.compile(r"\s*(?:→|->)\s*")
+
+# Whole-endpoint external ACTORS and generic external INFRASTRUCTURE /
+# third-party providers. Technology-generic only — no benchmark names.
+_EXTERNAL_ACTOR_ENDPOINTS = frozenset({
+    "client", "customer", "customers", "user", "users", "browser",
+    "admin", "administrator", "operator", "partner", "public internet",
+    "internet", "mobile app", "web app",
+})
+_EXTERNAL_INFRA_ENDPOINTS = frozenset({
+    "postgres", "postgresql", "mysql", "mongodb", "mongo", "redis",
+    "memcached", "elasticsearch", "kafka", "rabbitmq", "sqs", "sns",
+    "eventbridge", "kinesis", "s3", "dynamodb", "aurora", "rds",
+    "stripe", "paypal", "ses", "sns+", "external payment provider",
+})
+# Markers that make a longer endpoint CLEARLY external regardless of the
+# rest of its wording ("Third-party Payment Provider", "External CRM").
+_CLEARLY_EXTERNAL_MARKERS = ("third-party", "third party", "external")
+
+
+def _fold(text: str) -> str:
+    """Case-insensitive, whitespace-collapsed form for identity matching."""
+
+    return " ".join(text.lower().split())
+
+
+def _is_external_participant(endpoint: str) -> bool:
+    """Is this flow endpoint a clearly-external actor/system/provider?"""
+    folded = _fold(endpoint)
+    if folded in _EXTERNAL_ACTOR_ENDPOINTS or folded in _EXTERNAL_INFRA_ENDPOINTS:
+        return True
+    return any(marker in folded for marker in _CLEARLY_EXTERNAL_MARKERS)
+
+
+def _flow_endpoints(flows: list[str]) -> list[str]:
+    """Every arrow-flow endpoint, label stripped, order preserved. Pure.
+
+    A flow with no arrow at all ("Order Service publishes OrderCreated to
+    the Shared Event Bus...") predates the `A -> B` diagram contract and is
+    judged by the other cross-artifact checks — splitting on an absent
+    arrow would otherwise hand back the whole sentence as one "endpoint".
+    """
+    endpoints: list[str] = []
+    for flow in _non_empty(flows):
+        text = flow.partition(":")[0] if ":" in flow else flow
+        if not _FLOW_ARROW_SPLIT_RE.search(text):
+            continue
+        endpoints.extend(
+            part.strip() for part in _FLOW_ARROW_SPLIT_RE.split(text)
+            if part.strip()
+        )
+    return endpoints
+
+
+def _check_flow_participants(
+    state: ArchitectState,
+) -> dict[str, list[str]]:
+    """Arrow-flow endpoints with no Component Description and no external
+    marker, mapped to the flows that reference them. Pure.
+
+    Resolution is EXACT (folded) against Component Description names — the
+    same identity the writer-side canonicalizer targets and the diagram
+    draws. A Blueprint.components-only name (listed but never described)
+    does NOT resolve: describing it or marking it external is the fix.
+    """
+    if state.blueprint is None:
+        return {}
+    described = {_fold(c.name) for c in state.components if c.name.strip()}
+    unresolved: dict[str, set[str]] = {}
+    for flow in _non_empty(state.blueprint.data_flows):
+        for endpoint in _flow_endpoints([flow]):
+            if _fold(endpoint) in described or _is_external_participant(endpoint):
+                continue
+            unresolved.setdefault(endpoint, set()).add(flow)
+    return {
+        endpoint: sorted(flows) for endpoint, flows in unresolved.items()
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Rubric item: migration disposition for new internal target services
+# (invariant B)
+#
+# Same run: "Payment Service" existed as a new internal target component
+# while the migration plan named only the gateway and two extractions — a
+# service with no stated migration path. The Architect prompt now demands a
+# disposition; this check makes the absence of one a code-owned finding.
+# Only application SERVICES are in scope (databases, brokers, gateways and
+# other infrastructure follow their owning service's step); the check is
+# brownfield-only — no repository evidence, no legacy to migrate from.
+# ─────────────────────────────────────────────────────────────────────────
+
+# "Deferred to a later phase" / "already existing" — the two migration
+# dispositions with no existing phrase pattern. "External" reuses
+# `_EXTERNAL_DISPOSITION_RE` below rather than redefining that vocabulary a
+# second time (see module header).
+_MIGRATION_PHASE_RE = re.compile(
+    r"\b(?:later|future|next)\s+phase\b|\bphase\s+\d+\b|"
+    r"\balready\s+exist(?:s|ing)?\b",
+    re.IGNORECASE,
+)
+
+# "Retained in legacy" — same retention-verb vocabulary as
+# `_RETENTION_VERB_RE`, but restructured so a bare retention verb can never
+# qualify alone. A manual review found that "Payment Service retains PCI
+# controls during migration" and "keeps its API unchanged" were passing as
+# dispositions merely because SOME retention verb appeared somewhere in the
+# sentence. A retention verb is only a migration disposition when it is
+# followed by a LOCATIVE preposition ("in"/"within"/"inside"/"part of") that
+# places the service INSIDE the legacy system — "remains compatible WITH
+# legacy clients" carries the word "legacy" too, but nothing there places
+# the service in it, so it must not qualify either.
+_LEGACY_PLACEMENT_RE = re.compile(
+    r"\b(?:remain(?:s|ed|ing)?|stay(?:s|ed|ing)?|keep(?:s|t|ing)?|"
+    r"retain(?:s|ed|ing)?)\b\s*(?:is\s+|are\s+)?"
+    r"(?:in|within|inside|part\s+of)\s+(?:the\s+)?(?:current\s+)?"
+    r"(?:legacy|monolith)\w*\b"
+    r"|\bleft\s+in\s+(?:the\s+)?(?:legacy|monolith)\w*\b"
+    r"|\bserved\s+by\s+(?:the\s+)?(?:legacy|monolith)\w*\b"
+    r"|\bnot\s+(?:yet\s+)?(?:be\s+)?extracted\b(?:\s+\w+){0,3}?\s+"
+    r"(?:the\s+)?(?:legacy|monolith)\w*\b"
+    r"|\bcontinue[sd]?\s+to\s+(?:be\s+)?(?:live|run|reside)\b"
+    r"(?:\s+\w+){0,3}?\s+(?:the\s+)?(?:legacy|monolith)\w*\b",
+    re.IGNORECASE,
+)
+
+
+def _has_migration_disposition_phrase(sentence: str) -> bool:
+    """Does this sentence carry an explicit migration-disposition phrase?
+
+    `_LEGACY_PLACEMENT_RE` deliberately does NOT reduce to "legacy/monolith
+    noun co-occurs with a retention verb" — see its docstring above.
+    "Deferred to Phase 2" has nothing to do with the legacy system and is
+    matched independently by `_MIGRATION_PHASE_RE`.
+    """
+    return bool(
+        _LEGACY_PLACEMENT_RE.search(sentence)
+        or _EXTERNAL_DISPOSITION_RE.search(sentence)
+        or _MIGRATION_PHASE_RE.search(sentence)
+    )
+
+
+def _repo_evidence_text(state: ArchitectState) -> str:
+    """What the repository analysis actually says about the legacy system.
+    Empty when no real repo evidence exists (greenfield or stub repo)."""
+    repo = state.repo_representation
+    if repo is None:
+        return ""
+    parts = [
+        repo.behavior.overview,
+        " ".join(p.name + " " + p.role for p in repo.behavior.partitions),
+        " ".join(repo.structure.tech_stack.languages.keys()),
+        " ".join(repo.structure.tech_stack.frameworks),
+    ]
+    return " ".join(_non_empty(parts))
+
+
+def _repo_partition_service_names(state: ArchitectState) -> set[str]:
+    """Folded partition NAMES from the repo analysis. Pure.
+
+    A repo partition is documented as a partition along the repo's OWN
+    structure — a module, app, package, or capability, never automatically
+    a service boundary (the same distinction the brownfield design prompt
+    already draws for the Architect). A partition literally named for the
+    standalone service ("Payment Service") is strong evidence that service
+    exists; a partition named only for the capability it happens to serve
+    ("Payment") is NOT — a manual review found that subset-token matching
+    let "Payment" satisfy "Payment Service", which is exactly the
+    capability-vs-service conflation this check exists to reject. Matching
+    is therefore EXACT (folded name equality), never subset containment,
+    and partition `role` prose is never consulted.
+    """
+    repo = state.repo_representation
+    if repo is None:
+        return set()
+    return {
+        _fold(partition.name)
+        for partition in repo.behavior.partitions
+        if partition.name.strip()
+    }
+
+
+def _check_migration_disposition(
+    state: ArchitectState,
+) -> list[str]:
+    """New internal application services with no explicit migration
+    disposition, by name. Pure.
+
+    Identity reuses `_component_key`/`_name_tokens` — the same tokens the
+    target-service-ownership check (invariant, above) resolves names with,
+    so the writer's canonical spelling and this judge agree on what a
+    service "is" without a second matcher.
+
+    A service is EXISTING only on STRONG evidence: a repo partition
+    EXACTLY named for it (`_repo_partition_service_names`), or an explicit
+    design disposition ("already existing"). Generic capability prose ("the
+    legacy monolith handles payments") is NOT that evidence — it proves the
+    CAPABILITY exists, not that a standalone "Payment Service" does, and
+    treating it as proof was a manual review's first false-negative finding
+    (a monolith mentioning a capability let a same-named new service
+    through with no migration step at all); a bare capability-named
+    partition ("Payment") is the same error one field over and is rejected
+    the same way. A new service is otherwise DISPOSED when some migration
+    step names all its identity tokens, or a design sentence names them
+    together with an explicit disposition phrase (deferred / later phase /
+    retained in legacy / external / already existing). Anything else is
+    silently introduced. The legacy system's own component (named
+    "...Monolith" or "...Legacy...") is never a candidate: it is what is
+    being migrated FROM, not a newly introduced target service.
+    """
+    repo_text = _repo_evidence_text(state)
+    if not repo_text:
+        return []  # no legacy evidence → not a brownfield disposition case
+
+    partition_service_names = _repo_partition_service_names(state)
+    step_token_sets = [
+        set(_name_tokens(" ".join(_non_empty([
+            step.title, step.objective, step.coexistence_or_data_strategy,
+            step.exit_condition, *step.changes,
+        ]))))
+        for step in (state.blueprint.migration_steps if state.blueprint else [])
+    ]
+    design_sentences = _design_sentences(state)
+
+    undisposed: list[str] = []
+    for component in state.components:
+        if "service" not in component.component_type.lower():
+            continue  # infrastructure/databases ride their owning step
+        if _LEGACY_NOUN_RE.search(component.name.lower()):
+            continue  # the legacy system itself, not a new target service
+        key = set(_component_key(component.name))
+        if not key:
+            continue  # name carries no identity beyond "Service" itself
+        if _fold(component.name) in partition_service_names:
+            continue  # a structural repo partition is EXACTLY this service
+        if any(key <= step_tokens for step_tokens in step_token_sets):
+            continue  # named in a migration step
+        disposed = any(
+            key <= set(_name_tokens(sentence))
+            and _has_migration_disposition_phrase(sentence)
+            for sentence in design_sentences
+        )
+        if not disposed:
+            undisposed.append(component.name)
+    return sorted(undisposed)
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # Main deterministic validation
 # ─────────────────────────────────────────────────────────────────────────
 
@@ -1235,6 +1510,9 @@ def run_deterministic_checks(
     traceability["unowned_target_services"] = unowned_target_services
 
     unjustified_language_drift = _check_technology_drift(state)
+
+    unresolved_flow_participants = _check_flow_participants(state)
+    services_without_migration_disposition = _check_migration_disposition(state)
 
     malformed_adrs, incomplete_adrs, duplicate_numbers = _check_adrs(state)
     constraints_applicable, constraints_covered, constraints_uncovered = (
@@ -1503,6 +1781,47 @@ def run_deterministic_checks(
                 ),
             )
 
+    if unresolved_flow_participants:
+        # HIGH: an unresolved flow participant means the diagram a reader
+        # sees and the Component catalog a reader sees do not agree.
+        for endpoint, flows in sorted(unresolved_flow_participants.items()):
+            add_issue(
+                "high",
+                "traceability",
+                (
+                    f"'{endpoint}' appears as a data-flow participant but "
+                    "has no Component Description and is not a "
+                    "clearly-external actor/system."
+                ),
+                f"referenced in data_flows: {'; '.join(flows)}",
+                (
+                    f"Add a Component Description for '{endpoint}', "
+                    "change the flow to reference an existing Component by "
+                    "its exact name, or mark the participant explicitly "
+                    "external."
+                ),
+            )
+
+    if services_without_migration_disposition:
+        # HIGH, brownfield-only (see `_check_migration_disposition`): a new
+        # service with no stated migration path is a silent scope change.
+        for name in services_without_migration_disposition:
+            add_issue(
+                "high",
+                "traceability",
+                (
+                    f"'{name}' is a new internal service with no explicit "
+                    "migration disposition."
+                ),
+                f"component={name}",
+                (
+                    f"State '{name}'s migration disposition explicitly: "
+                    "extracted in a named migration step, deferred to a "
+                    "later phase, retained in the legacy system for now, "
+                    "or external/already existing."
+                ),
+            )
+
     structured_traceability_errors = {
         key: value
         for key, value in traceability.items()
@@ -1593,6 +1912,8 @@ def run_deterministic_checks(
         invalid_source_references=invalid_sources,
         unowned_target_services=unowned_target_services,
         unjustified_language_drift=unjustified_language_drift,
+        unresolved_flow_participants=unresolved_flow_participants,
+        services_without_migration_disposition=services_without_migration_disposition,
         constraints_applicable=constraints_applicable,
         constraints_covered=constraints_covered,
         constraints_uncovered=constraints_uncovered,
