@@ -149,10 +149,12 @@ section needed to change to support it.
 """
 from __future__ import annotations
 
+import html
 import sys
 
 import streamlit as st
 
+import architecture_chat
 from pipeline.agents import clarifier as clarifier_gate
 from pipeline.llm import LLMError
 from pipeline import orchestrator
@@ -349,8 +351,8 @@ def _resume_picker() -> None:
         "Resume a previous run",
         list(options),
         index=0,  # ← the zero-click default
-        help="Every run is checkpointed after each step, so you can close the "
-             "tab mid-run and pick up exactly where you left off.",
+        help="Every run is checkpointed after each step, so you can close "
+             "the tab mid-run and pick up exactly where you left off.",
     )
     run_id = options[choice]
     if run_id is None:
@@ -362,6 +364,96 @@ def _resume_picker() -> None:
         st.error(f"Could not resume that run: {exc}")
         return
     st.rerun()  # redraw with the loaded state
+
+
+# ── the CURRENT-RUN switcher ───────────────────────────────────────────────
+# History (ui_workspace) is the READ-ONLY browser of saved runs. This control
+# is its deliberate counterpart: the ONE place in the workspace that makes a
+# different saved run CURRENT. It reuses the resume flow exactly — the same
+# `list_runs` summaries the picker above builds on and the same `load_state`
+# deserialization — so there is no second loader and no new persistence.
+_SWITCH_OPEN_KEY = "switch_run_expander"
+
+
+def _current_run_line(state: ArchitectState) -> str:
+    """One identifying line for the active run: project · repo · short id."""
+
+    record = state.context_record
+    project = (
+        (record.project_name if record is not None else "")
+        or (state.blueprint.project_name if state.blueprint is not None else "")
+        or "Architecture run"
+    ).strip() or "Architecture run"
+    url = (
+        state.repo_representation.meta.url
+        if state.repo_representation is not None
+        else state.initial_request.repo_url
+    ).strip()
+    repo = url.rstrip("/").rsplit("/", 1)[-1] if url else ""
+    parts = [project] + ([repo] if repo else [])
+    return (
+        f"{html.escape(' · '.join(parts))} · "
+        f"<code>{html.escape(state.run_id.rsplit('-', 1)[-1])}</code>"
+    )
+
+
+def _render_run_switcher(state: ArchitectState) -> None:
+    """DRAW the current-run control in the sidebar.
+
+    Two-step on purpose: opening the expander only READS the list of saved
+    runs, and only the explicit Make-current action replaces
+    `st.session_state["state"]` — switching a run is never a side effect of
+    browsing (History cannot do it either).
+
+    PENDING FEEDBACK GUARDS THE SWITCH. The staged bundle belongs to the run
+    it was typed against; making another run current with the bundle alive
+    would let one run's feedback land on a different run's next submission.
+    The switch is refused with a warning until the bundle is submitted or
+    discarded — the smallest safe rule, and the one that can never misapply
+    text.
+
+    The runs directory is scanned only while the expander is OPEN (Streamlit
+    keeps an expander's open/closed state under its key), so ordinary
+    reruns pay nothing for having this control in the sidebar.
+    """
+    st.caption("**Current run**")
+    st.markdown(_current_run_line(state), unsafe_allow_html=True)
+
+    with st.expander("Switch run", key=_SWITCH_OPEN_KEY):
+        if not st.session_state.get(_SWITCH_OPEN_KEY):
+            return  # closed: no directory scan, no widgets
+        try:
+            runs = list_runs()
+        except Exception as exc:  # noqa: BLE001 — a control is never worth a crash
+            st.warning(f"Could not read saved runs: {exc}")
+            return
+        others = [summary for summary in runs if summary.run_id != state.run_id]
+        if not others:
+            st.caption("No other saved runs are available on this machine yet.")
+            return
+
+        options = {_run_label(summary): summary.run_id for summary in others}
+        choice = st.selectbox("Saved runs", list(options), key="switch_run_choice")
+        if st.button(
+            "Make current run",
+            key="switch_run_apply",
+            type="primary",
+            use_container_width=True,
+        ):
+            pending = get_pending_feedback()
+            if any(str(value or "").strip() for value in pending.values()):
+                st.warning(
+                    "You have unsent feedback staged for the CURRENT run. "
+                    "Submit or discard it from the sidebar first — pending "
+                    "feedback must never land on a different run."
+                )
+                return
+            try:
+                st.session_state["state"] = load_state(options[choice])
+            except CheckpointError as exc:
+                st.error(f"Could not make that run current: {exc}")
+                return
+            st.rerun()  # redraw everything with the newly-current run
 
 
 # ── DEV ONLY: `-- --demo [variant]` loads a finished run, no pipeline ────
@@ -438,6 +530,10 @@ with st.sidebar:
     st.caption("BCG Platinion × AIIM — Architecture Assistant")
     if state is not None:
         st.markdown(_sidebar_status_line(state), unsafe_allow_html=True)
+        # The current-run control sits directly under the status it names:
+        # what is active, and the deliberate way to change it. History stays
+        # the read-only browser; THIS is what makes a run current.
+        _render_run_switcher(state)
     st.divider()
     # Workspace navigation — only for a finished run. A run mid-flight (or a
     # first visit) keeps the focused linear flow: intake, clarifier, context
@@ -615,7 +711,15 @@ else:
     elif state.stage in _FINISHED:
         intents = render_workspace_view(state, workspace_view)
 
-        if intents.question is not None:
+        if intents.chat_question is not None:
+            # The Architecture Chat's REACT half: ONE grounded answer call
+            # through the read-only chat layer (which owns the session
+            # transcript and every read-only rule), then redraw. It is not
+            # the advisory turn and not feedback: no round, no artifact
+            # write, no checkpoint — chat lives in session state only.
+            architecture_chat.submit_question(state, intents.chat_question)
+            st.rerun()
+        elif intents.question is not None:
             # OUTSIDE the graph, exactly like the context-gate advisory
             # turn: no stage change, no `pending_decision`, no round
             # consumed. Works at ACCEPTED too — reading is not changing.

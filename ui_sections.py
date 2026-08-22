@@ -55,6 +55,7 @@ That is a rendering-side guard only; the collapse itself happens in
 from __future__ import annotations
 
 import html
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Sequence
@@ -796,13 +797,71 @@ def _render_rubric_columns(review) -> None:
             st.caption(reason.strip() or "_no reason recorded_")
 
 
-def render_review_report(state: ArchitectState) -> None:
-    """The quality gate: verdict and blocking findings FIRST, rubric detail
-    behind one collapsed expander.
+def render_review_dimensions(review) -> None:
+    """Every dimension the verdict rests on, DIRECTLY visible: the actual
+    check names with a ✓/✕ and nothing else.
 
-    The verdict line and the findings table are what a reader acts on, so
-    they sit in the main flow; the per-criterion checks and judgment reasons
-    are the audit trail behind them, one click away.
+    This is the layer a reader scans to see WHAT was examined before
+    deciding whether to open the evidence — the per-criterion scores and
+    written reasons stay behind `Detailed reviewer evidence`. Only the
+    existing rubric's names are used; no dimensions are invented.
+    """
+    st.markdown("#### Review dimensions")
+    left, right = st.columns(2)
+    with left:
+        st.markdown(
+            f"{_tag('Deterministic checks', BCG_DARK)}<br>"
+            f"{_tag('code-owned · all must pass', GREY)}",
+            unsafe_allow_html=True,
+        )
+        st.write("")
+        for field, label in _CODE_CHECKS:
+            score = getattr(review.rubric_scores, field, 0)
+            mark, color = ("✓", BCG_GREEN) if score == 2 else ("✕", RED)
+            st.markdown(
+                f"{_tag(mark, color)} &nbsp; {html.escape(label)}",
+                unsafe_allow_html=True,
+            )
+    with right:
+        st.markdown(
+            f"{_tag('LLM judgments', BCG_DARK)}<br>"
+            f"{_tag('binary · never summed into the verdict', GREY)}",
+            unsafe_allow_html=True,
+        )
+        st.write("")
+        for field, label in _LLM_CHECKS:
+            # not_applicable FIRST — the stored boolean is true for these,
+            # so checking it would paint "no evidence existed" as a tick.
+            if field in review.not_applicable:
+                why = NOT_APPLICABLE_REASONS.get(field, "not applicable")
+                st.markdown(
+                    f"{_tag('n/a', GREY)} &nbsp; {html.escape(label)} &nbsp; "
+                    f"{_tag(html.escape(why), GREY)}",
+                    unsafe_allow_html=True,
+                )
+                continue
+            passed = bool(getattr(review.rubric_scores, field, False))
+            mark, color = ("✓", BCG_GREEN) if passed else ("✕", RED)
+            advisory = (
+                f" &nbsp; {_tag('advisory', GREY)}"
+                if field in ADVISORY_CRITERIA and not passed
+                else ""
+            )
+            st.markdown(
+                f"{_tag(mark, color)} &nbsp; {html.escape(label)}{advisory}",
+                unsafe_allow_html=True,
+            )
+
+
+def render_review_report(state: ArchitectState) -> None:
+    """The quality gate: verdict, blocking findings and the dimension
+    summary in the main flow; the per-criterion evidence one click away.
+
+    The verdict line, the findings table, the loop status and the dimension
+    summary are what a reader acts on, so they sit directly on the page;
+    the detailed rubric — scores, judgment reasons, advisory findings, the
+    instruction fed back to the architect — is the audit trail behind one
+    clearly-named expander.
     """
     review = state.review
     if review is None:
@@ -854,7 +913,7 @@ def render_review_report(state: ArchitectState) -> None:
         st.caption("No blocking issues were recorded.")
 
     # Refinement status stays VISIBLE — it is the state of the loop, not a
-    # diagnostic — while the rubric internals below it collapse.
+    # diagnostic — and so does the dimension summary directly under it.
     st.markdown(
         f"**Refine loop** — {state.refine_iterations} of "
         f"{MAX_REFINE_ITERATIONS} iteration"
@@ -865,8 +924,9 @@ def render_review_report(state: ArchitectState) -> None:
             else "stopped on the reviewer's verdict"
         )
     )
+    render_review_dimensions(review)
 
-    with st.expander("Rubric detail — code-owned checks and LLM judgments"):
+    with st.expander("Detailed reviewer evidence"):
         _render_rubric_columns(review)
 
         # ADVISORY FINDINGS. A criterion excluded from the verdict still gets
@@ -1934,9 +1994,33 @@ def render_architecture_summary(state: ArchitectState) -> None:
             st.markdown(blueprint.technical_view.strip())
 
 
+# Where a one-line decision summary may stop: a short decision shows whole,
+# a longer one shows its complete FIRST sentence — never a mid-sentence cut.
+_DECISION_FULL_LIMIT = 140
+
+
+def _decision_summary(decision: str) -> str:
+    """One readable line for a decision, cut only on a sentence boundary.
+
+    Deterministic string handling: the full text when it is already short,
+    otherwise everything up to the first sentence terminator (kept). No
+    ellipsis is appended — an argument the client reads must not end
+    mid-thought, and the full decision is one tab away in Architecture.
+    A decision with no terminator stays whole however long it is; inventing
+    a stopping point would be worse than a wrapping line.
+    """
+    text = decision.strip()
+    if len(text) <= _DECISION_FULL_LIMIT:
+        return text
+    match = re.search(r"[.!?](?=\s|$)", text)
+    if match:
+        return text[: match.end()].rstrip()
+    return text
+
+
 def render_key_decisions(state: ArchitectState) -> None:
     """Every ADR as one line: its title (which states the decision) and a
-    clipped decision sentence. Full trade-offs stay in Architecture."""
+    complete decision sentence. Full trade-offs stay in Architecture."""
 
     if not state.adrs:
         _missing(
@@ -1951,7 +2035,7 @@ def render_key_decisions(state: ArchitectState) -> None:
             f"{_tag(adr.id, BCG_DARK)} &nbsp; **{html.escape(adr.title)}**",
             unsafe_allow_html=True,
         )
-        st.caption(_clip_sentence(adr.decision))
+        st.caption(_decision_summary(adr.decision))
 
 
 def render_component_summary(state: ArchitectState) -> None:
@@ -2025,5 +2109,345 @@ def render_key_risks(state: ArchitectState) -> None:
     st.markdown("#### Key risks")
     st.markdown(
         _record_card_html("Stated open risks", state.blueprint.open_risks),
+        unsafe_allow_html=True,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# The rebuilt Overview — the CLIENT-FACING ANSWER (workspace UX pass).
+#
+# Overview is the page a consultant shows a client first, so these sections
+# answer the six client questions in order: what do we recommend, why, what
+# does it consist of, what was decided, what are the risks, and did it pass.
+# Every renderer below is DRAW-only and assembled DETERMINISTICALLY from
+# EXISTING artifact fields — no LLM rewrite, no invented claims, no new
+# schema. A section whose source is empty is omitted or says so; generic
+# architecture boilerplate is never used to fill a gap.
+#
+# Deliberately NOT here: a Migration Approach section. Nothing in the saved
+# artifacts carries an ordered sequence (no phases, no steps, no
+# current→target transition structure) — only prose mentions like
+# "incrementally migrating the monolith" in rationale text, and rendering
+# those as a sequence would be inferring, not displaying. Omitted until the
+# artifacts say it explicitly.
+# ══════════════════════════════════════════════════════════════════════════
+def render_executive_recommendation(state: ArchitectState) -> None:
+    """A. The one block a client reads first: WHAT is recommended, for which
+    goal, solving which problem.
+
+    The Blueprint's own pattern and stakeholder view ARE the recommendation
+    — this only frames them with the Context Record's goal and problem so
+    the "why are we here" is answered without leaving the page.
+    """
+    blueprint = state.blueprint
+    if blueprint is None:
+        _missing(
+            "Executive recommendation",
+            "the architect produced no blueprint for this run.",
+        )
+        return
+
+    st.markdown("#### Executive recommendation")
+    if blueprint.selected_pattern.strip():
+        st.markdown(f"**{html.escape(blueprint.selected_pattern.strip())}**")
+
+    record = state.context_record
+    if record is not None:
+        if record.business_goal.strip():
+            st.markdown(
+                f"**Goal** — {html.escape(record.business_goal.strip())}"
+            )
+        if record.problem_statement.strip():
+            st.markdown(
+                f"**Problem** — {html.escape(record.problem_statement.strip())}"
+            )
+
+    if blueprint.stakeholder_view.strip():
+        st.markdown(blueprint.stakeholder_view.strip())
+
+
+# The arrow the Architect writes between the endpoints of a data flow, and
+# the ASCII spelling some older artifacts use. Anything without one is not a
+# directional flow and is kept as text instead of being guessed at.
+_FLOW_ARROW_RE = re.compile(r"\s*(?:→|->)\s*")
+
+# The two node styles: a component the design OWNS (solid, brand-tinted box)
+# and everything else — actors, queues, databases, external systems (rounded,
+# greyed). The split is deterministic from `state.components` names, and it
+# is what lets a client read the diagram the way the ownership check reads
+# the design: SQS or a notification service beside the architecture is not
+# a gap in the architecture, it is something the design does not own.
+_OWNED_NODE = 'shape=box style="filled" fillcolor="#EFF6F2" color="#147B58" penwidth=1.2'
+_EXTERNAL_NODE = (
+    'shape=ellipse style="filled,dashed" fillcolor="#F5F7F6" color="#ADB5B1"'
+)
+
+
+def parse_data_flows(
+    flows: Sequence[str],
+) -> tuple[list[tuple[str, str, str]], list[str]]:
+    """Split `blueprint.data_flows` into (source, target, label) edges.
+
+    Deterministic string handling only: a flow is an `A → B` pair, optionally
+    followed by `: description` (the edge label); an `A → B → C` chain becomes
+    its consecutive pairs. Anything with no arrow (prose, headings, half a
+    sentence) is returned verbatim in the second list — never dropped, never
+    guessed into a direction.
+
+    Returns (edges, unparsed) in the artifact's own order.
+    """
+    edges: list[tuple[str, str, str]] = []
+    unparsed: list[str] = []
+    for flow in flows:
+        text = str(flow or "").strip()
+        if not text:
+            continue
+        label = ""
+        if ":" in text:
+            text, _, label = text.partition(":")
+            label = label.strip()
+        endpoints = [part.strip() for part in _FLOW_ARROW_RE.split(text) if part.strip()]
+        if len(endpoints) < 2:
+            unparsed.append(str(flow).strip())
+            continue
+        for source, target in zip(endpoints, endpoints[1:]):
+            edges.append((source, target, label))
+    return edges, unparsed
+
+
+def architecture_flow_dot(
+    edges: list[tuple[str, str, str]], component_names: Sequence[str]
+) -> str:
+    """Render parsed data-flow edges as a Graphviz DOT digraph. Pure.
+
+    Owned components (by exact `state.components` name) draw as solid boxes;
+    every other endpoint — the customer, a managed queue, a database, an
+    external service — draws as a dashed ellipse, so ownership is legible on
+    the diagram itself. Node order is first-seen, edge order is the
+    artifact's own; nothing is inferred beyond the arrow that is already
+    on the page.
+
+    TOP-TO-BOTTOM on purpose: the flow reads as a stack of stages (customer
+    at the top, storage/notification at the bottom), which keeps long
+    service names and edge labels on their own lines instead of shrinking
+    the whole picture to fit a wide column. The spacing/font numbers are
+    conservative readability settings, nothing decorative.
+    """
+    def quote(text: str) -> str:
+        return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+    owned = {name.strip() for name in component_names if name.strip()}
+    lines = [
+        "digraph architecture {",
+        "  rankdir=TB;",
+        '  graph [fontname="Helvetica", nodesep=0.5, ranksep=0.85];',
+        '  node [fontname="Helvetica", fontsize=12, margin="0.18,0.12"];',
+        '  edge [fontname="Helvetica", fontsize=10, color="#6b7a74"];',
+    ]
+    seen: list[str] = []
+
+    def declare(node: str) -> None:
+        if node not in seen:
+            seen.append(node)
+            style = _OWNED_NODE if node in owned else _EXTERNAL_NODE
+            lines.append(f"  {quote(node)} [{style}];")
+
+    for source, target, label in edges:
+        declare(source)
+        declare(target)
+        tag = f' [label={quote(label)}]' if label else ""
+        lines.append(f"  {quote(source)} -> {quote(target)}{tag};")
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def render_target_architecture(state: ArchitectState) -> None:
+    """B. The structural result, DIRECTLY visible — as a diagram.
+
+    The Blueprint's data flows ARE the target topology; this draws them as a
+    top-to-bottom flow chart (built deterministically by
+    `architecture_flow_dot` from nothing but the saved flows and component
+    names — no LLM, no new inference, no new schema). The diagram is the
+    primary visual result, so its accordion opens EXPANDED; collapsing it
+    only hides pixels — no data or state moves. Flows that carry no arrow
+    cannot be drawn safely and stay as visible text under the diagram
+    rather than disappearing; the verbatim list and the technical view stay
+    one click away, collapsed.
+    """
+    blueprint = state.blueprint
+    if blueprint is None:
+        _missing(
+            "Target architecture",
+            "the architect produced no blueprint for this run.",
+        )
+        return
+
+    st.markdown("#### Target architecture")
+    edges, unparsed = parse_data_flows(blueprint.data_flows)
+    if edges:
+        with st.expander("Architecture diagram", expanded=True):
+            st.graphviz_chart(
+                architecture_flow_dot(edges, [c.name for c in state.components]),
+                use_container_width=True,
+            )
+    if unparsed:
+        _bullets("Also recorded, without a direction to draw", unparsed)
+    if blueprint.data_flows:
+        with st.expander("All data flows (verbatim)", expanded=False):
+            st.markdown(
+                "\n".join(f"- {flow}" for flow in blueprint.data_flows)
+            )
+    if blueprint.technical_view.strip():
+        with st.expander("Technical view (full detail)", expanded=False):
+            st.markdown(blueprint.technical_view.strip())
+    if not blueprint.data_flows and not blueprint.technical_view.strip():
+        st.caption("The blueprint records no structure beyond its views.")
+
+
+# C. is capped at a handful of reasons on purpose: a list of twelve is a
+# list nobody reads, and the full reasoning is one tab away in Architecture.
+_WHY_MAX_REASONS = 5
+
+
+def render_why_architecture(state: ArchitectState) -> None:
+    """C. Why THIS design: the Blueprint's rationale and each ADR's own
+    rationale, in FULL, deduplicated, capped in COUNT.
+
+    Verbatim artifact text — a client-facing result must not end an argument
+    mid-sentence with an ellipsis, so a selected reason is rendered whole and
+    simply wraps. The cap stays on the NUMBER of reasons (a list of twelve
+    is a list nobody reads); generic architecture benefits are never
+    invented, and fewer grounded reasons means fewer bullets.
+    """
+    candidates: list[tuple[str, str]] = []  # (attribution tag, text)
+    if state.blueprint is not None and state.blueprint.rationale.strip():
+        candidates.append(("", state.blueprint.rationale.strip()))
+    for adr in state.adrs:
+        if adr.rationale.strip():
+            candidates.append((adr.id, adr.rationale.strip()))
+
+    reasons: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for tag, text in candidates:
+        key = text.lower()[:80]  # dedupe on the opening words
+        if key in seen:
+            continue
+        seen.add(key)
+        reasons.append((tag, text))
+        if len(reasons) == _WHY_MAX_REASONS:
+            break
+
+    if not reasons:
+        _missing(
+            "Why this architecture",
+            "neither the blueprint nor the ADRs recorded a rationale.",
+        )
+        return
+
+    st.markdown("#### Why this architecture")
+    for tag, text in reasons:
+        prefix = f"`{html.escape(tag)}` &nbsp; " if tag else ""
+        st.markdown(f"- {prefix}{html.escape(text)}")
+
+
+def render_risks_and_tradeoffs(state: ArchitectState) -> None:
+    """G. What the client is accepting, in three grounded groups: the
+    design's own open risks, the trade-off each decision explicitly
+    accepted (ADR negative consequences, attributed), and any finding the
+    review left open. Existing text only, and deduplicated ACROSS groups so
+    the same sentence never appears twice."""
+    blueprint = state.blueprint
+    risks = [
+        risk.strip()
+        for risk in (blueprint.open_risks if blueprint else [])
+        if risk.strip()
+    ]
+    tradeoffs = [
+        (adr.id, consequence.strip())
+        for adr in state.adrs
+        for consequence in adr.negative_consequences
+        if consequence.strip()
+    ]
+    findings = list(state.review.issues) if state.review else []
+
+    if not risks and not tradeoffs and not findings:
+        st.caption("No risks or trade-offs were recorded for this design.")
+        return
+
+    # One shared seen-set, filled in reading order, so a sentence the
+    # blueprint states as a risk is not repeated as a trade-off below it.
+    seen: set[str] = set()
+
+    def _first_time(text: str) -> bool:
+        key = " ".join(text.lower().split())[:80]
+        if key in seen:
+            return False
+        seen.add(key)
+        return True
+
+    st.markdown("#### Risks and trade-offs")
+    risks = [risk for risk in risks if _first_time(risk)]
+    if risks:
+        st.markdown("**Open risks**")
+        st.markdown("\n".join(f"- {html.escape(risk)}" for risk in risks))
+    tradeoffs = [(adr_id, text) for adr_id, text in tradeoffs if _first_time(text)]
+    if tradeoffs:
+        st.markdown("**Trade-offs the decisions accepted**")
+        st.markdown(
+            "\n".join(
+                f"- `{html.escape(adr_id)}` {html.escape(text)}"
+                for adr_id, text in tradeoffs
+            )
+        )
+    if findings:
+        st.markdown("**Open review findings**")
+        for issue in findings:
+            color = _SEVERITY_COLORS.get(issue.severity, GREY)
+            st.markdown(
+                f"{_tag(issue.severity.upper(), color)} &nbsp; "
+                f"{html.escape(_clip_sentence(issue.finding, 130))}",
+                unsafe_allow_html=True,
+            )
+
+
+def render_review_confidence(state: ArchitectState) -> None:
+    """H. How much to trust the page above: verdict, open findings,
+    refinement effort, acceptance — the four facts a client asks about.
+
+    Compact by design; the rubric that produced the verdict stays in the
+    Review view. Same honesty rule as `render_run_status`: never a bare
+    "passed" without the findings that are still open."""
+    st.markdown("#### Review confidence")
+    review = state.review
+    if review is None:
+        st.markdown(
+            f"{_tag('NOT REVIEWED', _SEVERITY_COLORS['medium'])} &nbsp; "
+            "The design never reached the quality gate.",
+            unsafe_allow_html=True,
+        )
+        return
+
+    verdict = "REVIEW PASSED" if review.overall_status == "pass" else "REVIEW FAILED"
+    color = BCG_GREEN if review.overall_status == "pass" else RED
+    open_count = len(review.issues)
+    parts = [
+        f"{open_count} open finding{'s' if open_count != 1 else ''}",
+        (
+            f"{state.refine_iterations} refinement round"
+            f"{'s' if state.refine_iterations != 1 else ''}"
+            if state.refine_iterations
+            else "no refinement rounds"
+        ),
+    ]
+    if state.stopped_on_cap:
+        parts.append("stopped on the cost cap")
+    if state.accepted_at:
+        parts.append(f"accepted {_datestamp(state.accepted_at)}")
+    elif state.stage is Stage.DONE:
+        parts.append("not yet accepted")
+
+    st.markdown(
+        f"{_tag(verdict, color)} &nbsp; "
+        + " · ".join(html.escape(part) for part in parts),
         unsafe_allow_html=True,
     )

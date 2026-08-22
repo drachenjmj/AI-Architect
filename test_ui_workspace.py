@@ -33,11 +33,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from ui_demo import build_demo_state
-from ui_workspace import (
-    CHAT_PLACEHOLDER,
-    HISTORY_PLACEHOLDER,
-    WORKSPACE_VIEWS,
-)
+from ui_workspace import WORKSPACE_VIEWS
 
 _UI = str(Path(__file__).parent / "ui.py")
 
@@ -54,6 +50,12 @@ def _finished_app() -> AppTest:
 
 def _expander_labels(at: AppTest) -> list[str]:
     return [e.label for e in at.expander]
+
+
+def _main_expander_labels(at: AppTest) -> list[str]:
+    """Expander labels EXCLUDING the sidebar's Switch-run control, which is
+    chrome rather than view content."""
+    return [label for label in _expander_labels(at) if label != "Switch run"]
 
 
 def _has_expander(at: AppTest, needle: str) -> bool:
@@ -110,6 +112,42 @@ def test_every_destination_switches_cleanly():
         _select_view(at, view)  # asserts no exception internally
 
 
+def _nav_types(at: AppTest) -> dict[str, str]:
+    """label -> button type ("primary"/"secondary") for the nav buttons."""
+
+    return {
+        b.label: b.proto.type
+        for b in at.sidebar.button
+        if b.label in WORKSPACE_VIEWS
+    }
+
+
+def test_click_updates_highlight_and_content_in_the_same_interaction():
+    """Regression: the green highlight used to lag one click behind the
+    content — clicking Chat rendered Chat but kept Knowledge primary until
+    the NEXT interaction. Content and active styling must move together."""
+
+    at = _finished_app()
+    next(b for b in at.sidebar.button if b.label == "Chat").click()
+    at.run()
+    assert not at.exception
+
+    types = _nav_types(at)
+    assert types["Chat"] == "primary"          # active IMMEDIATELY...
+    assert sum(1 for t in types.values() if t == "primary") == 1
+    # ...and the content on screen is the same destination as the highlight.
+    assert any("Architecture Chat" in m.value for m in at.markdown)
+
+    # A second click keeps exactly one active and moves it again.
+    next(b for b in at.sidebar.button if b.label == "Run details").click()
+    at.run()
+    assert not at.exception
+    types = _nav_types(at)
+    assert types["Run details"] == "primary"
+    assert types["Chat"] == "secondary"
+    assert sum(1 for t in types.values() if t == "primary") == 1
+
+
 # ── 2. Overview: the client-facing result, not the operations log ─────────
 
 
@@ -118,16 +156,16 @@ def test_overview_is_the_client_facing_architecture_result():
 
     md = " | ".join(m.value for m in at.markdown)
     caps = " | ".join(c.value for c in at.caption)
-    # What architecture is recommended, why, key decisions and components,
-    # verdict and risks — directly visible.
-    assert "Recommended architecture" in md
+    # The recommendation and the structure it names, directly visible.
+    assert "Executive recommendation" in md
     assert "Event-driven services" in md            # the pattern, visible
+    assert "Target architecture" in md
     assert "Key decisions" in md
     assert "ADR-1" in md and "ADR-2" in md          # every ADR, one line each
     assert "Key components" in md
     assert "Checkout Service" in md
-    assert "DESIGN COMPLETE — REVIEW PASSED" in md  # honest verdict line
-    assert "Key risks" in md
+    assert "REVIEW PASSED" in md                    # compact confidence line
+    assert "Risks and trade-offs" in md
     assert any(
         "Accept this design" in b.label for b in at.button
     )                                          # the sign-off lives here
@@ -179,12 +217,19 @@ def test_architecture_view_renders_the_full_deliverable():
 def test_review_view_renders_review_content_only():
     at = _select_view(_finished_app(), "Review")
 
-    # Verdict prominent in the main flow; rubric detail one click away.
+    md = " | ".join(m.value for m in at.markdown)
+    # Verdict, issue count, loop status AND the dimension summary are all
+    # directly visible — the checks are no longer hidden behind one giant
+    # accordion.
     assert any("REVIEW — PASS" in m.value for m in at.markdown)
     assert any("No blocking issues" in c.value for c in at.caption)
+    assert "Review dimensions" in md
+    assert "Traceability" in md and "Repo grounding" in md  # real check names
+    # Only the detailed EVIDENCE stays collapsible, under a clearer name.
     assert any(
-        "Rubric detail" in label for label in _expander_labels(at)
+        "Detailed reviewer evidence" in label for label in _expander_labels(at)
     )
+    assert not _has_expander(at, "Rubric detail")   # the old giant expander is gone
     assert not _has_expander(at, "Blueprint")
     assert not _has_expander(at, "Knowledge retrieved")
     assert not _has_expander(at, "Components")
@@ -269,18 +314,22 @@ def no_pipeline_actions(monkeypatch):
     return _boom
 
 
-def test_history_placeholder_performs_no_action(no_pipeline_actions):
-    at = _select_view(_finished_app(), "History")
+def test_chat_view_renders_without_any_action(no_pipeline_actions, monkeypatch):
+    """Rendering the Chat page costs nothing — the LLM answer call happens
+    only when a question is SUBMITTED (covered in test_ui_chat.py)."""
+    def _llm_boom(*args, **kwargs):
+        raise AssertionError("an LLM call was triggered by rendering")
 
-    assert any(HISTORY_PLACEHOLDER in info.value for info in at.info)
-    assert not _expander_labels(at)  # nothing else renders
+    monkeypatch.setattr("pipeline.llm.llm_call", _llm_boom)
 
-
-def test_chat_placeholder_performs_no_action(no_pipeline_actions):
     at = _select_view(_finished_app(), "Chat")
 
-    assert any(CHAT_PLACEHOLDER in info.value for info in at.info)
-    assert not _expander_labels(at)
+    assert any(
+        "Ask questions about the current architecture" in c.value
+        for c in at.caption
+    )
+    assert len(at.chat_input) == 1
+    assert not _main_expander_labels(at)  # no transcript, no sources yet
 
 
 # ── 5. the pre-run / Clarifier flow needs no navigation ────────────────────
@@ -561,13 +610,21 @@ def test_sign_off_still_works_alongside_pending_feedback(monkeypatch):
     assert REQ_TEXT in _sidebar_texts(at)
 
 
-def test_placeholders_stay_inert_with_pending_feedback(no_pipeline_actions):
+def test_chat_stays_inert_with_pending_feedback(no_pipeline_actions, monkeypatch):
     at = _stage_both()
-    for view in ("History", "Chat"):
-        _select_view(at, view)
-        # The placeholders render alone; the panel is sidebar-only and
-        # performs no action (the fixture booby-traps every backend path).
-        assert not _expander_labels(at)
+    # History has its own test file (test_ui_history.py); the Chat view
+    # stays inert here even with a pending bundle staged — rendering it
+    # must not answer anything (no LLM call) and must not touch the bundle.
+    monkeypatch.setattr(
+        "pipeline.llm.llm_call",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("LLM call triggered by rendering")
+        ),
+    )
+    _select_view(at, "Chat")
+    # The view renders (its input is present) with no transcript yet.
+    assert len(at.chat_input) == 1
+    assert not _main_expander_labels(at)
 
 
 # ── 7. visual polish: header, no transcript, inert rendering ───────────────
