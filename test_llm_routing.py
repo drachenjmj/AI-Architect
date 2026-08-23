@@ -12,12 +12,15 @@ Opus 5 A/B experiment (see `pipeline/llm.py` module docstring for the design):
     Pydantic/`str` contract as the Google path, propagates transport and
     schema-validation failures as `LLMError`, and reports provider/model/token
     metadata through the same `LLMUsage` shape;
+  * the schema sent for structured output goes through Anthropic's OFFICIAL
+    `transform_schema`, never a raw `response_schema.model_json_schema()`;
   * cost accounting for Claude uses the published per-1M-token rates.
 
 No network calls anywhere in this file — every Anthropic client is a stub.
 """
 from __future__ import annotations
 
+import anthropic
 import pytest
 from pydantic import BaseModel
 
@@ -172,6 +175,12 @@ def test_provider_without_a_model_is_ignored(monkeypatch):
     assert role_model_override("architect", arch.ARCHITECT_MODEL) == arch.ARCHITECT_MODEL
 
 
+def test_claude_effort_defaults_to_high():
+    # CLAUDE_EFFORT is read once at import time — this pins the documented
+    # default (see .env.example) for whoever hasn't overridden it locally.
+    assert llm.CLAUDE_EFFORT == "high"
+
+
 # ── 5 & 7. Claude structured output -> exact Pydantic type + usage metadata ─
 def test_claude_structured_output_becomes_the_requested_pydantic_type(monkeypatch):
     capture = []
@@ -196,9 +205,20 @@ def test_claude_structured_output_becomes_the_requested_pydantic_type(monkeypatc
     assert sent["model"] == "claude-opus-5"
     assert sent["system"] == "sys"
     assert sent["output_config"]["effort"] == llm.CLAUDE_EFFORT
+
+    # THE regression this pins: the schema on the wire must be Anthropic's
+    # OFFICIAL `transform_schema` output, never raw `model_json_schema()`.
+    # `additionalProperties: false` is the concrete, API-required shape that
+    # `transform_schema` adds and a raw Pydantic schema never has — so this
+    # also proves the transform actually ran, not just that some dict was sent.
+    raw_schema = _Point.model_json_schema()
+    assert "additionalProperties" not in raw_schema
+    sent_schema = sent["output_config"]["format"]["schema"]
+    assert sent_schema != raw_schema
+    assert sent_schema["additionalProperties"] is False
     assert sent["output_config"]["format"] == {
         "type": "json_schema",
-        "schema": _Point.model_json_schema(),
+        "schema": anthropic.transform_schema(_Point),
     }
 
 

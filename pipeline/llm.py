@@ -399,13 +399,26 @@ def _anthropic_call(
     schema-invalid output raise the same `LLMError` contract, with billed
     tokens attached on the unusable-output path — no silent JSON repair, no
     cross-provider fallback.
+
+    The schema itself goes through Anthropic's OFFICIAL `transform_schema`
+    (not a hand-rolled sanitizer) before it is sent — a raw
+    `response_schema.model_json_schema()` omits API-required shape like
+    `additionalProperties: false` on objects, which is exactly what
+    `transform_schema` adds. `client.messages.parse()` applies this same
+    transform internally, but its own schema-validation failure raises
+    directly out of the SDK call with no response object recoverable — which
+    would silently drop the billed-usage-on-failure guarantee above. Calling
+    `transform_schema` explicitly and keeping our own `model_validate_json`
+    step keeps that guarantee intact.
     """
     client = _get_anthropic_client()
+    from anthropic import transform_schema
+
     output_config: dict[str, Any] = {"effort": CLAUDE_EFFORT}
     if response_schema is not None:
         output_config["format"] = {
             "type": "json_schema",
-            "schema": response_schema.model_json_schema(),
+            "schema": transform_schema(response_schema),
         }
     request: dict[str, Any] = {
         "model": model_id,
