@@ -77,6 +77,7 @@ from pipeline.refine_gate import (
     MAX_REFINE_ITERATIONS,
     MAX_USER_ROUNDS,
 )
+from pipeline.flow_syntax import split_directional_flow
 from pipeline.sign_off import (
     feedback_is_closed,
     open_findings,
@@ -2257,10 +2258,10 @@ def render_executive_recommendation(state: ArchitectState) -> None:
         st.markdown(blueprint.stakeholder_view.strip())
 
 
-# The arrow the Architect writes between the endpoints of a data flow, and
-# the ASCII spelling some older artifacts use. Anything without one is not a
-# directional flow and is kept as text instead of being guessed at.
-_FLOW_ARROW_RE = re.compile(r"\s*(?:→|->)\s*")
+# The arrow spellings and the directional grammar itself now live in ONE
+# shared module (`pipeline.flow_syntax`) used by BOTH this renderer and the
+# deterministic Reviewer checks — what renders is exactly what the Reviewer
+# accepts as a flow, by construction rather than by convention.
 
 # The two node styles: a component the design OWNS (solid, brand-tinted box)
 # and everything else — actors, queues, databases, external systems (rounded,
@@ -2283,24 +2284,21 @@ def parse_data_flows(
     followed by `: description` (the edge label); an `A → B → C` chain becomes
     its consecutive pairs. Anything with no arrow (prose, headings, half a
     sentence) is returned verbatim in the second list — never dropped, never
-    guessed into a direction.
+    guessed into a direction. The parsing itself is the shared
+    `pipeline.flow_syntax.split_directional_flow`, so the Reviewer's
+    renderability invariant and this renderer read the same grammar.
 
     Returns (edges, unparsed) in the artifact's own order.
     """
     edges: list[tuple[str, str, str]] = []
     unparsed: list[str] = []
     for flow in flows:
-        text = str(flow or "").strip()
-        if not text:
+        parsed = split_directional_flow(flow)
+        if parsed is None:
+            if str(flow or "").strip():
+                unparsed.append(str(flow).strip())
             continue
-        label = ""
-        if ":" in text:
-            text, _, label = text.partition(":")
-            label = label.strip()
-        endpoints = [part.strip() for part in _FLOW_ARROW_RE.split(text) if part.strip()]
-        if len(endpoints) < 2:
-            unparsed.append(str(flow).strip())
-            continue
+        endpoints, label = parsed
         for source, target in zip(endpoints, endpoints[1:]):
             edges.append((source, target, label))
     return edges, unparsed

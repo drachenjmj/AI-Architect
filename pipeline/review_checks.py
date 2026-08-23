@@ -26,6 +26,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from pipeline.flow_syntax import split_directional_flow
 from pipeline.state import ArchitectState, ContextRecord, ReviewIssue
 
 
@@ -99,9 +100,18 @@ class DeterministicChecks(BaseModel):
     # marker, mapped to the flows that reference them (invariant A).
     unresolved_flow_participants: dict[str, list[str]] = Field(default_factory=dict)
 
+    # Non-empty data flows the shared renderer grammar cannot parse into a
+    # directional edge (invariant A2), verbatim.
+    unrenderable_data_flows: list[str] = Field(default_factory=list)
+
     # New internal application services with no explicit migration
     # disposition, by name (invariant B).
     services_without_migration_disposition: list[str] = Field(default_factory=list)
+
+    # Services a migration step promises to introduce that resolve to no
+    # Component Description, mapped to the step titles naming them (the
+    # reverse of invariant B).
+    unresolved_migration_targets: dict[str, list[str]] = Field(default_factory=dict)
 
     constraints_applicable: dict[str, bool] = Field(default_factory=dict)
     constraints_covered: dict[str, bool] = Field(default_factory=dict)
@@ -1404,6 +1414,7 @@ def _check_technology_drift(
 
 # ─────────────────────────────────────────────────────────────────────────
 # Rubric item: cross-artifact data-flow participant resolution (invariant A)
+# + directional renderability (invariant A2)
 #
 # Run 20260822T170536Z-04942cfe passed review while `data_flows` referenced
 # "Product Service" and "Product Database" that had no Component
@@ -1414,12 +1425,15 @@ def _check_technology_drift(
 # clearly-external participant, or produces a finding. Nothing is inferred,
 # guessed, or silently added.
 #
-# Arrow-splitting mirrors the canonicalizer/renderer spelling (→ and ->);
-# sentence-style flows without arrows carry no endpoints and are not
-# parsed — they predate the diagram contract and are judged elsewhere.
+# A later final run passed with prose-only flows ("API Gateway routes
+# incoming traffic to ..."), which the diagram cannot render at all — the
+# client-facing Overview showed recorded text instead of a target
+# architecture. Every non-empty flow must therefore be parseable as a
+# directional edge under the ONE shared grammar
+# (`pipeline.flow_syntax.split_directional_flow` — the renderer's own
+# parser, extracted so judge and renderer cannot drift), and only then do
+# its endpoints reach the participant-resolution check below.
 # ─────────────────────────────────────────────────────────────────────────
-
-_FLOW_ARROW_SPLIT_RE = re.compile(r"\s*(?:→|->)\s*")
 
 # Whole-endpoint external ACTORS and generic external INFRASTRUCTURE /
 # third-party providers. Technology-generic only — no benchmark names.
@@ -1453,24 +1467,24 @@ def _is_external_participant(endpoint: str) -> bool:
     return any(marker in folded for marker in _CLEARLY_EXTERNAL_MARKERS)
 
 
-def _flow_endpoints(flows: list[str]) -> list[str]:
-    """Every arrow-flow endpoint, label stripped, order preserved. Pure.
+def _check_flow_directionality(state: ArchitectState) -> list[str]:
+    """Non-empty data flows the shared renderer grammar cannot parse. Pure.
 
-    A flow with no arrow at all ("Order Service publishes OrderCreated to
-    the Shared Event Bus...") predates the `A -> B` diagram contract and is
-    judged by the other cross-artifact checks — splitting on an absent
-    arrow would otherwise hand back the whole sentence as one "endpoint".
+    A prose flow ("API Gateway routes incoming traffic to the Order
+    Service") carries no arrow, so the diagram has no edge to draw and the
+    client sees recorded text instead of an architecture. Such a flow is
+    structurally unrenderable — reported verbatim so refinement can rewrite
+    it into `A → B` form with exact component names. Parsing is the
+    renderer's own (`pipeline.flow_syntax`), never a second grammar.
     """
-    endpoints: list[str] = []
-    for flow in _non_empty(flows):
-        text = flow.partition(":")[0] if ":" in flow else flow
-        if not _FLOW_ARROW_SPLIT_RE.search(text):
-            continue
-        endpoints.extend(
-            part.strip() for part in _FLOW_ARROW_SPLIT_RE.split(text)
-            if part.strip()
-        )
-    return endpoints
+    if state.blueprint is None:
+        return []
+    return [
+        flow.strip()
+        for flow in state.blueprint.data_flows
+        if str(flow or "").strip()
+        and split_directional_flow(flow) is None
+    ]
 
 
 def _check_flow_participants(
@@ -1484,7 +1498,8 @@ def _check_flow_participants(
     and ADR checks (a trailing lifecycle qualifier like "(New)" ignored) —
     never fuzzy substring matching. A Blueprint.components-only name (listed
     but never described) does NOT resolve: describing it or marking it
-    external is the fix.
+    external is the fix. Only DIRECTIONAL flows contribute endpoints (the
+    unrenderable ones are flagged whole by `_check_flow_directionality`).
     """
     if state.blueprint is None:
         return {}
@@ -1493,7 +1508,11 @@ def _check_flow_participants(
     }
     unresolved: dict[str, set[str]] = {}
     for flow in _non_empty(state.blueprint.data_flows):
-        for endpoint in _flow_endpoints([flow]):
+        parsed = split_directional_flow(flow)
+        if parsed is None:
+            continue
+        endpoints, _label = parsed
+        for endpoint in endpoints:
             if _component_key(endpoint) in described or _is_external_participant(
                 endpoint
             ):
@@ -1673,6 +1692,118 @@ def _check_migration_disposition(
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# Rubric item: migration targets must resolve to real components
+# (reverse of invariant B)
+#
+# A fresh final E2E run passed review with a migration step reading
+# "Extract Order, Inventory, and Shipping Services" while the component
+# catalog contained no Shipping Service — the disposition check covers
+# declared components with no migration path, but nothing covered migration
+# steps promising services the target architecture never declares. This is
+# the reverse direction: an INTRODUCTION sentence inside a migration step
+# (extract/create/introduce/deploy/build/...) that names a concrete service
+# commits the design to that service existing.
+# ─────────────────────────────────────────────────────────────────────────
+
+# Deliberately tiny: these verbs say the named thing BECOMES part of the
+# target architecture. "Migrate" is excluded on purpose — it names data
+# movement as often as service introduction, and a false negative is
+# cheaper here than a false positive.
+_MIGRATION_INTRODUCTION_RE = re.compile(
+    r"\b(?:extract|extracts|extracted|extracting|"
+    r"create|creates|created|creating|"
+    r"introduce|introduces|introduced|introducing|"
+    r"deploy|deploys|deployed|deploying|"
+    r"build|builds|built|building|"
+    r"establish|establishes|established|establishing|"
+    r"launch|launches|launched|launching|"
+    r"split|splits|splitting|"
+    r"carve|carves|carved|carving)\b",
+    re.IGNORECASE,
+)
+
+
+def _check_migration_targets(
+    state: ArchitectState,
+) -> dict[str, list[str]]:
+    """Services a migration step promises to introduce that resolve to no
+    Component Description, mapped to the step titles naming them. Pure.
+
+    Extraction is NARROW by construction: only sentences carrying an
+    introduction verb are scanned, and only names the existing
+    `_extract_service_bases` grammar accepts — an explicit
+    "<Name> Service" or an enumeration like "Order, Inventory, and Shipping
+    Services". Incidental prose ("the shipping module") carries no Service
+    suffix and is never a candidate. A candidate is excused when it
+    resolves to a described component under the SAME canonical identity as
+    the ownership check (including the composite exactness rule), or when
+    the design gives it an explicit disposition — legacy retention,
+    external, ownership, or deferred to a later phase — under the SAME
+    disposition vocabulary the other migration checks use.
+    """
+    if state.blueprint is None:
+        return {}
+    steps = state.blueprint.migration_steps
+    if not steps:
+        return {}
+
+    component_entries = [
+        (_component_key(component.name), "/" in component.name)
+        for component in state.components
+        if _component_key(component.name)
+    ]
+    owner_word_sets = [set(key) for key, _composite in component_entries]
+    # Disposition sentences include the migration steps' own text: a step
+    # may introduce one service and retain another IN THE SAME SENTENCE
+    # ("extract Order; the Cart Service remains in the legacy monolith"),
+    # and `_design_sentences` does not read migration_steps.
+    sentences = [
+        sentence.lower() for sentence in _design_sentences(state)
+    ]
+    for step in steps:
+        sentences.extend(
+            sentence.lower()
+            for sentence in _sentence_spans(" ".join(_non_empty([
+                step.title, step.objective, step.coexistence_or_data_strategy,
+                step.exit_condition, *step.changes,
+            ])))
+        )
+
+    unresolved: dict[str, set[str]] = {}
+    for step in steps:
+        step_fields = _non_empty([
+            step.title, step.objective, step.coexistence_or_data_strategy,
+            step.exit_condition, *step.changes,
+        ])
+        for sentence in _sentence_spans(" ".join(step_fields)):
+            if not _MIGRATION_INTRODUCTION_RE.search(sentence):
+                continue
+            for base in _extract_service_bases(sentence):
+                display = f"{base} Service"
+                key = _component_key(display)
+                if not key:
+                    continue
+                if any(
+                    existing == key
+                    or (not composite and existing[-len(key):] == key)
+                    for existing, composite in component_entries
+                ):
+                    continue  # the target exists in the catalog
+                if _has_explicit_disposition(key, sentences, owner_word_sets):
+                    continue  # legacy/external/ownership, same rule as ownership
+                if any(
+                    set(key) <= set(_name_tokens(s))
+                    and _has_migration_disposition_phrase(s)
+                    for s in sentences
+                ):
+                    continue  # explicitly deferred / later phase / already existing
+                unresolved.setdefault(display, set()).add(step.title.strip())
+    return {
+        display: sorted(titles) for display, titles in unresolved.items()
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # Main deterministic validation
 # ─────────────────────────────────────────────────────────────────────────
 
@@ -1700,7 +1831,9 @@ def run_deterministic_checks(
     unjustified_language_drift = _check_technology_drift(state)
 
     unresolved_flow_participants = _check_flow_participants(state)
+    unrenderable_data_flows = _check_flow_directionality(state)
     services_without_migration_disposition = _check_migration_disposition(state)
+    unresolved_migration_targets = _check_migration_targets(state)
 
     malformed_adrs, incomplete_adrs, duplicate_numbers = _check_adrs(state)
     constraints_applicable, constraints_covered, constraints_uncovered = (
@@ -2083,6 +2216,51 @@ def run_deterministic_checks(
                 ),
             )
 
+    if unrenderable_data_flows:
+        # HIGH: a prose flow cannot be rendered, so the client-facing
+        # diagram silently loses that piece of the target architecture.
+        for flow in unrenderable_data_flows:
+            shown = flow if len(flow) <= 160 else flow[:159] + "…"
+            add_issue(
+                "high",
+                "traceability",
+                (
+                    "Blueprint data flow is not in the directional "
+                    "'A → B' syntax and cannot be rendered as an "
+                    "architecture edge."
+                ),
+                f"data_flow: {shown}",
+                (
+                    "Rewrite every data flow as directional edges using the "
+                    "exact component names (e.g. 'API Gateway → Order "
+                    "Service: checkout requests'); a chain "
+                    "'A → B → C' is allowed, prose descriptions belong "
+                    "after the ':' label."
+                ),
+            )
+
+    if unresolved_migration_targets:
+        # HIGH: the migration plan promises a service the target
+        # architecture never declares — refinement must either describe the
+        # component or fix the step.
+        for name, titles in sorted(unresolved_migration_targets.items()):
+            add_issue(
+                "high",
+                "traceability",
+                (
+                    f"Migration step(s) introduce '{name}', but no "
+                    "Component Description exists for it in the target "
+                    "architecture."
+                ),
+                f"named in migration step(s): {'; '.join(titles)}",
+                (
+                    f"Either add a Component Description for '{name}', or "
+                    "correct the migration step to name only services the "
+                    "target architecture actually declares (or explicitly "
+                    "disposes as legacy, external, or deferred)."
+                ),
+            )
+
     structured_traceability_errors = {
         key: value
         for key, value in traceability.items()
@@ -2174,7 +2352,9 @@ def run_deterministic_checks(
         unowned_target_services=unowned_target_services,
         unjustified_language_drift=unjustified_language_drift,
         unresolved_flow_participants=unresolved_flow_participants,
+        unrenderable_data_flows=unrenderable_data_flows,
         services_without_migration_disposition=services_without_migration_disposition,
+        unresolved_migration_targets=unresolved_migration_targets,
         constraints_applicable=constraints_applicable,
         constraints_covered=constraints_covered,
         constraints_uncovered=constraints_uncovered,

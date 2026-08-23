@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import test_clarifier as tc
 from pipeline.agents import architect as arch
-from pipeline.review_checks import _flow_endpoints, run_deterministic_checks
+from pipeline.review_checks import run_deterministic_checks
 from pipeline.state import (
     ADR,
     Blueprint,
@@ -424,12 +424,16 @@ def test_real_run_shaped_regression_without_hard_coded_names():
 
 
 def test_arrowless_sentence_flows_carry_no_endpoints():
-    """Pre-diagram-contract prose flows are judged elsewhere, not parsed as
-    endpoints — a lone sentence must not become one giant "endpoint"."""
-    assert _flow_endpoints([
+    """Pre-diagram-contract prose flows are judged elsewhere (now by the
+    directionality invariant), not parsed as endpoints — a lone sentence
+    must not become one giant "endpoint". The property now lives in the
+    ONE shared grammar both the renderer and the Reviewer use."""
+    from pipeline.flow_syntax import split_directional_flow
+
+    assert split_directional_flow(
         "Order Service publishes OrderCreated to the Shared Event Bus, "
         "which fans out to the Payment Service."
-    ]) == []
+    ) is None
 
 
 # ── 5. migration disposition for new internal target services (invariant B) ─

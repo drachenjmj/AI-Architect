@@ -584,14 +584,12 @@ def _dangling_services_state():
         ],
         data_flows=[
             (
-                "Order Service publishes OrderCreated to the Shared Event "
-                "Bus, which fans out to the Payment Service and the "
-                "Notification Service."
+                "Order Service → Shared Event Bus → Payment Service: "
+                "OrderCreated events fan out to the payment consumer"
             ),
             (
-                "The Shared Event Bus fans out order events to the Order, "
-                "Payment, and Notification services for downstream "
-                "consumers."
+                "Shared Event Bus → Notification Service: order events for "
+                "downstream consumers"
             ),
         ],
         addressed_feature_ids=[
@@ -709,6 +707,13 @@ def _notification_is_external(state):
         "coupling. The Notification Service is an external SaaS provider "
         "operated by the messaging team."
     )
+    # The flow endpoint carries the same external disposition explicitly —
+    # an externally-provided system is an external participant in the
+    # diagram, not an unresolved internal one.
+    state.blueprint.data_flows[1] = (
+        "Shared Event Bus → External Notification Service: order events "
+        "for downstream consumers"
+    )
     return state
 
 
@@ -802,7 +807,11 @@ def test_target_capability_without_owner_is_blocking():
 
 
 def test_dangling_services_were_the_only_deterministic_failure():
-    """The fixture is otherwise fully green — the shape of the false PASS."""
+    """The fixture is otherwise fully green — the shape of the false PASS.
+    The dangling Notification Service is now caught TWICE: once by the
+    ownership check (dangling reference) and once by the flow-participant
+    check (unresolved directional endpoint) — the newer invariant sees it
+    too, which is exactly the layered defence working."""
 
     checks = run_deterministic_checks(_dangling_services_state())
 
@@ -813,7 +822,9 @@ def test_dangling_services_were_the_only_deterministic_failure():
     assert set(checks.unowned_target_services) == {
         "Cart Service", "Notification Service", "Inventory Service",
     }
-    assert len(checks.issues) == 3
+    assert set(checks.unresolved_flow_participants) == {"Notification Service"}
+    assert checks.unrenderable_data_flows == []
+    assert len(checks.issues) == 4
 
 
 def test_inconsistent_design_cannot_pass_review(monkeypatch):
