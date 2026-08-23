@@ -365,6 +365,69 @@ CLAUDE_MAX_TOKENS = int(os.environ.get("CLAUDE_MAX_TOKENS", "32000"))
 CLAUDE_EFFORT = os.environ.get("CLAUDE_EFFORT", "high")
 
 
+# ── Prompted-JSON policy for the DEMONSTRATED oversized schema ────────────
+# A real full Architect run on claude-opus-5 failed BEFORE generation with
+# Anthropic 400 invalid_request_error: "The compiled grammar is too large,
+# which would cause performance issues." — the native `output_config.format`
+# grammar COMPILER chokes on the deeply nested `ArchitectureDesign` schema
+# (Blueprint + ADRs + Components + migration steps). This is grammar
+# complexity, not input size: the same prompt text sends fine, and a tiny
+# native-grammar smoke schema worked.
+#
+# The policy is deliberately EXPLICIT, not a heuristic: no byte/depth/
+# property threshold could predict Anthropic's undocumented compiler limit,
+# so we list exactly the schema that demonstrably exceeds it. Everything
+# else keeps native structured output (and its generation constraints).
+#
+# Identity is matched WITHOUT importing the class: `pipeline.agents.
+# architect` imports this module, so a top-level import here would be
+# circular. A module-QUALIFIED name check is the narrowest safe match —
+# an unrelated Pydantic class named "ArchitectureDesign" in any other
+# module never triggers this, and the module pin is asserted by tests.
+_PROMPTED_JSON_SCHEMAS: frozenset[tuple[str, str]] = frozenset({
+    ("pipeline.agents.architect", "ArchitectureDesign"),
+})
+
+
+def _anthropic_uses_prompted_json(response_schema: type | None) -> bool:
+    """Should this Anthropic call use prompt-embedded JSON instead of the
+    native `output_config.format` grammar? True ONLY for the schemas on the
+    explicit `_PROMPTED_JSON_SCHEMAS` list — the ones a real run has
+    demonstrated exceed Anthropic's grammar-compiler limit. Pure.
+    """
+    if response_schema is None:
+        return False
+    return (
+        getattr(response_schema, "__module__", ""),
+        getattr(response_schema, "__name__", ""),
+    ) in _PROMPTED_JSON_SCHEMAS
+
+
+def _prompted_json_contract(response_schema: type) -> str:
+    """The provider-local output-format instruction appended to the prompt
+    when native structured output is not used for an oversized schema.
+
+    The COMPLETE Pydantic JSON schema is embedded exactly once, serialized
+    deterministically (`model_json_schema` + `json.dumps`), unmutated — the
+    final validator remains the original Pydantic class, this text is only
+    the contract the model is asked to satisfy.
+    """
+    import json
+
+    schema_text = json.dumps(
+        response_schema.model_json_schema(), indent=2, ensure_ascii=False
+    )
+    return (
+        "\n\nReturn exactly one JSON document matching the following "
+        "JSON Schema.\n"
+        "Do not use Markdown fences.\n"
+        "Do not include any commentary before or after the JSON.\n"
+        "Do not omit required fields.\n"
+        "Do not invent fields outside the schema.\n"
+        f"<json_schema>\n{schema_text}\n</json_schema>"
+    )
+
+
 def _get_anthropic_client() -> Any:
     global _anthropic_client
     if _anthropic_client is None:
@@ -420,12 +483,35 @@ def _anthropic_call(
     would silently drop the billed-usage-on-failure guarantee above. Calling
     `transform_schema` explicitly and keeping our own `model_validate_json`
     step keeps that guarantee intact.
+
+    OVERSIZED SCHEMAS (see `_PROMPTED_JSON_SCHEMAS`): for `ArchitectureDesign`
+    — demonstrated by a real run to exceed Anthropic's native
+    grammar-compiler limit with a 400 BEFORE generation — no
+    `output_config.format` is sent at all. The complete JSON Schema is
+    appended to the prompt as the output contract, and the SAME strict
+    `model_validate_json` validation (same class, same error path, same
+    billed-usage attachment) decides success. Streaming, max_tokens,
+    effort, and token/cost accounting are identical on both paths. NO
+    retries, NO fence stripping, NO JSON repair, NO cross-provider
+    fallback — an invalid reply fails loudly, exactly like a native
+    grammar violation would.
     """
     client = _get_anthropic_client()
     from anthropic import transform_schema
 
+    # Oversized-schema policy (see `_PROMPTED_JSON_SCHEMAS`): for the
+    # schema a real run demonstrated exceeds Anthropic's grammar compiler,
+    # NO native `output_config.format` is sent — the complete JSON Schema
+    # rides in the prompt instead and the SAME Pydantic class validates the
+    # reply below. Every other schema keeps native structured output.
+    prompted_json = _anthropic_uses_prompted_json(response_schema)
+    request_prompt = (
+        prompt + _prompted_json_contract(response_schema)
+        if prompted_json else prompt
+    )
+
     output_config: dict[str, Any] = {"effort": CLAUDE_EFFORT}
-    if response_schema is not None:
+    if response_schema is not None and not prompted_json:
         output_config["format"] = {
             "type": "json_schema",
             "schema": transform_schema(response_schema),
@@ -433,7 +519,7 @@ def _anthropic_call(
     request: dict[str, Any] = {
         "model": model_id,
         "max_tokens": CLAUDE_MAX_TOKENS,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [{"role": "user", "content": request_prompt}],
         "output_config": output_config,
     }
     if system:

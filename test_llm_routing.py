@@ -374,3 +374,179 @@ def test_claude_cost_accounting_matches_published_pricing():
     assert estimate_cost_usd("claude-opus-5", 1_000_000, 1_000_000) == pytest.approx(30.0)
     assert estimate_cost_usd("claude-opus-5", 200_000, 40_000) == pytest.approx(2.0)
     assert estimate_cost_usd("claude-opus-5", 0, 0) == 0
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Oversized-schema fallback — `ArchitectureDesign` uses prompted JSON on
+# Anthropic because a REAL full Architect run failed before generation with
+# "The compiled grammar is too large" (400). The policy is an explicit list,
+# not a size heuristic; everything else keeps native structured output.
+# ═════════════════════════════════════════════════════════════════════════
+
+
+def _minimal_design_json() -> str:
+    """The smallest schema-valid `ArchitectureDesign` document."""
+    return (
+        '{"blueprint": {"stakeholder_view": "s", "technical_view": "t"},'
+        ' "adrs": [], "components": []}'
+    )
+
+
+def test_architecture_design_is_on_the_prompted_json_list():
+    assert llm._anthropic_uses_prompted_json(arch.ArchitectureDesign) is True
+    # ...and nothing else is: the same NAME in another module never
+    # triggers it (the module pin is part of the identity).
+    class ArchitectureDesign(BaseModel):
+        x: int
+
+    assert llm._anthropic_uses_prompted_json(ArchitectureDesign) is False
+    assert llm._anthropic_uses_prompted_json(_Point) is False
+    assert llm._anthropic_uses_prompted_json(None) is False
+    assert ("pipeline.agents.architect", "ArchitectureDesign") in (
+        llm._PROMPTED_JSON_SCHEMAS
+    )
+
+
+def test_architecture_design_sends_no_native_format_but_full_prompt_contract(
+    monkeypatch,
+):
+    capture = []
+    fake_client = _FakeAnthropicClient(
+        response=_FakeMessage(_minimal_design_json(), 100, 2000),
+        capture=capture,
+    )
+    monkeypatch.setattr(llm, "_get_anthropic_client", lambda: fake_client)
+
+    llm._anthropic_call(
+        "design prompt", system="sys", model_id="claude-opus-5",
+        response_schema=arch.ArchitectureDesign,
+    )
+
+    sent = capture[0]
+    # No native grammar for the demonstrated-oversized schema...
+    assert "format" not in sent["output_config"]
+    assert sent["output_config"] == {"effort": llm.CLAUDE_EFFORT}  # effort kept
+    assert sent["max_tokens"] == llm.CLAUDE_MAX_TOKENS             # budget kept
+    assert sent["system"] == "sys"                                  # untouched
+    # ...and the prompt carries the COMPLETE contract exactly once.
+    sent_prompt = sent["messages"][0]["content"]
+    assert sent_prompt.startswith("design prompt")
+    assert sent_prompt.count("<json_schema>") == 1
+    assert sent_prompt.count("</json_schema>") == 1
+    import json
+
+    schema_text = json.dumps(
+        arch.ArchitectureDesign.model_json_schema(), indent=2,
+        ensure_ascii=False,
+    )
+    assert sent_prompt.count(schema_text) == 1  # full schema, exactly once
+    # JSON-only requirements are explicit.
+    for phrase in ("exactly one JSON document", "Do not use Markdown fences",
+                   "Do not include any commentary",
+                   "Do not omit required fields",
+                   "Do not invent fields"):
+        assert phrase in sent_prompt, phrase
+
+
+def test_architecture_design_prompted_json_returns_real_pydantic_instance(
+    monkeypatch,
+):
+    fake_client = _FakeAnthropicClient(
+        response=_FakeMessage(_minimal_design_json(), 100, 2000)
+    )
+    monkeypatch.setattr(llm, "_get_anthropic_client", lambda: fake_client)
+
+    result, usage = llm._anthropic_call(
+        "p", system="", model_id="claude-opus-5",
+        response_schema=arch.ArchitectureDesign,
+    )
+
+    assert isinstance(result, arch.ArchitectureDesign)
+    assert result.blueprint.stakeholder_view == "s"
+    # Token/cost accounting identical to the native path.
+    assert usage.model == "claude-opus-5"
+    assert usage.input_tokens == 100
+    assert usage.output_tokens == 2000
+    assert usage.cost_usd == pytest.approx(
+        estimate_cost_usd("claude-opus-5", 100, 2000)
+    )
+
+
+def test_architecture_design_invalid_json_fails_loudly_with_billed_usage(
+    monkeypatch,
+):
+    fake_client = _FakeAnthropicClient(
+        response=_FakeMessage("```json\n{oops}\n```", 80, 1500)
+    )
+    monkeypatch.setattr(llm, "_get_anthropic_client", lambda: fake_client)
+
+    with pytest.raises(LLMError) as exc_info:
+        llm._anthropic_call(
+            "p", system="", model_id="claude-opus-5",
+            response_schema=arch.ArchitectureDesign,
+        )
+
+    usage = usage_from_exception(exc_info.value)
+    assert usage is not None
+    assert usage.input_tokens == 80
+    assert usage.output_tokens == 1500
+
+
+def test_architecture_design_uses_streaming_transport_too(monkeypatch):
+    """`_FakeMessages.create()` raises unconditionally, so reaching the
+    reply at all proves messages.stream() + get_final_message() — the
+    prompted-JSON path shares the same transport as the native path."""
+    capture = []
+    fake_client = _FakeAnthropicClient(
+        response=_FakeMessage(_minimal_design_json(), 1, 1), capture=capture,
+    )
+    monkeypatch.setattr(llm, "_get_anthropic_client", lambda: fake_client)
+
+    llm._anthropic_call(
+        "p", system="", model_id="claude-opus-5",
+        response_schema=arch.ArchitectureDesign,
+    )
+
+    assert len(capture) == 1  # exactly one stream() call, zero create()
+
+
+def test_smaller_schemas_keep_native_structured_output(monkeypatch):
+    """The fallback is ArchitectureDesign-ONLY: a small schema (the tiny
+    smoke shape) still sends the native grammar via transform_schema."""
+    capture = []
+    fake_client = _FakeAnthropicClient(
+        response=_FakeMessage('{"x": 1, "y": 2}', 10, 4), capture=capture,
+    )
+    monkeypatch.setattr(llm, "_get_anthropic_client", lambda: fake_client)
+
+    llm._anthropic_call(
+        "p", system="", model_id="claude-opus-5", response_schema=_Point,
+    )
+
+    sent = capture[0]
+    assert sent["output_config"]["format"] == {
+        "type": "json_schema",
+        "schema": anthropic.transform_schema(_Point),
+    }
+    # And no prompted contract leaked into the small-schema prompt.
+    assert "<json_schema>" not in sent["messages"][0]["content"]
+
+
+def test_reviewer_schema_keeps_native_structured_output(monkeypatch):
+    """The Reviewer's `LLMJudgments` is NOT on the oversized list — it keeps
+    native structured output, so Reviewer behavior is unchanged."""
+    capture = []
+    fake_client = _FakeAnthropicClient(
+        response=_FakeMessage(
+            '{"repo_grounding": {"passed": true, "reason": "ok"}}', 5, 5,
+        ),
+        capture=capture,
+    )
+    monkeypatch.setattr(llm, "_get_anthropic_client", lambda: fake_client)
+
+    llm._anthropic_call(
+        "p", system="", model_id="claude-opus-5",
+        response_schema=rev.LLMJudgments,
+    )
+
+    assert "format" in capture[0]["output_config"]
