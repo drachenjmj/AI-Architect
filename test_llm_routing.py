@@ -15,8 +15,12 @@ Opus 5 A/B experiment (see `pipeline/llm.py` module docstring for the design):
   * the schema sent for structured output goes through Anthropic's OFFICIAL
     `transform_schema`, never a raw `response_schema.model_json_schema()`;
   * every Anthropic call goes through `messages.stream()` +
-    `get_final_message()`, never the non-streaming `messages.create()`,
-    which is required at the project's real CLAUDE_MAX_TOKENS default;
+  `get_final_message()`, never the non-streaming `messages.create()`,
+  which is required at the project's real CLAUDE_MAX_TOKENS default;
+  * a schema-invalid Anthropic response reports the SDK's own final
+  `stop_reason`, THIS call's input/output tokens, the response length in
+  characters and the actual Pydantic validation reason — without dumping
+  the generated content — while billed usage stays attached;
   * cost accounting for Claude uses the published per-1M-token rates.
 
 No network calls anywhere in this file — every Anthropic client is a stub.
@@ -73,9 +77,21 @@ class _FakeTextBlock:
 
 
 class _FakeMessage:
-    def __init__(self, text: str, input_tokens: int, output_tokens: int):
+    """Carries the fields `_anthropic_call` reads off a final Message:
+    content blocks, usage, and `stop_reason` (the SDK's own value —
+    'end_turn' by default, 'max_tokens' for the truncation tests below).
+    """
+
+    def __init__(
+        self,
+        text: str,
+        input_tokens: int,
+        output_tokens: int,
+        stop_reason: str | None = "end_turn",
+    ):
         self.content = [_FakeTextBlock(text)]
         self.usage = _FakeUsage(input_tokens, output_tokens)
+        self.stop_reason = stop_reason
 
 
 class _FakeMessageStream:
@@ -219,10 +235,10 @@ def test_provider_without_a_model_is_ignored(monkeypatch):
     assert role_model_override("architect", arch.ARCHITECT_MODEL) == arch.ARCHITECT_MODEL
 
 
-def test_claude_effort_defaults_to_high():
+def test_claude_effort_defaults_to_medium():
     # CLAUDE_EFFORT is read once at import time — this pins the documented
     # default (see .env.example) for whoever hasn't overridden it locally.
-    assert llm.CLAUDE_EFFORT == "high"
+    assert llm.CLAUDE_EFFORT == "medium"
 
 
 # ── 5 & 7. Claude structured output -> exact Pydantic type + usage metadata ─
@@ -250,7 +266,8 @@ def test_claude_structured_output_becomes_the_requested_pydantic_type(monkeypatc
     assert sent["max_tokens"] == llm.CLAUDE_MAX_TOKENS
     assert sent["messages"] == [{"role": "user", "content": "prompt"}]
     assert sent["system"] == "sys"
-    assert sent["output_config"]["effort"] == llm.CLAUDE_EFFORT
+    # The reproducible experiment default: medium effort on the wire.
+    assert sent["output_config"]["effort"] == "medium"
 
     # THE regression this pins: the schema on the wire must be Anthropic's
     # OFFICIAL `transform_schema` output, never raw `model_json_schema()`.
@@ -304,8 +321,13 @@ def test_anthropic_transport_error_becomes_llmerror(monkeypatch):
     fake_client = _FakeAnthropicClient(exception=RuntimeError("connection reset"))
     monkeypatch.setattr(llm, "_get_anthropic_client", lambda: fake_client)
 
-    with pytest.raises(LLMError, match="connection reset"):
+    with pytest.raises(LLMError, match="connection reset") as exc_info:
         llm._anthropic_call("prompt", system="", model_id="claude-opus-5")
+
+    # No final Message was obtained, so NOTHING is invented: no stop reason
+    # in the message, no billed usage attached (nothing was received).
+    assert "stop_reason" not in str(exc_info.value)
+    assert usage_from_exception(exc_info.value) is None
 
 
 def test_claude_schema_invalid_output_raises_with_billed_usage_attached(monkeypatch):
@@ -323,6 +345,92 @@ def test_claude_schema_invalid_output_raises_with_billed_usage_attached(monkeypa
     assert usage is not None
     assert usage.input_tokens == 7
     assert usage.output_tokens == 3
+
+
+# ── completion diagnostics: the failed-run post-mortem, offline ───────────
+# The real Opus E2E died with a bare "returned no schema-valid JSON" and
+# node-level token totals that could not separate truncation from a schema
+# mismatch. These pin the per-call facts a failed run must now report:
+# the SDK's own stop reason, THIS call's billed tokens, the response length
+# in characters, and the actual Pydantic validation reason.
+def test_schema_invalid_normal_completion_reports_stop_reason_and_validation(
+    monkeypatch,
+):
+    fake_client = _FakeAnthropicClient(
+        response=_FakeMessage(
+            '{"x": 1}', input_tokens=42, output_tokens=17, stop_reason="end_turn",
+        )
+    )
+    monkeypatch.setattr(llm, "_get_anthropic_client", lambda: fake_client)
+
+    with pytest.raises(LLMError) as exc_info:
+        llm._anthropic_call(
+            "prompt", system="", model_id="claude-opus-5", response_schema=_Point,
+        )
+
+    msg = str(exc_info.value)
+    assert "claude-opus-5" in msg            # provider/model
+    assert "_Point" in msg                   # response schema name
+    assert "end_turn" in msg                 # normal completion: NOT truncation
+    assert "input_tokens=42" in msg          # per-CALL, not node totals
+    assert "output_tokens=17" in msg
+    assert "response_chars=8" in msg         # len('{"x": 1}')
+    # The model's own validation reason (y missing), not a guessed diagnosis.
+    assert "y" in msg
+    assert "Field required" in msg
+    # Billed usage for THIS call remains attached.
+    usage = usage_from_exception(exc_info.value)
+    assert usage is not None
+    assert (usage.input_tokens, usage.output_tokens) == (42, 17)
+
+
+def test_schema_invalid_max_tokens_stop_reason_is_explicit(monkeypatch):
+    """The truncation case: a max_tokens stop reason must be impossible to
+    miss in the error, with the per-call budget consumption attached."""
+    fake_client = _FakeAnthropicClient(
+        response=_FakeMessage(
+            '{"x": 1', input_tokens=42, output_tokens=32000,
+            stop_reason="max_tokens",
+        )
+    )
+    monkeypatch.setattr(llm, "_get_anthropic_client", lambda: fake_client)
+
+    with pytest.raises(LLMError) as exc_info:
+        llm._anthropic_call(
+            "prompt", system="", model_id="claude-opus-5", response_schema=_Point,
+        )
+
+    msg = str(exc_info.value)
+    assert "max_tokens" in msg
+    assert "output_tokens=32000" in msg
+    usage = usage_from_exception(exc_info.value)
+    assert usage is not None
+    assert usage.output_tokens == 32000
+
+
+def test_schema_invalid_error_never_dumps_the_raw_response(monkeypatch):
+    """Diagnostics quote locations/messages/types only — the model's
+    generated content (here a 2000-char value Pydantic rejects) must not
+    leak into the error, even though Pydantic's error dicts carry it."""
+    long_bad_value = "A" * 2000
+    fake_client = _FakeAnthropicClient(
+        response=_FakeMessage(
+            f'{{"x": "{long_bad_value}", "y": 2}}',
+            input_tokens=1, output_tokens=2, stop_reason="end_turn",
+        )
+    )
+    monkeypatch.setattr(llm, "_get_anthropic_client", lambda: fake_client)
+
+    with pytest.raises(LLMError) as exc_info:
+        llm._anthropic_call(
+            "prompt", system="", model_id="claude-opus-5", response_schema=_Point,
+        )
+
+    msg = str(exc_info.value)
+    assert "AAAA" not in msg
+    assert len(msg) < 1000
+    # ...but the actual validation reason is still visible.
+    assert "valid integer" in msg
 
 
 # ── transport: always streaming, never the non-streaming create() path ───
@@ -425,8 +533,8 @@ def test_architecture_design_sends_no_native_format_but_full_prompt_contract(
     sent = capture[0]
     # No native grammar for the demonstrated-oversized schema...
     assert "format" not in sent["output_config"]
-    assert sent["output_config"] == {"effort": llm.CLAUDE_EFFORT}  # effort kept
-    assert sent["max_tokens"] == llm.CLAUDE_MAX_TOKENS             # budget kept
+    assert sent["output_config"] == {"effort": "medium"}  # effort kept (medium)
+    assert sent["max_tokens"] == llm.CLAUDE_MAX_TOKENS         # budget kept
     assert sent["system"] == "sys"                                  # untouched
     # ...and the prompt carries the COMPLETE contract exactly once.
     sent_prompt = sent["messages"][0]["content"]

@@ -362,7 +362,13 @@ _anthropic_client: Any = None
 CLAUDE_MAX_TOKENS = int(os.environ.get("CLAUDE_MAX_TOKENS", "32000"))
 # Effort is explicit on purpose (never SDK-default): the A/B experiment
 # must be able to state exactly which reasoning effort produced a run.
-CLAUDE_EFFORT = os.environ.get("CLAUDE_EFFORT", "high")
+# Default is MEDIUM since 2026-08-23: the first high-effort Opus E2E failed
+# with "no schema-valid JSON for ArchitectureDesign" and the node-level
+# token totals alone could not distinguish truncation from a schema
+# mismatch. Medium lowers reasoning overhead and latency/cost and leaves
+# more of the 32k output budget for the actual JSON; quality is judged
+# empirically by the next run, not assumed.
+CLAUDE_EFFORT = os.environ.get("CLAUDE_EFFORT", "medium")
 
 
 # ── Prompted-JSON policy for the DEMONSTRATED oversized schema ────────────
@@ -444,6 +450,40 @@ def _get_anthropic_client() -> Any:
             raise LLMError("ANTHROPIC_API_KEY not found in .env!")
         _anthropic_client = anthropic.Anthropic(api_key=api_key)
     return _anthropic_client
+
+
+def _validation_summary(exc: BaseException) -> str:
+    """Concise summary of a Pydantic/JSON validation failure, for an LLMError.
+
+    Built ONLY from each error's location, message and type. Pydantic's
+    `errors()` dicts also carry `input`/`ctx` — for this module that is the
+    model's GENERATED content, which a diagnostic must never dump. Falls
+    back to a length-capped single-line `str(exc)` for non-Pydantic
+    exceptions, so the underlying reason is always the model's own report,
+    never a guessed diagnosis.
+    """
+    errors = getattr(exc, "errors", None)
+    if callable(errors):
+        try:
+            details = errors()
+        except Exception:
+            details = None
+        if isinstance(details, list) and details:
+            parts = []
+            for d in details[:3]:
+                if not isinstance(d, dict):
+                    continue
+                loc = ".".join(str(p) for p in (d.get("loc") or ())) or "<root>"
+                parts.append(f"{loc}: {d.get('msg', '?')} [type={d.get('type', '?')}]")
+            summary = "; ".join(parts)
+            count = getattr(exc, "error_count", None)
+            total = count() if callable(count) else len(details)
+            if isinstance(total, int) and total > 3:
+                summary += f" (+{total - 3} more)"
+            if summary:
+                return summary
+    text = " ".join(str(exc).split())
+    return text[:500] + "..." if len(text) > 500 else text
 
 
 def _anthropic_call(
@@ -539,6 +579,12 @@ def _anthropic_call(
         output_tokens=output_tokens,
         cost_usd=estimate_cost_usd(model_id, input_tokens, output_tokens),
     )
+    # The provider's final completion reason, straight off the final Message
+    # the SDK accumulated (`get_final_message()` preserves it). None when the
+    # SDK did not provide one — never invented: `stop_reason='max_tokens'`
+    # vs `'end_turn'` is exactly the truncation-vs-schema-mismatch fact a
+    # failed run must be able to report.
+    stop_reason = getattr(resp, "stop_reason", None)
 
     text = "".join(
         getattr(block, "text", "")
@@ -551,7 +597,12 @@ def _anthropic_call(
         except Exception as e:
             err = LLMError(
                 f"anthropic/{model_id} returned no schema-valid JSON "
-                f"for {response_schema.__name__}"
+                f"for {response_schema.__name__} "
+                f"(stop_reason={stop_reason!r}, "
+                f"input_tokens={input_tokens}, "
+                f"output_tokens={output_tokens}, "
+                f"response_chars={len(text)}): "
+                f"{_validation_summary(e)}"
             )
             attach_usage(err, usage)  # billed but unusable — still real tokens
             raise err from e
