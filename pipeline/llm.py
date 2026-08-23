@@ -400,6 +400,16 @@ def _anthropic_call(
     tokens attached on the unusable-output path — no silent JSON repair, no
     cross-provider fallback.
 
+    TRANSPORT: always goes through `messages.stream(...)` +
+    `get_final_message()`, never `messages.create(...)`. The SDK requires
+    streaming for requests that may run past its 10-minute non-streaming
+    timeout, and that boundary is the SDK's own internal heuristic — not
+    something this module should re-derive or hard-code a token threshold
+    for. `get_final_message()` blocks until the stream completes and hands
+    back the SAME accumulated `Message` shape `messages.create()` would have
+    returned (`.content`, `.usage`), so everything below this call is
+    unchanged by the transport.
+
     The schema itself goes through Anthropic's OFFICIAL `transform_schema`
     (not a hand-rolled sanitizer) before it is sent — a raw
     `response_schema.model_json_schema()` omits API-required shape like
@@ -429,7 +439,8 @@ def _anthropic_call(
     if system:
         request["system"] = system
     try:
-        resp = client.messages.create(**request)
+        with client.messages.stream(**request) as stream:
+            resp = stream.get_final_message()
     except Exception as e:
         raise LLMError(f"anthropic/{model_id} call failed: {e}") from e
 

@@ -14,6 +14,9 @@ Opus 5 A/B experiment (see `pipeline/llm.py` module docstring for the design):
     metadata through the same `LLMUsage` shape;
   * the schema sent for structured output goes through Anthropic's OFFICIAL
     `transform_schema`, never a raw `response_schema.model_json_schema()`;
+  * every Anthropic call goes through `messages.stream()` +
+    `get_final_message()`, never the non-streaming `messages.create()`,
+    which is required at the project's real CLAUDE_MAX_TOKENS default;
   * cost accounting for Claude uses the published per-1M-token rates.
 
 No network calls anywhere in this file — every Anthropic client is a stub.
@@ -75,17 +78,58 @@ class _FakeMessage:
         self.usage = _FakeUsage(input_tokens, output_tokens)
 
 
+class _FakeMessageStream:
+    """Stands in for the SDK's `MessageStream` — only `get_final_message()`
+    is used by `_anthropic_call`, so that is the only method stubbed.
+    """
+
+    def __init__(self, message):
+        self._message = message
+
+    def get_final_message(self):
+        return self._message
+
+
+class _FakeStreamManager:
+    """Stands in for `MessageStreamManager`. The real SDK only sends the HTTP
+    request on `__enter__` (`.stream(...)` itself is lazy) — so a configured
+    exception is raised there too, matching where a real transport failure
+    would surface inside `with client.messages.stream(...) as stream:`.
+    """
+
+    def __init__(self, message=None, exception=None):
+        self._message = message
+        self._exception = exception
+
+    def __enter__(self):
+        if self._exception is not None:
+            raise self._exception
+        return _FakeMessageStream(self._message)
+
+    def __exit__(self, exc_type, exc, exc_tb):
+        return False
+
+
 class _FakeMessages:
     def __init__(self, response=None, exception=None, capture=None):
         self._response = response
         self._exception = exception
         self.capture = capture if capture is not None else []
 
-    def create(self, **kwargs):
+    def stream(self, **kwargs):
         self.capture.append(kwargs)
-        if self._exception is not None:
-            raise self._exception
-        return self._response
+        return _FakeStreamManager(message=self._response, exception=self._exception)
+
+    def create(self, **kwargs):
+        # The adapter must go through messages.stream()/get_final_message()
+        # for every Anthropic call, never the non-streaming create() path —
+        # that path client-side-fails past the SDK's 10-minute non-streaming
+        # timeout at the project's real CLAUDE_MAX_TOKENS default. A silent
+        # regression back to create() must fail loudly, here, offline.
+        raise AssertionError(
+            "messages.create() must not be called — the Anthropic adapter "
+            "must use messages.stream() + get_final_message()"
+        )
 
 
 class _FakeAnthropicClient:
@@ -203,6 +247,8 @@ def test_claude_structured_output_becomes_the_requested_pydantic_type(monkeypatc
 
     sent = capture[0]
     assert sent["model"] == "claude-opus-5"
+    assert sent["max_tokens"] == llm.CLAUDE_MAX_TOKENS
+    assert sent["messages"] == [{"role": "user", "content": "prompt"}]
     assert sent["system"] == "sys"
     assert sent["output_config"]["effort"] == llm.CLAUDE_EFFORT
 
@@ -277,6 +323,48 @@ def test_claude_schema_invalid_output_raises_with_billed_usage_attached(monkeypa
     assert usage is not None
     assert usage.input_tokens == 7
     assert usage.output_tokens == 3
+
+
+# ── transport: always streaming, never the non-streaming create() path ───
+def test_anthropic_call_uses_streaming_transport(monkeypatch):
+    """`_anthropic_call` must go through `messages.stream()` +
+    `get_final_message()` — `_FakeMessages.create()` raises AssertionError
+    unconditionally (see its definition above), so this only passes if the
+    adapter never reaches for the non-streaming path.
+    """
+    capture = []
+    fake_client = _FakeAnthropicClient(
+        response=_FakeMessage("ok", input_tokens=1, output_tokens=1),
+        capture=capture,
+    )
+    monkeypatch.setattr(llm, "_get_anthropic_client", lambda: fake_client)
+
+    text, usage = llm._anthropic_call("prompt", system="", model_id="claude-opus-5")
+
+    assert text == "ok"
+    assert usage.input_tokens == 1
+    assert len(capture) == 1  # exactly one messages.stream() call, no create()
+
+
+def test_claude_max_tokens_default_goes_through_streaming_transport(monkeypatch):
+    """Regression for the exact failure this task fixes: at the project's
+    real CLAUDE_MAX_TOKENS=32000 default, the non-streaming create() path
+    fails client-side with 'Streaming is required for operations that may
+    take longer than 10 minutes' before any request is sent. This proves
+    max_tokens=32000 is sent through messages.stream(), not create().
+    """
+    assert llm.CLAUDE_MAX_TOKENS == 32000  # the real, unchanged project default
+
+    capture = []
+    fake_client = _FakeAnthropicClient(
+        response=_FakeMessage("ok", input_tokens=1, output_tokens=1),
+        capture=capture,
+    )
+    monkeypatch.setattr(llm, "_get_anthropic_client", lambda: fake_client)
+
+    llm._anthropic_call("prompt", system="", model_id="claude-opus-5")
+
+    assert capture[0]["max_tokens"] == 32000
 
 
 # ── 8. cost accounting for Claude, a deterministic synthetic example ─────
