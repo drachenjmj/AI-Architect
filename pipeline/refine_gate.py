@@ -89,7 +89,7 @@ from pipeline.state import (
 # ── Cost-cap policy ───────────────────────────────────────────────────────
 # Tunable. The iteration cap is what realistically trips; the token budget is a
 # safety net for a run that burns tokens abnormally fast.
-MAX_REFINE_ITERATIONS = 2
+MAX_REFINE_ITERATIONS = 3
 # STILL UNTUNED, but no longer unmeasured — deliberately left as-is pending a
 # decision, not an oversight.
 #

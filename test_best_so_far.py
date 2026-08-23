@@ -242,7 +242,7 @@ def test_a_tie_resolves_to_the_earlier_round():
 # 3. The stop branch — the design and its review travel together
 # ══════════════════════════════════════════════════════════════════════════
 def test_stop_restores_a_better_earlier_round_with_its_review():
-    """THE feature. Round 2 scored better than round 3, so round 2 ships.
+    """THE feature. Round 2 scored better than round 4, so round 2 ships.
 
     The review is asserted alongside the artifacts because restoring one without
     the other would produce a report describing a design the run does not
@@ -251,7 +251,7 @@ def test_stop_restores_a_better_earlier_round_with_its_review():
     round2_review = _review(code=(2, 2, 2, 2), judged=(True,) * 5)
     incumbent = _snapshot("r2", 2, round2_review)
     state = _at_gate(
-        "r3",
+        "r4",
         _review(code=(2, 2, 1, 2), judged=(True, False, True, True, False)),
         iterations=MAX_REFINE_ITERATIONS,
         best_design=incumbent,
@@ -271,14 +271,14 @@ def test_stop_restores_a_better_earlier_round_with_its_review():
     assert out["review"].rubric_scores.traceability == 2
 
     note = out["history"][0].note
-    assert "selected round 2 of 3" in note
-    assert "discarded 1 later round" in note
+    assert "selected round 2 of 4" in note
+    assert "discarded 2 later rounds" in note
 
 
 def test_stop_restores_nothing_when_the_last_round_is_best():
     incumbent = _snapshot("r2", 2, _review(code=(2, 2, 1, 2)))
     state = _at_gate(
-        "r3",
+        "r4",
         _review(code=(2, 2, 2, 2)),
         iterations=MAX_REFINE_ITERATIONS,
         best_design=incumbent,
@@ -289,20 +289,20 @@ def test_stop_restores_nothing_when_the_last_round_is_best():
     # No artifact keys at all: absent, not rewritten with the same values.
     for key in ("features", "blueprint", "adrs", "components", "review"):
         assert key not in out, f"{key} was restored when nothing needed restoring"
-    assert out["selected_round"] == 3
+    assert out["selected_round"] == 4
     assert "scored best, nothing restored" in out["history"][0].note
 
 
 def test_the_note_names_both_rounds_when_more_than_one_is_discarded():
     """The audit trail has to be readable without re-deriving it from scores."""
     incumbent = _snapshot("r1", 1, _review(code=(2, 2, 2, 2)))
-    state = _at_gate("r3", _review(code=(1, 1, 1, 1)), iterations=MAX_REFINE_ITERATIONS,
+    state = _at_gate("r4", _review(code=(1, 1, 1, 1)), iterations=MAX_REFINE_ITERATIONS,
                      best_design=incumbent)
 
     note = refine_gate_node(state)["history"][0].note
 
-    assert "selected round 1 of 3" in note
-    assert "discarded 2 later rounds" in note
+    assert "selected round 1 of 4" in note
+    assert "discarded 3 later rounds" in note
 
 
 def test_selection_changes_nothing_but_the_artifacts():
@@ -423,7 +423,7 @@ def test_a_flapping_judge_ships_the_better_middle_round(monkeypatch):
             suggested_fix="" if passed else "canned fix",
         )
 
-    # Round 1: 1 of 5 pass. Round 2: 2 of 5. Round 3: back to 1 of 5.
+    # Round 1: 1 of 5 pass. Round 2: 2 of 5. Rounds 3 and 4: back to 1 of 5.
     #
     # CHANGED DELIBERATELY from [1, 4, 1]. The judgments are applied in the
     # `names` order below, so 4-of-5 used to mean "everything but
@@ -437,8 +437,9 @@ def test_a_flapping_judge_ships_the_better_middle_round(monkeypatch):
     #
     # So the flapping now happens on adr_soundness, which still counts. Round 2
     # is still strictly the best round (one high-severity issue rather than
-    # two) and the run still ends on the cap.
-    scripted = iter([1, 2, 1])
+    # two), the two later rounds both regress to the round-1 score, and the
+    # run still ends on the cap.
+    scripted = iter([1, 2, 1, 1])
 
     def _flapping_reviewer(state, prompt, **kwargs):
         passing = next(scripted)
@@ -488,8 +489,8 @@ def test_a_flapping_judge_ships_the_better_middle_round(monkeypatch):
     assert done.components == done.best_design.components
 
     gate_notes = [s.note for s in done.history if s.agent == "refine_gate"]
-    assert "selected round 2 of 3" in gate_notes[-1]
-    assert "discarded 1 later round" in gate_notes[-1]
+    assert "selected round 2 of 4" in gate_notes[-1]
+    assert "discarded 2 later rounds" in gate_notes[-1]
 
 
 if __name__ == "__main__":
