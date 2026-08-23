@@ -35,7 +35,7 @@ from streamlit.testing.v1 import AppTest
 from ui_demo import build_demo_state
 from ui_workspace import WORKSPACE_VIEWS
 
-_UI = str(Path(__file__).parent / "ui.py")
+_UI = str(Path(__file__).resolve().parents[2] / "ui.py")  # repo root
 
 
 def _finished_app() -> AppTest:

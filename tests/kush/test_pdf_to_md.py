@@ -281,7 +281,8 @@ def test_ingestion_constants_are_pinned():
     from pathlib import Path
 
     nb = json.loads(
-        (Path(__file__).parent / "Rag_Setup.ipynb").read_text(encoding="utf-8")
+        (Path(__file__).resolve().parents[2] / "Rag_Setup.ipynb")
+        .read_text(encoding="utf-8")
     )
     src = "\n".join("".join(c["source"]) for c in nb["cells"])
 

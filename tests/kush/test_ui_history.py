@@ -26,7 +26,7 @@ from pipeline import persistence
 from ui_demo import build_demo_state
 from ui_workspace import HISTORY_EMPTY_MESSAGE
 
-_UI = str(Path(__file__).parent / "ui.py")
+_UI = str(Path(__file__).resolve().parents[2] / "ui.py")  # repo root
 
 # Two distinguishable saved runs: the OLDER one is the capped variant
 # (FAIL verdict, 2 open issues — good read-only fodder), the NEWER one the
