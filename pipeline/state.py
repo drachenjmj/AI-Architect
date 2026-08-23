@@ -267,6 +267,10 @@ class Feature(BaseModel):
 class MigrationStep(BaseModel):
     """One ordered step of a brownfield modernization sequence.
 
+    Integration note (Kush): added during brownfield hardening; its text
+    fields are read by the deterministic migration-disposition/target
+    checks in review_checks.py, so renaming them changes Reviewer behavior.
+
     Deliberately COMPACT: this is an architecture-level migration approach
     (what moves, in what order, and how the old and new coexist), not a
     transformation-programme plan with owners, dates and tickets. Order is

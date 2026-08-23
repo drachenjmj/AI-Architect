@@ -649,6 +649,10 @@ _TARGET_LIST_RE = re.compile(
     r"\s+[Ss]ervices\b"
 )
 
+# Integration note (Kush): this verb vocabulary is the one shared knob of
+# the migration checks — it feeds BOTH the introduction matcher and the
+# never-a-name blocklist below, so extend the tuple only, never one side.
+#
 # THE ONE ACTION-VERB VOCABULARY. Deliberately tiny: these verbs say the
 # named thing BECOMES part of the target architecture; every inflected
 # form is spelled out here once, and BOTH consumers derive from it —

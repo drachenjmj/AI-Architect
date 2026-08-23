@@ -198,6 +198,12 @@ CRITICAL_RECORD_FIELDS: tuple[str, ...] = (
     "existing_systems",             # brownfield vs greenfield
 )
 
+# Integration note (Kush): the slot helpers, signal-term tables and
+# safe-assumption machinery from here through `_can_ask` were added during
+# E2E hardening to make the assume-vs-ask boundary deterministic — code
+# decides which gaps are worth a question and which become labelled
+# assumptions; see pipeline/DETERMINISM_MAP.md rows 4a-4d.
+#
 # Human-readable label per critical field — used in the labelled assumption /
 # open-question text a person actually reads, so a veto list says "compliance
 # requirements" rather than a raw Python attribute name.

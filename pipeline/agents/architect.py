@@ -77,11 +77,10 @@ does read makes that a live leak rather than a hypothetical one.
 
 from __future__ import annotations
 
-import re
-
 from pydantic import BaseModel, Field
 
 from pipeline.agents.base import make_step, node
+from pipeline.flow_syntax import FLOW_ARROW_RE
 from pipeline.llm import (
     LLMUsage,
     attach_usage,
@@ -105,9 +104,10 @@ from pipeline.state import (
 # Claude for the A/B experiment and NOTHING else changes.
 ARCHITECT_MODEL = "flash-lite"
 
-# The arrow spellings a data flow may use; canonicalization rebuilds flows
-# with the canonical " → " form (what the diagram parser accepts regardless).
-_FLOW_SPLIT_RE = re.compile(r"\s*(?:→|->)\s*")
+# Integration note (Kush): the arrow grammar below is `pipeline.flow_syntax`'s
+# ONE shared pattern — the same spellings the UI renderer and the Reviewer
+# accept — imported rather than redefined so canonicalization cannot drift
+# from what the diagram will draw.
 
 
 class FeatureDesign(BaseModel):
@@ -520,9 +520,6 @@ def _build_architecture_prompt(
 
     detected_stack = _format_detected_stack(state)
     refinement_discipline = _REFINEMENT_DISCIPLINE if current_design else ""
-    canonical_component_names = (
-        _format_canonical_component_names(state) if current_design else ""
-    )
 
     return f"""
 <context_record>
@@ -541,7 +538,7 @@ def _build_architecture_prompt(
 {features_json}
 </derived_features>
 
-{current_design}{canonical_component_names}<user_directive>
+{current_design}<user_directive>
 {user_directive or "None — no direction from the user this pass."}
 </user_directive>
 
@@ -616,7 +613,6 @@ This is a REFINEMENT pass. Work blocker by blocker:
 3. Before returning, verify each supplied blocker against your revised artifacts; if one cannot be resolved, say so in the relevant rationale rather than silently dropping it.
 4. Re-emit ALL required fields for EVERY ADR and Component Description in full — context, rationale, alternatives, consequences, inputs/outputs/dependencies, technology choices — even for parts you did not change. Never leave a required field blank merely because it was unchanged.
 5. Preserve existing technology choices, migration steps, and component details unless you are intentionally changing them to resolve a finding. Do not drop them due to response compression.
-6. Before returning, check every migration step's title, objective, changes, and exit condition against <canonical_component_names>: each target component must be named VERBATIM with its exact, full entry from that list — never abbreviated, and never folded into another component's name via shared-suffix shorthand.
 </refinement_discipline>
 """.strip() + "\n\n"
 
@@ -662,29 +658,13 @@ def _format_current_design(state: ArchitectState) -> str:
     )
 
 
-# Regression (run 20260823T145925Z-60fb9310): the previous design's component
-# names are already inside <current_design>'s COMPONENTS json, but buried a
-# field among many per component. A migration step wrote "Extract User
-# Identity, Order, and Review Services" — collapsing "User Identity Service",
-# "Order Processing Service", and "Review Service" into one shared-suffix
-# shorthand — while the SAME step's `changes` field got the full names right.
-# This compact, name-only manifest gives the model one small, high-salience
-# list to copy verbatim from and check migration steps against, instead of
-# relying on it to notice and re-derive identity from the full JSON blob.
-def _format_canonical_component_names(state: ArchitectState) -> str:
-    """The current design's component names, exactly as stored. Pure.
-
-    Derived ONLY from `state.components`, in their existing stored order —
-    no LLM, no invented aliases, no fuzzy matching, no schema change. Callers
-    gate this on the SAME "is there a reusable previous design" condition
-    `_format_current_design` already computes, so the manifest never appears
-    for an initial design with no previous component-identity catalog.
-    """
-    names = [c.name for c in state.components if c.name.strip()]
-    if not names:
-        return ""
-    lines = "\n".join(f"- {name}" for name in names)
-    return f"<canonical_component_names>\n{lines}\n</canonical_component_names>\n\n"
+# Integration note (Kush): the COMPONENT IDENTITY CONSISTENCY rule in the
+# system prompt (added after run 20260823T145925Z-60fb9310 wrote
+# "Extract User Identity, Order, and Review Services" against three
+# separately-named components) is deliberately the ONLY name-freeze
+# machinery left here; a former name-only prompt manifest was removed as
+# token-heavy compensation — the deterministic migration-target checks in
+# review_checks.py catch any lapse regardless.
 
 
 def sanitize_adr_sources(
@@ -807,7 +787,7 @@ def canonicalize_data_flow_endpoints(
         if ":" in text:
             text, _, label = text.partition(":")
             label = label.strip()
-        parts = [part.strip() for part in _FLOW_SPLIT_RE.split(text)]
+        parts = [part.strip() for part in FLOW_ARROW_RE.split(text)]
         out_parts: list[str] = []
         for part in parts:
             if not part:

@@ -640,35 +640,26 @@ def _state_with_components(names: list[str], migration_steps=()):
     return state
 
 
-def test_refinement_prompt_exposes_exact_canonical_component_names():
+def test_refinement_prompt_still_carries_exact_component_names():
+    """The slimmed contract: no separate manifest block, but the previous
+    design's exact component names still reach the model through the
+    <current_design> COMPONENTS json, alongside the identity rule."""
+
     state = _state_with_components(
         ["Customer Identity Service", "Order Processing Service", "Review Service"]
     )
 
     prompt = arch._build_architecture_prompt(state, _existing_features())
 
-    assert "<canonical_component_names>" in prompt
-    assert "</canonical_component_names>" in prompt
-    assert "- Customer Identity Service" in prompt
-    assert "- Order Processing Service" in prompt
-    assert "- Review Service" in prompt
-
-
-def test_canonical_manifest_never_invents_shortened_aliases():
-    state = _state_with_components(
-        ["Customer Identity Service", "Order Processing Service", "Review Service"]
-    )
-
-    manifest = arch._format_canonical_component_names(state)
-
-    assert manifest.count("\n- ") == 3  # exactly the three stored names, nothing added
-    assert "- Customer Service\n" not in manifest
-    assert "- Order Service\n" not in manifest
+    assert "<canonical_component_names>" not in prompt
+    for name in (
+        "Customer Identity Service", "Order Processing Service", "Review Service",
+    ):
+        assert name in prompt
 
 
 def test_refinement_discipline_instructs_verbatim_canonical_names():
-    assert "verbatim" in arch._REFINEMENT_DISCIPLINE.lower()
-    assert "canonical_component_names" in arch._REFINEMENT_DISCIPLINE
+    assert "VERBATIM" in arch.ARCHITECTURE_SYSTEM_PROMPT
 
 
 def test_system_prompt_forbids_shared_suffix_shorthand():
@@ -720,11 +711,12 @@ def test_real_failure_shape_migration_title_would_now_be_forbidden_by_the_prompt
     )
     prompt = arch._build_architecture_prompt(state, _existing_features())
 
-    # The manifest names each component individually and in full — copying
-    # from it verbatim cannot reproduce the shared-suffix shorthand that
-    # made "Order" and "User" resolve to no declared component.
+    # The exact stored names still reach the model via <current_design>'s
+    # COMPONENTS json — copying them verbatim cannot reproduce the
+    # shared-suffix shorthand that made "Order" and "User" resolve to no
+    # declared component.
     for name in canonical:
-        assert f"- {name}" in prompt
+        assert name in prompt
     # The exact shorthand shape from the real run is cited as the forbidden
     # example, so a future prompt edit cannot silently drop it.
     assert bad_shorthand in arch.ARCHITECTURE_SYSTEM_PROMPT
