@@ -401,3 +401,94 @@ def test_renderer_parse_data_flows_uses_the_shared_grammar():
         ("A", "B", ""),
     ]
     assert unparsed == ["prose without an arrow"]
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Regression — migration action verbs are structural syntax, not names
+#
+# A fresh E2E after the migration-target hardening produced a phantom
+# finding: the step title "Decompose Catalog and Review Services" was
+# parsed into a 'Decompose Service' candidate because 'decompose' was
+# missing from the never-a-name vocabulary while the REAL targets
+# (Catalog Service, Review Service) were described components.
+# ═════════════════════════════════════════════════════════════════════════
+
+
+def test_parser_never_yields_an_action_verb_as_a_service_base():
+    from pipeline.review_checks import _extract_service_bases
+
+    # The exact fresh-E2E wordings plus every inflected action verb.
+    for text, expected in (
+        ("Decompose Catalog and Review Services", ["Catalog", "Review"]),
+        ("Decompose Order, Payment, and Inventory", []),
+        ("Extract Order, Inventory, and Shipping Services",
+         ["Inventory", "Order", "Shipping"]),
+        ("Establish the Payment Service gateway", ["Payment"]),
+        ("Deploying the Reporting Service", ["Reporting"]),
+        ("Building and launching New Services", []),
+    ):
+        assert _extract_service_bases(text) == expected, text
+
+
+def test_action_verb_vocabulary_is_shared_by_matcher_and_blocklist():
+    """One source of truth: every introduction-matcher verb is also a
+    never-a-name word, so the two can never drift apart again."""
+    from pipeline.review_checks import (
+        _MIGRATION_ACTION_VERBS,
+        _MIGRATION_INTRODUCTION_RE,
+        _NON_NAME_WORDS,
+    )
+
+    for verb in _MIGRATION_ACTION_VERBS:
+        assert verb in _NON_NAME_WORDS, verb
+        assert _MIGRATION_INTRODUCTION_RE.search(f"we will {verb} it"), verb
+    assert "decompose" in _MIGRATION_ACTION_VERBS  # the regression itself
+
+
+def test_decompose_step_with_all_targets_described_is_clean():
+    """The exact E2E shape: Catalog and Review Services described in the
+    catalog — no finding at all for the Decompose step."""
+    state = _base_state(
+        components=["API Gateway", "Catalog Service", "Review Service",
+                    "Order Management Service", "Payment Service",
+                    "Inventory Service"],
+        flows=["API Gateway → Catalog Service: browsing",
+               "API Gateway → Order Management Service: checkout"],
+        steps=[
+            MigrationStep(
+                title="Decompose Catalog and Review Services",
+                objective="The two read-heavy domains scale independently.",
+            ),
+            MigrationStep(
+                title="Decompose Order, Payment, and Inventory",
+                objective="The write-heavy domains follow in phase two.",
+            ),
+        ],
+    )
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.unresolved_migration_targets == {}
+    assert "Decompose Service" not in str(checks.model_dump_json())
+
+
+def test_decompose_step_with_a_missing_target_still_flags_only_that():
+    """The verb fix must not blunt the check: 'Decompose Catalog and
+    Review Services' with Review ABSENT still flags Review Service —
+    and never Decompose Service."""
+    state = _base_state(
+        components=["API Gateway", "Catalog Service", "Order Management Service"],
+        flows=["API Gateway → Catalog Service: browsing"],
+        steps=[
+            MigrationStep(
+                title="Decompose Catalog and Review Services",
+                objective="The two read-heavy domains scale independently.",
+            ),
+        ],
+    )
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.unresolved_migration_targets == {
+        "Review Service": ["Decompose Catalog and Review Services"],
+    }

@@ -649,9 +649,40 @@ _TARGET_LIST_RE = re.compile(
     r"\s+[Ss]ervices\b"
 )
 
+# THE ONE ACTION-VERB VOCABULARY. Deliberately tiny: these verbs say the
+# named thing BECOMES part of the target architecture; every inflected
+# form is spelled out here once, and BOTH consumers derive from it —
+#   * `_MIGRATION_INTRODUCTION_RE` (beside `_check_migration_targets`)
+#     matches them in migration-step sentences, and
+#   * `_NON_NAME_WORDS` (below) unions them, so the same verbs can never
+#     be parsed as candidate service BASE names.
+# "Migrate" is excluded on purpose — it names data movement as often as
+# service introduction, and a false negative is cheaper here than a false
+# positive. One source of truth: a verb added for the introduction matcher
+# is automatically also a never-a-name word, and vice versa.
+_MIGRATION_ACTION_VERBS: tuple[str, ...] = (
+    "extract", "extracts", "extracted", "extracting",
+    "create", "creates", "created", "creating",
+    "introduce", "introduces", "introduced", "introducing",
+    "deploy", "deploys", "deployed", "deploying",
+    "build", "builds", "built", "building",
+    "establish", "establishes", "established", "establishing",
+    "launch", "launches", "launched", "launching",
+    "split", "splits", "splitting",
+    "carve", "carves", "carved", "carving",
+    "decompose", "decomposes", "decomposed", "decomposing",
+)
+
 # TitleCase words that begin sentences or qualify nouns; never service names.
 # Cloud providers are included so phrases like "AWS Managed Services" cannot
 # manufacture a target service.
+#
+# MIGRATION ACTION VERBS ARE STRUCTURAL SYNTAX, NOT NAMES — a migration
+# step title like "Decompose Catalog and Review Services" must yield the
+# bases 'Catalog'/'Review' and NEVER 'Decompose': the verb is the action,
+# the TitleCase words after it are the enumeration (regression, fresh E2E
+# after the migration-target hardening: the missing 'decompose' entry
+# produced a phantom 'Decompose Service' HIGH finding).
 _NON_NAME_WORDS = frozenset({
     "above", "add", "added", "all", "amazon", "an", "and", "another", "any",
     "as", "at", "aws", "azure", "below", "both", "build", "built", "by",
@@ -666,7 +697,7 @@ _NON_NAME_WORDS = frozenset({
     "sent", "shared", "such", "target", "the", "their", "then", "these",
     "they", "this", "those", "three", "to", "two", "use", "used", "using",
     "via", "we", "when", "while", "whole", "with", "you",
-})
+}) | frozenset(_MIGRATION_ACTION_VERBS)
 
 _LEGACY_NOUN_RE = re.compile(r"\b(?:monolith|legacy)\b")
 _RETENTION_VERB_RE = re.compile(
@@ -1703,22 +1734,15 @@ def _check_migration_disposition(
 # the reverse direction: an INTRODUCTION sentence inside a migration step
 # (extract/create/introduce/deploy/build/...) that names a concrete service
 # commits the design to that service existing.
+#
+# The action-verb vocabulary itself is the ONE shared tuple
+# `_MIGRATION_ACTION_VERBS`, defined once beside `_NON_NAME_WORDS` (which
+# unions it) and compiled here into `_MIGRATION_INTRODUCTION_RE` — the
+# matcher and the never-a-name blocklist cannot drift apart.
 # ─────────────────────────────────────────────────────────────────────────
 
-# Deliberately tiny: these verbs say the named thing BECOMES part of the
-# target architecture. "Migrate" is excluded on purpose — it names data
-# movement as often as service introduction, and a false negative is
-# cheaper here than a false positive.
 _MIGRATION_INTRODUCTION_RE = re.compile(
-    r"\b(?:extract|extracts|extracted|extracting|"
-    r"create|creates|created|creating|"
-    r"introduce|introduces|introduced|introducing|"
-    r"deploy|deploys|deployed|deploying|"
-    r"build|builds|built|building|"
-    r"establish|establishes|established|establishing|"
-    r"launch|launches|launched|launching|"
-    r"split|splits|splitting|"
-    r"carve|carves|carved|carving)\b",
+    r"\b(?:" + "|".join(_MIGRATION_ACTION_VERBS) + r")\b",
     re.IGNORECASE,
 )
 
