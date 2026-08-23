@@ -82,7 +82,13 @@ import re
 from pydantic import BaseModel, Field
 
 from pipeline.agents.base import make_step, node
-from pipeline.llm import LLMUsage, attach_usage, llm_call, sum_usage
+from pipeline.llm import (
+    LLMUsage,
+    attach_usage,
+    llm_call,
+    role_model_override,
+    sum_usage,
+)
 from pipeline.state import (
     ADR,
     ArchitectState,
@@ -93,6 +99,10 @@ from pipeline.state import (
 )
 
 
+# The frozen Gemini default. Per-call routing goes through
+# `role_model_override("architect", ...)` at each llm_call site, so
+# ARCHITECT_LLM_PROVIDER/ARCHITECT_LLM_MODEL redirect the Architect to
+# Claude for the A/B experiment and NOTHING else changes.
 ARCHITECT_MODEL = "flash-lite"
 
 # The arrow spellings a data flow may use; canonicalization rebuilds flows
@@ -845,7 +855,7 @@ def architect_node(state: ArchitectState) -> dict:
                 state,
                 _build_feature_prompt(state),
                 system=FEATURE_SYSTEM_PROMPT,
-                model=ARCHITECT_MODEL,
+                model=role_model_override("architect", ARCHITECT_MODEL),
                 response_schema=FeatureDesign,
             )
             usages.append(phase1_usage)
@@ -867,7 +877,7 @@ def architect_node(state: ArchitectState) -> dict:
             state,
             _build_architecture_prompt(state, features),
             system=ARCHITECTURE_SYSTEM_PROMPT,
-            model=ARCHITECT_MODEL,
+            model=role_model_override("architect", ARCHITECT_MODEL),
             response_schema=ArchitectureDesign,
         )
         usages.append(phase2_usage)

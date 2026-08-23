@@ -57,6 +57,77 @@ DEFAULT_MODEL = "flash-lite"
 # and this is a university project with no billing. Both models above are
 # free-tier accessible. Add "pro" back only if a billing-enabled key appears.
 
+# ── Provider routing (the controlled A/B seam) ────────────────────────────
+# `llm_call`'s `model=` argument accepts three forms, resolved by
+# `resolve_model_routing`:
+#   * a friendly NAME from MODELS          -> the Google path, exactly as
+#                                              before the seam existed;
+#   * "provider/model-id" (e.g.            -> that provider explicitly;
+#     "anthropic/claude-opus-5")
+#   * a bare real model ID whose family     -> that provider (a claude-*
+#     prefix is known ("claude-opus-5")        id is Anthropic, a gemini-*
+#                                              id is Google).
+# Roles pick their routing per call via `role_model_override`, so the
+# Architect and the Reviewer can be pointed at Claude by environment while
+# the Clarifier, the advisor, RAG and the web fallback stay on Gemini.
+PROVIDERS: tuple[str, ...] = ("google", "anthropic")
+_PROVIDER_BY_PREFIX: dict[str, str] = {
+    "gemini": "google",
+    "claude": "anthropic",
+}
+
+
+def resolve_model_routing(model: str) -> tuple[str, str]:
+    """`(provider, model_id)` for one `model=` argument. Pure.
+
+    Raises LLMError for an unknown friendly name AND an unknown explicit
+    provider — misconfiguration must fail loudly, never fall back to a
+    different model than the caller asked for.
+    """
+    if "/" in model:
+        provider, _, model_id = model.partition("/")
+        provider = provider.strip().lower()
+        model_id = model_id.strip()
+        if provider not in PROVIDERS or not model_id:
+            raise LLMError(
+                f"Unknown LLM provider or malformed routing '{model}'. "
+                f"Known providers: {', '.join(PROVIDERS)} "
+                f"(form: 'provider/model-id')."
+            )
+        return provider, model_id
+    if model in MODELS:
+        return "google", MODELS[model]
+    prefix = model.split("-", 1)[0].strip().lower()
+    if prefix in _PROVIDER_BY_PREFIX:
+        return _PROVIDER_BY_PREFIX[prefix], model
+    raise LLMError(
+        f"Unknown model '{model}'. Known friendly names: {list(MODELS)}; "
+        "or pass a real model id / 'provider/model-id'."
+    )
+
+
+def role_model_override(role: str, default: str) -> str:
+    """The `model=` routing string for one agent role, this call. Pure.
+
+    Reads `{ROLE}_LLM_MODEL` (and optional `{ROLE}_LLM_PROVIDER`) from the
+    environment on EVERY call, so a run can be redirected without code
+    changes and tests can redirect without reloading modules:
+
+        ARCHITECT_LLM_PROVIDER=anthropic
+        ARCHITECT_LLM_MODEL=claude-opus-5     -> "anthropic/claude-opus-5"
+        ARCHITECT_LLM_MODEL=claude-opus-5     -> "claude-opus-5" (prefix-inferred)
+        neither set                           -> `default` (today's Gemini)
+
+    A provider set without a model is ignored: a provider alone names no
+    model, and guessing one would break the "same model every run" premise
+    of the A/B experiment.
+    """
+    model_id = os.environ.get(f"{role.upper()}_LLM_MODEL", "").strip()
+    if not model_id:
+        return default
+    provider = os.environ.get(f"{role.upper()}_LLM_PROVIDER", "").strip().lower()
+    return f"{provider}/{model_id}" if provider else model_id
+
 
 class LLMError(RuntimeError):
     """Raised when an LLM call fails. base.run() catches it and marks FAILED."""
@@ -90,6 +161,10 @@ class ModelPrice(NamedTuple):
 PRICING_USD_PER_MTOK: dict[str, ModelPrice | None] = {
     "gemini-3.1-flash-lite": ModelPrice(0.25, 1.50),
     "gemini-3.5-flash":      ModelPrice(1.50, 9.00),
+    # Standard API pricing for the Claude A/B experiment (Anthropic's
+    # published list prices at experiment time, USD per 1M tokens). Same
+    # honesty rule as the Gemini entries: list-price equivalent only.
+    "claude-opus-5":         ModelPrice(5.00, 25.00),
 }
 
 
@@ -217,11 +292,24 @@ def llm_call(
 
     `response_schema` (optional): a Pydantic model class. When given, the model
     is asked for JSON constrained to that schema and the reply is a VALIDATED
-    instance of the class (via the SDK's `resp.parsed`) — no manual parsing.
-    When omitted, the reply is a plain `str`.
+    instance of the class — no manual parsing outside the provider seam. When
+    omitted, the reply is a plain `str`.
+
+    PROVIDER ROUTING: `model` is resolved by `resolve_model_routing`; the
+    Google path is byte-for-byte the behaviour that existed before the
+    seam, and the Anthropic path (`_anthropic_call`) returns the SAME
+    downstream types under the SAME contract — a validated Pydantic
+    instance or a plain str, plus an `LLMUsage`. There is NO cross-provider
+    fallback: a configured Claude call either succeeds as Claude or fails
+    as Claude, so an A/B run can never silently mix providers.
     """
-    if model not in MODELS:
-        raise LLMError(f"Unknown model '{model}'. Known: {list(MODELS)}")
+    provider, model_id = resolve_model_routing(model)
+    if provider == "anthropic":
+        return _anthropic_call(
+            prompt, system=system, model_id=model_id,
+            response_schema=response_schema,
+        )
+
     client = _get_client()
     config = types.GenerateContentConfig(
         system_instruction=system or None,
@@ -231,7 +319,7 @@ def llm_call(
         config.response_schema = response_schema
     try:
         resp = client.models.generate_content(
-            model=MODELS[model],
+            model=model_id,
             contents=prompt,
             config=config,
         )
@@ -240,7 +328,6 @@ def llm_call(
 
     # Read tokens at the single chokepoint (usage_metadata may be absent).
     meta = getattr(resp, "usage_metadata", None)
-    model_id = MODELS[model]
     input_tokens = (getattr(meta, "prompt_token_count", 0) or 0) if meta else 0
     output_tokens = (getattr(meta, "candidates_token_count", 0) or 0) if meta else 0
     usage = LLMUsage(
@@ -258,6 +345,107 @@ def llm_call(
             raise err
         return parsed, usage
     return resp.text, usage
+
+
+# ── Anthropic provider (the A/B experiment path) ──────────────────────────
+# Claude Opus 5 for Architect + Reviewer, selected per role via
+# `role_model_override`. One client per process, key loaded once — the same
+# caching discipline as the Google client above.
+_anthropic_client: Any = None
+
+# Output budget: Opus 5 REQUIRES an explicit max_tokens and adaptive
+# thinking spends from it, so the ceiling must comfortably exceed the
+# largest schema output the agents request (Blueprint + ADRs + Components
+# round-trips measured at ~10k tokens in real runs). 32k sits well inside
+# Opus 5's supported range with headroom for thinking; overridable for
+# experiments without code changes.
+CLAUDE_MAX_TOKENS = int(os.environ.get("CLAUDE_MAX_TOKENS", "32000"))
+# Effort is explicit on purpose (never SDK-default): the A/B experiment
+# must be able to state exactly which reasoning effort produced a run.
+CLAUDE_EFFORT = os.environ.get("CLAUDE_EFFORT", "high")
+
+
+def _get_anthropic_client() -> Any:
+    global _anthropic_client
+    if _anthropic_client is None:
+        try:
+            import anthropic
+        except ImportError as exc:
+            raise LLMError(
+                "anthropic package is not installed — run "
+                "`pip install anthropic` to use the Claude routing."
+            ) from exc
+        load_dotenv()
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise LLMError("ANTHROPIC_API_KEY not found in .env!")
+        _anthropic_client = anthropic.Anthropic(api_key=api_key)
+    return _anthropic_client
+
+
+def _anthropic_call(
+    prompt: str,
+    *,
+    system: str,
+    model_id: str,
+    response_schema: type | None = None,
+) -> tuple[Any, LLMUsage]:
+    """One Messages-API call to Claude; `(reply, LLMUsage)` like the Google path.
+
+    Structured output uses Claude's native JSON-schema enforcement
+    (`output_config.format`); the returned JSON text is validated into the
+    SAME Pydantic class the Google path returns (`model_validate_json`), so
+    no Claude-shaped object ever leaves this boundary. Transport errors and
+    schema-invalid output raise the same `LLMError` contract, with billed
+    tokens attached on the unusable-output path — no silent JSON repair, no
+    cross-provider fallback.
+    """
+    client = _get_anthropic_client()
+    output_config: dict[str, Any] = {"effort": CLAUDE_EFFORT}
+    if response_schema is not None:
+        output_config["format"] = {
+            "type": "json_schema",
+            "schema": response_schema.model_json_schema(),
+        }
+    request: dict[str, Any] = {
+        "model": model_id,
+        "max_tokens": CLAUDE_MAX_TOKENS,
+        "messages": [{"role": "user", "content": prompt}],
+        "output_config": output_config,
+    }
+    if system:
+        request["system"] = system
+    try:
+        resp = client.messages.create(**request)
+    except Exception as e:
+        raise LLMError(f"anthropic/{model_id} call failed: {e}") from e
+
+    meta = getattr(resp, "usage", None)
+    input_tokens = (getattr(meta, "input_tokens", 0) or 0) if meta else 0
+    output_tokens = (getattr(meta, "output_tokens", 0) or 0) if meta else 0
+    usage = LLMUsage(
+        model=model_id,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_usd=estimate_cost_usd(model_id, input_tokens, output_tokens),
+    )
+
+    text = "".join(
+        getattr(block, "text", "")
+        for block in (getattr(resp, "content", None) or [])
+        if getattr(block, "type", "") == "text"
+    )
+    if response_schema is not None:
+        try:
+            return response_schema.model_validate_json(text), usage
+        except Exception as e:
+            err = LLMError(
+                f"anthropic/{model_id} returned no schema-valid JSON "
+                f"for {response_schema.__name__}"
+            )
+            attach_usage(err, usage)  # billed but unusable — still real tokens
+            raise err from e
+    return text, usage
 
 
 # ── Self-test: `python -m pipeline.llm` ──────────────────────────────────

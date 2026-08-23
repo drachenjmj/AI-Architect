@@ -16,7 +16,7 @@ from typing import Sequence
 from pydantic import BaseModel, Field
 
 from pipeline.agents.base import make_step, node
-from pipeline.llm import LLMUsage, attach_usage, llm_call
+from pipeline.llm import LLMUsage, attach_usage, llm_call, role_model_override
 from pipeline.review_checks import DeterministicChecks, run_deterministic_checks
 from pipeline.state import (
     ArchitectState,
@@ -521,9 +521,19 @@ def _assemble_report(
 def run_reviewer(
     state: ArchitectState,
     *,
-    model: str = REVIEWER_MODEL,
+    model: str | None = None,
 ) -> dict:
-    """Run the Reviewer with an explicit model; used by the node and evals."""
+    """Run the Reviewer with an explicit model; used by the node and evals.
+
+    `model=None` (the default) resolves through `role_model_override`, so
+    `REVIEWER_LLM_PROVIDER`/`REVIEWER_LLM_MODEL` redirect the Reviewer to
+    Claude for the A/B experiment while eval callers passing an explicit
+    model keep full control. With no environment set, the routing is the
+    frozen Gemini default — byte-for-byte today's behaviour.
+    """
+
+    if model is None:
+        model = role_model_override("reviewer", REVIEWER_MODEL)
 
     # `usage` is RETURNED, never written into state — LangGraph persists only
     # what a node returns. The try/except forwards already-billed tokens to
