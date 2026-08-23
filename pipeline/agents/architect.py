@@ -304,6 +304,17 @@ DATA-FLOW FIDELITY (Blueprint `data_flows`):
   method-level implementation noise. Preserve external actors and external
   systems as explicit external participants where appropriate.
 
+COMPONENT IDENTITY CONSISTENCY (strict):
+- Once a component has a name, every later reference to that SAME component —
+  in migration-step titles, objectives, changes, and exit conditions, the
+  technical view, ADRs, anywhere — must copy that name VERBATIM, the same
+  discipline DATA-FLOW FIDELITY already requires for flow participants.
+- Never abbreviate a component's name, and never fold several distinct
+  components into one shared trailing "Service"/"Services" shorthand: write
+  "User Identity Service, Order Processing Service, and Review Service", not
+  "User Identity, Order, and Review Services" — the shorthand silently
+  invents different, undefined identities.
+
 - When <current_design> is present you are REVISING that design, not creating a
   new one. Keep component names, ADR IDs, the selected pattern, and every
   decision the findings do not mention EXACTLY as they are. Change only what the
@@ -509,6 +520,9 @@ def _build_architecture_prompt(
 
     detected_stack = _format_detected_stack(state)
     refinement_discipline = _REFINEMENT_DISCIPLINE if current_design else ""
+    canonical_component_names = (
+        _format_canonical_component_names(state) if current_design else ""
+    )
 
     return f"""
 <context_record>
@@ -527,7 +541,7 @@ def _build_architecture_prompt(
 {features_json}
 </derived_features>
 
-{current_design}<user_directive>
+{current_design}{canonical_component_names}<user_directive>
 {user_directive or "None — no direction from the user this pass."}
 </user_directive>
 
@@ -602,6 +616,7 @@ This is a REFINEMENT pass. Work blocker by blocker:
 3. Before returning, verify each supplied blocker against your revised artifacts; if one cannot be resolved, say so in the relevant rationale rather than silently dropping it.
 4. Re-emit ALL required fields for EVERY ADR and Component Description in full — context, rationale, alternatives, consequences, inputs/outputs/dependencies, technology choices — even for parts you did not change. Never leave a required field blank merely because it was unchanged.
 5. Preserve existing technology choices, migration steps, and component details unless you are intentionally changing them to resolve a finding. Do not drop them due to response compression.
+6. Before returning, check every migration step's title, objective, changes, and exit condition against <canonical_component_names>: each target component must be named VERBATIM with its exact, full entry from that list — never abbreviated, and never folded into another component's name via shared-suffix shorthand.
 </refinement_discipline>
 """.strip() + "\n\n"
 
@@ -645,6 +660,31 @@ def _format_current_design(state: ArchitectState) -> str:
         f"COMPONENTS:\n{component_json}\n"
         "</current_design>\n\n"
     )
+
+
+# Regression (run 20260823T145925Z-60fb9310): the previous design's component
+# names are already inside <current_design>'s COMPONENTS json, but buried a
+# field among many per component. A migration step wrote "Extract User
+# Identity, Order, and Review Services" — collapsing "User Identity Service",
+# "Order Processing Service", and "Review Service" into one shared-suffix
+# shorthand — while the SAME step's `changes` field got the full names right.
+# This compact, name-only manifest gives the model one small, high-salience
+# list to copy verbatim from and check migration steps against, instead of
+# relying on it to notice and re-derive identity from the full JSON blob.
+def _format_canonical_component_names(state: ArchitectState) -> str:
+    """The current design's component names, exactly as stored. Pure.
+
+    Derived ONLY from `state.components`, in their existing stored order —
+    no LLM, no invented aliases, no fuzzy matching, no schema change. Callers
+    gate this on the SAME "is there a reusable previous design" condition
+    `_format_current_design` already computes, so the manifest never appears
+    for an initial design with no previous component-identity catalog.
+    """
+    names = [c.name for c in state.components if c.name.strip()]
+    if not names:
+        return ""
+    lines = "\n".join(f"- {name}" for name in names)
+    return f"<canonical_component_names>\n{lines}\n</canonical_component_names>\n\n"
 
 
 def sanitize_adr_sources(

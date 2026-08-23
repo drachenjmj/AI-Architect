@@ -30,6 +30,7 @@ from pipeline.state import (
     ContextRecord,
     Feature,
     KBChunk,
+    MigrationStep,
     RepoRepresentation,
     ReviewResult,
     Stage,
@@ -605,6 +606,129 @@ def test_the_revision_rules_reach_the_model():
     # unconditionally would stop the loop ever fixing a wrong architecture.
     assert "yields to the findings" in arch.ARCHITECTURE_SYSTEM_PROMPT
     assert "revision_note" in arch.ARCHITECTURE_SYSTEM_PROMPT
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Component identity consistency during refinement (run
+# 20260823T145925Z-60fb9310): the target components were named
+# 'User Identity Service', 'Order Processing Service', and 'Review Service',
+# but a migration step's title read "Extract User Identity, Order, and
+# Review Services" — a shared-suffix shorthand that collapses three distinct
+# canonical names into wording that names none of them exactly. The SAME
+# step's `changes` field got the full names right, so the model already knew
+# them; the shorthand only appeared in prose. The Reviewer's deterministic
+# migration-target check correctly flagged the resulting 'Order Service' and
+# 'User Service' as unresolved — those are genuinely not declared components
+# under exact-identity matching, and that check is not touched here.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _state_with_components(names: list[str], migration_steps=()):
+    """A refine-pass state whose current design has exactly these component
+    names, for testing the canonical-name manifest in isolation."""
+
+    state = _designed_state()
+    state.components = [
+        ComponentDescription(
+            name=name,
+            description=f"Owns the {name} responsibility.",
+            related_feature_ids=["FEAT-001"],
+        )
+        for name in names
+    ]
+    state.blueprint.migration_steps = list(migration_steps)
+    return state
+
+
+def test_refinement_prompt_exposes_exact_canonical_component_names():
+    state = _state_with_components(
+        ["Customer Identity Service", "Order Processing Service", "Review Service"]
+    )
+
+    prompt = arch._build_architecture_prompt(state, _existing_features())
+
+    assert "<canonical_component_names>" in prompt
+    assert "</canonical_component_names>" in prompt
+    assert "- Customer Identity Service" in prompt
+    assert "- Order Processing Service" in prompt
+    assert "- Review Service" in prompt
+
+
+def test_canonical_manifest_never_invents_shortened_aliases():
+    state = _state_with_components(
+        ["Customer Identity Service", "Order Processing Service", "Review Service"]
+    )
+
+    manifest = arch._format_canonical_component_names(state)
+
+    assert manifest.count("\n- ") == 3  # exactly the three stored names, nothing added
+    assert "- Customer Service\n" not in manifest
+    assert "- Order Service\n" not in manifest
+
+
+def test_refinement_discipline_instructs_verbatim_canonical_names():
+    assert "verbatim" in arch._REFINEMENT_DISCIPLINE.lower()
+    assert "canonical_component_names" in arch._REFINEMENT_DISCIPLINE
+
+
+def test_system_prompt_forbids_shared_suffix_shorthand():
+    assert "shorthand" in arch.ARCHITECTURE_SYSTEM_PROMPT.lower()
+    assert "VERBATIM" in arch.ARCHITECTURE_SYSTEM_PROMPT
+    # The exact failure shape from the real run, spelled out as the bad
+    # example so the instruction is concrete rather than abstract.
+    assert "User Identity, Order, and Review Services" in arch.ARCHITECTURE_SYSTEM_PROMPT
+
+
+def test_initial_design_has_no_canonical_component_names_block():
+    """No previous component-identity catalog exists yet — nothing to freeze."""
+
+    state = _base_state()  # no review at all, no current design
+    prompt = arch._build_architecture_prompt(state, _existing_features())
+
+    assert "canonical_component_names" not in prompt
+
+
+def test_refine_pass_without_artifacts_also_omits_the_canonical_names_block():
+    """Same 'nothing coherent to revise' case as the current-design block."""
+
+    state = _designed_state()
+    state.blueprint = None
+    state.adrs = []
+    state.components = []
+
+    prompt = arch._build_architecture_prompt(state, _existing_features())
+
+    assert "canonical_component_names" not in prompt
+
+
+def test_real_failure_shape_migration_title_would_now_be_forbidden_by_the_prompt():
+    """Pure regression fixture from run 20260823T145925Z-60fb9310 — documents
+    WHY the demonstrated shorthand is unsafe, without touching the Reviewer.
+
+    This does not call an LLM and does not assert anything about generation
+    quality; it pins the two facts the fix rests on: the canonical names are
+    exposed verbatim, and the exact bad title from the real run is named as
+    the forbidden example so a future prompt edit cannot silently drop it.
+    """
+    canonical = ["User Identity Service", "Order Processing Service", "Review Service"]
+    bad_title = "Extract User Identity, Order, and Review Services"
+    bad_shorthand = "User Identity, Order, and Review Services"  # the shared phrase
+
+    state = _state_with_components(
+        canonical,
+        migration_steps=[MigrationStep(title=bad_title, objective="Extract core domains.")],
+    )
+    prompt = arch._build_architecture_prompt(state, _existing_features())
+
+    # The manifest names each component individually and in full — copying
+    # from it verbatim cannot reproduce the shared-suffix shorthand that
+    # made "Order" and "User" resolve to no declared component.
+    for name in canonical:
+        assert f"- {name}" in prompt
+    # The exact shorthand shape from the real run is cited as the forbidden
+    # example, so a future prompt edit cannot silently drop it.
+    assert bad_shorthand in arch.ARCHITECTURE_SYSTEM_PROMPT
+    assert bad_shorthand in bad_title  # sanity: the fixture reuses the same phrase
 
 
 # --- Architect output discipline (final run 20260822T222414Z-1788d214) -----
