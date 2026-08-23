@@ -372,6 +372,91 @@ def test_clarifier_pause_keeps_the_linear_flow():
     assert not any(b.label == "Overview" for b in at.sidebar.button)
 
 
+def _optional_context_state():
+    """A state exactly as the clarifier leaves it when the optional round is
+    owed. The prompt carries a brownfield/scale signal, so
+    `non_functional_requirements` and `existing_systems` are REQUIRED — and
+    already filled/qualitative, so neither is offered again. `cloud_provider`
+    and `budget` carry no signal at all, so `optional_slots` (see
+    `clarifier.OPTIONAL_CONTEXT_FIELDS`) offers exactly those: relevant to no
+    required question, still empty, genuinely optional."""
+    from pipeline.state import ContextRecord, PendingDecision, Stage, new_run
+
+    state = new_run(
+        "We're modernizing our legacy monolithic e-commerce platform to "
+        "handle a much higher scale of peak sale-day traffic."
+    )
+    state.require_context_approval = True
+    state.stage = Stage.AWAITING_HUMAN
+    state.pending_decision = PendingDecision.OPTIONAL_CONTEXT
+    state.context_record = ContextRecord(
+        project_name="Sneaker Hub",
+        business_goal="Modernize the platform",
+        problem_statement="The legacy monolith cannot handle sale-day traffic",
+        functional_requirements=["Browse and buy sneakers online"],
+        non_functional_requirements=[
+            "Substantially higher peak traffic than today; exact target unknown"
+        ],
+        existing_systems=["Legacy monolithic e-commerce platform"],
+        cloud_provider="",
+        budget="",
+    )
+    return state
+
+
+def test_optional_context_pause_shows_a_dedicated_skippable_step():
+    """The optional round is a distinct screen from both the required
+    questions and the review screen — regression for the Clarifier UX
+    cleanup (a fresh E2E run found optional questions bolted onto the bottom
+    of the review form, looking like an afterthought)."""
+    at = AppTest.from_file(_UI, default_timeout=30)
+    at.session_state["state"] = _optional_context_state()
+    at.run()
+    assert not at.exception
+
+    # cloud_provider and budget are both str fields -> st.text_input.
+    # non_functional_requirements is REQUIRED here (already answered), so it
+    # must not appear on this screen at all.
+    assert any("cloud" in (t.label or "").lower() for t in at.text_input)
+    assert any("budget" in (t.label or "").lower() for t in at.text_input)
+    assert not any(
+        "scale, availability, or performance" in (t.label or "")
+        for t in at.text_area
+    )
+    assert any(b.label == "Skip optional questions" for b in at.button)
+    assert any(b.label == "Continue" for b in at.button)
+    assert not any(b.label == "Submit answers" for b in at.button)
+    assert not any("Approve and continue" in (b.label or "") for b in at.button)
+
+
+def test_skipping_the_optional_round_reaches_the_review_screen(tmp_path, monkeypatch):
+    """Skip is non-blocking: fields stay blank, and the next screen is the
+    Context Record review — never a second copy of the optional round."""
+    monkeypatch.setenv("AI_ARCHITECT_RUNS_DIR", str(tmp_path / "runs"))
+
+    at = AppTest.from_file(_UI, default_timeout=30)
+    at.session_state["state"] = _optional_context_state()
+    at.run()
+    assert not at.exception
+
+    next(b for b in at.button if b.label == "Skip optional questions").click()
+    at.run()
+    assert not at.exception
+
+    resumed = at.session_state["state"]
+    from pipeline.state import PendingDecision
+
+    assert resumed.pending_decision is PendingDecision.CONTEXT_LOCK
+    assert resumed.context_record.cloud_provider == ""
+    assert resumed.context_record.budget == ""
+    # The required, already-answered field was never touched by this round.
+    assert resumed.context_record.non_functional_requirements == [
+        "Substantially higher peak traffic than today; exact target unknown"
+    ]
+    assert any("Approve and continue" in (b.label or "") for b in at.button)
+    assert not any(b.label == "Skip optional questions" for b in at.button)
+
+
 # ── 6. batched feedback across views — one bundle, one round ───────────────
 #
 # The workspace split the two feedback boxes into different views; these

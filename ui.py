@@ -34,25 +34,34 @@ orchestrator._route). This script is the "caller" from clarifier-design: it
 holds the state between calls, resolves whatever `state.pending_decision` says
 is owed, and calls run_pipeline(state) again to resume.
 
-TWO PAUSES, ONE STAGE
----------------------
+THREE PAUSES, ONE STAGE
+------------------------
 `pending_decision` says which one:
 
-  CLARIFICATION — the clarifier asked questions. Write the answers into
-                  `state.clarification_answers` and re-run; the entry route
-                  sends the state back to the clarifier.
-  CONTEXT_LOCK  — a Context Record is frozen and waiting to be approved. This
-                  pause is resolved ENTIRELY HERE, before the graph is entered
-                  again, and the orchestrator refuses to be entered while it is
-                  still pending. Three resolutions: approve, edit, or ask.
+  CLARIFICATION     — the clarifier asked required questions. Write the
+                       answers into `state.clarification_answers` and re-run;
+                       the entry route sends the state back to the clarifier.
+  OPTIONAL_CONTEXT  — the required round is done; a dedicated, clearly
+                       skippable step offers relevant-but-non-blocking
+                       fields the required round did not ask about. Resolved
+                       ENTIRELY HERE, exactly like CONTEXT_LOCK below (no
+                       graph entry) — see `render_optional_context` /
+                       `clarifier.resolve_optional_context`. Advances to
+                       CONTEXT_LOCK, never back into the graph.
+  CONTEXT_LOCK      — a Context Record is frozen and waiting to be approved.
+                       This pause is resolved ENTIRELY HERE, before the graph
+                       is entered again, and the orchestrator refuses to be
+                       entered while it is still pending. Three resolutions:
+                       approve, edit, or ask.
 
 This UI is the caller that sets `require_context_approval=True`, because it is
 the only one with a human in front of it. The CLI, the eval harness and the
 tests leave it off and keep running unattended (see pipeline/state.py).
 
-Nothing here writes to the `ContextRecord`. Approving, editing and asking all go
-through `pipeline.agents.clarifier`, which owns Maheen's schema — the panel in
-ui_sections.py only reports what the human asked for.
+Nothing here writes to the `ContextRecord`. Approving, editing, the optional
+answers, and asking all go through `pipeline.agents.clarifier`, which owns
+Maheen's schema — the panels in ui_sections.py only report what the human
+asked for.
 
 THE FINISHED-RUN SCREEN (what the DONE branch shows)
 ----------------------------------------------------
@@ -174,6 +183,7 @@ from ui_sections import (
     get_pending_feedback,
     live_step_caption,
     render_context_approval,
+    render_optional_context,
     render_user_rounds,
 )
 from ui_workspace import (
@@ -215,12 +225,14 @@ def _stage_label(state: ArchitectState) -> str:
     """The header line for a state — the stage, refined by what is pending.
 
     `_STAGE_LABELS` is keyed by stage alone because the sidebar checklist is:
-    both pauses happen inside the "Clarify" step and neither is a step of its
-    own. The live header has room to be more specific, and "Clarifying…" over a
-    finished record that is waiting on a signature would be a small lie.
+    all three pauses happen inside the "Clarify" step and none is a step of
+    its own. The live header has room to be more specific, and "Clarifying…"
+    over a finished record that is waiting on a signature would be a small lie.
     """
     if state.pending_decision is PendingDecision.CONTEXT_LOCK:
         return "Awaiting your approval"
+    if state.pending_decision is PendingDecision.OPTIONAL_CONTEXT:
+        return "Optional context"
     return _STAGE_LABELS.get(state.stage, "Working")
 
 
@@ -634,10 +646,10 @@ else:
             with st.chat_message("user"):
                 st.write(answer)
 
-    # 3a. Paused on questions? → show them as a form (Event 2 lives here).
+    # 3a. Paused on required questions? → show them as a form (Event 2 lives here).
     if (
         state.stage is Stage.AWAITING_HUMAN
-        and state.pending_decision is not PendingDecision.CONTEXT_LOCK
+        and state.pending_decision is PendingDecision.CLARIFICATION
     ):
         with st.chat_message("assistant"):
             st.write("Before I can design safely, I need a few answers:")
@@ -659,10 +671,36 @@ else:
                     # budget before design started. See state.user_rounds.
                     _run(state)  # entry router sends us back to clarifier
 
+    # 3a-bis. Paused on the OPTIONAL round? → a dedicated, clearly-skippable
+    #     step between the required questions and the review screen. Resolved
+    #     ENTIRELY here, like the context lock: no graph entry either way, just
+    #     a redraw at CONTEXT_LOCK next (see clarifier.resolve_optional_context).
+    elif (
+        state.stage is Stage.AWAITING_HUMAN
+        and state.pending_decision is PendingDecision.OPTIONAL_CONTEXT
+    ):
+        with st.chat_message("assistant"):
+            intent = render_optional_context(state)
+
+            if intent is not None:
+                action, payload = intent
+                clarifier_gate.resolve_optional_context(
+                    state, payload if action == "continue" else None
+                )
+                # No `_run` here — no pipeline work happens on this transition,
+                # only a move to the next caller-resolved pause. Saved
+                # explicitly because nothing else will before the next graph
+                # entry (see `_sign_off`'s note on the same situation).
+                save_state(state)
+                st.rerun()
+
     # 3b. Paused at the context lock? → the veto panel. Resolved ENTIRELY here:
     #     the graph is not entered until the human has accepted, or until an
     #     edit has opened a gap that the clarifier has to re-judge.
-    elif state.stage is Stage.AWAITING_HUMAN:
+    elif (
+        state.stage is Stage.AWAITING_HUMAN
+        and state.pending_decision is PendingDecision.CONTEXT_LOCK
+    ):
         with st.chat_message("assistant"):
             render_user_rounds(state)
             intent = render_context_approval(state)

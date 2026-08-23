@@ -439,7 +439,14 @@ def test_requirements_feedback_asks_nothing_and_labels_the_gap():
     state = orchestrator.run_pipeline(state)
 
     assert state.clarifying_questions == []
-    assert state.pending_decision is PendingDecision.CONTEXT_LOCK
+    # `non_functional_requirements`/`cloud_provider` both became REQUIRED by
+    # this point (an earlier answer added cloud wording to the signal text —
+    # see `clarifier._signal_text`), so absorbing them does not make them
+    # optional — but `compliance_requirements` is an `OPTIONAL_CONTEXT_
+    # FIELDS` member the fresh `_missing` captured never restates and is
+    # still not required, so it is what stops the non-blocking optional
+    # round here FIRST, before the review screen (see `clarifier.optional_slots`).
+    assert state.pending_decision is PendingDecision.OPTIONAL_CONTEXT
     record = state.context_record
     assert record.version == 2
     for gap in ("non_functional_requirements", "cloud_provider"):

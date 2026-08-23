@@ -22,6 +22,15 @@ resolve the pause and re-invoke. WHICH resolution is owed is carried by
     one is resolved ENTIRELY OUTSIDE the graph (accept / edit / ask, see
     `pipeline/agents/clarifier.py`); the orchestrator refuses to be entered
     while it is still pending.
+  * OPTIONAL_CONTEXT — a small, non-blocking round offered before CONTEXT_LOCK
+    (see `clarifier.optional_slots`), resolved the same way (outside the
+    graph). This CLI has no dedicated screen for it — `resolve_optional_gate`
+    skips it and lets the CONTEXT_LOCK prompt's `set FIELD = value` answer any
+    of its fields instead. Resolving it leaves `pending_decision =
+    CONTEXT_LOCK` with the graph never entered, so `drive()` falls straight
+    through to the CONTEXT_LOCK branch in the SAME loop iteration — it must
+    NOT loop back to `stream_once` first, which is exactly what
+    `_entry_route` refuses.
 
 One call therefore never finishes a run. This module is that caller:
 
@@ -427,6 +436,35 @@ def parse_gate_command(line: str, state: ArchitectState) -> tuple[str, object]:
     raise ValueError(f"'{verb}' is not one of the actions listed above.")
 
 
+def resolve_optional_gate(state: ArchitectState) -> None:
+    """Resolve the OPTIONAL_CONTEXT pause: this CLI has no separate screen for
+    it, so the smallest correct behaviour is to SKIP it (never fabricate an
+    answer) and let `resolve_context_gate` take over at CONTEXT_LOCK right
+    after — its `set FIELD = value` command already edits every one of
+    `clarifier_gate.optional_slots`' fields, since they are ordinary
+    `EDITABLE_RECORD_FIELDS`.
+
+    Without this, `drive()` would fall through both `if`s below with the run
+    still AWAITING_HUMAN, loop back to `stream_once`, and hit the exact
+    refusal `orchestrator._entry_route` raises for a caller that re-enters
+    the graph with OPTIONAL_CONTEXT still pending — turning a UX nicety in
+    the UI into a hard crash for any CLI caller that also sets
+    `--approve-context`.
+    """
+    optional = clarifier_gate.optional_slots(state, state.context_record)
+    print()
+    print(
+        _wrap(
+            f"{len(optional)} optional question(s) available "
+            f"({', '.join(optional)}) — this CLI does not ask them "
+            "separately; skipping. Set any of them at the approval prompt "
+            "below with 'set FIELD = value' if you want to answer.",
+            "  ",
+        )
+    )
+    clarifier_gate.resolve_optional_context(state)
+
+
 def resolve_context_gate(state: ArchitectState, answers: AnswerSource) -> bool:
     """Work the gate until it is resolved. Returns True when a re-judge is needed.
 
@@ -547,6 +585,24 @@ def drive(
                 f"again. Nothing further to do."
             )
             return state, EXIT_CANNOT_CONTINUE
+
+        if state.pending_decision is PendingDecision.OPTIONAL_CONTEXT:
+            # Resolved OUTSIDE the graph too, exactly like CONTEXT_LOCK right
+            # below — see `resolve_optional_gate` for why skipping it here is
+            # the smallest correct behaviour rather than a second full gate.
+            #
+            # NO `continue` HERE. `resolve_optional_gate` leaves the run at
+            # `pending_decision = CONTEXT_LOCK` (see `clarifier.resolve_
+            # optional_context`) — `stage` is still AWAITING_HUMAN, nothing
+            # was resumed, and the graph was never entered. Looping back to
+            # `stream_once` would call it with CONTEXT_LOCK still pending,
+            # which `_entry_route` refuses outright — the OPTIONAL_CONTEXT
+            # pause was added to avoid exactly that kind of crash, not to
+            # reintroduce it one step later. So this falls straight through
+            # to the CONTEXT_LOCK branch below, in the SAME iteration,
+            # un-resumed — exactly what the UI does when it redraws the next
+            # caller-owned screen without a rerun through the graph.
+            resolve_optional_gate(state)
 
         if state.pending_decision is PendingDecision.CONTEXT_LOCK:
             # The record is frozen and waiting. Everything about resolving it

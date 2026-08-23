@@ -680,6 +680,14 @@ class PendingDecision(str, Enum):
         it. Resolved ENTIRELY by the caller (see `pipeline.agents.clarifier`):
         the graph is never entered with this pending, and `_entry_route` says so
         out loud rather than routing on a half-resolved pause.
+      * OPTIONAL_CONTEXT — a distinct step BETWEEN the required questions and
+        CONTEXT_LOCK: relevant, non-blocking gaps the required round did not
+        (or could not) ask about, offered as a clearly-skippable follow-up —
+        never a second required round. Same resolution shape as CONTEXT_LOCK
+        (entirely by the caller, via `clarifier.resolve_optional_context`; the
+        graph is never entered with this pending either), which is what keeps
+        this a screen transition rather than a second pipeline pause with its
+        own re-judge machinery. See `clarifier.optional_slots`.
 
     Feature A (user feedback at DONE) was expected to add a member here. It
     added neither a member nor a stage in the end, which is the stronger
@@ -693,6 +701,7 @@ class PendingDecision(str, Enum):
 
     CLARIFICATION = "clarification"
     CONTEXT_LOCK = "context_lock"
+    OPTIONAL_CONTEXT = "optional_context"
 
 
 def _new_run_id() -> str:
@@ -1125,6 +1134,16 @@ class ArchitectState(BaseModel):
     # front of it — sets this True; the CLI exposes it as `--approve-context`.
     # Default-off means "auto-approve", which is exactly today's behaviour.
     require_context_approval: bool = False
+    # The ContextRecord `version` the optional-context round was last resolved
+    # (answered or skipped) for. 0 means "never" — no record has version 0, so
+    # every fresh record's optional round is genuinely unresolved. Compared as
+    # `>=` against `context_record.version` (see `clarifier.clarifier_node`):
+    # a version only ever increases on a re-judge, so this watermark alone is
+    # what stops a reload/rerun from re-showing an already-resolved round for
+    # the SAME record version, while a genuine revision (new version) always
+    # re-evaluates which fields are still worth asking about — never a stale
+    # copy of the previous version's answers.
+    optional_context_resolved_version: int = 0
     # Annotated with operator.add so LangGraph MERGES (appends) each node's
     # returned step onto the running trace instead of overwriting it. This is
     # the "reducer" — nodes return {"history": [one_step]} and it accumulates.

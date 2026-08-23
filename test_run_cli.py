@@ -162,6 +162,131 @@ def test_positional_answers_are_consumed_in_order(monkeypatch, tmp_path):
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# 1b. The OPTIONAL_CONTEXT pause: this CLI has no dedicated screen for it, so
+#     it must not deadlock/crash — see `cli.resolve_optional_gate`
+# ══════════════════════════════════════════════════════════════════════════
+def _optional_paused(state: ArchitectState) -> ArchitectState:
+    """A copy of `state` parked at the OPTIONAL_CONTEXT pause, with two
+    optional-eligible candidate fields (`cloud_provider`/`budget`) still
+    empty — as `clarifier.clarifier_node` would leave it under
+    `--approve-context`."""
+    out = state.model_copy(deep=True)
+    out.require_context_approval = True
+    out.stage = Stage.AWAITING_HUMAN
+    out.pending_decision = PendingDecision.OPTIONAL_CONTEXT
+    out.context_record = ContextRecord(
+        business_goal="Sell sneakers online",
+        problem_statement="The monolith falls over on sale days",
+        functional_requirements=["Browse and buy sneakers online"],
+        cloud_provider="",
+        budget="",
+    )
+    out.log_step(
+        "clarifier", Stage.AWAITING_HUMAN, "context locked; 2 optional question(s) pending"
+    )
+    return out
+
+
+class _FailOnUnresolvedContextLockPipeline:
+    """A `run_pipeline_streaming` stand-in that fails loudly if it is ever
+    invoked while `PendingDecision.CONTEXT_LOCK` is still pending.
+
+    THE regression this pins: `resolve_optional_gate` leaves the run at
+    `pending_decision = CONTEXT_LOCK`, `stage` still AWAITING_HUMAN, the
+    graph never entered (see `clarifier.resolve_optional_context`). `drive()`
+    must process that CONTEXT_LOCK in the SAME loop iteration — never loop
+    back into `stream_once` with it still pending, which is exactly the
+    half-resolved re-entry `orchestrator._entry_route` refuses. A generic
+    fake that ignores `pending_decision` (like `FakePipeline` above) cannot
+    catch a caller that gets this wrong, because it would happily answer a
+    second call anyway; this one cannot be fooled that way.
+    """
+
+    def __init__(self, script):
+        self._script = list(script)
+        self.calls: list[ArchitectState] = []
+
+    def __call__(self, state, max_steps=20):
+        if state.pending_decision is PendingDecision.CONTEXT_LOCK:
+            raise AssertionError(
+                "stream_once (run_pipeline_streaming) was invoked with an "
+                "unresolved CONTEXT_LOCK still pending. drive() must resolve "
+                "OPTIONAL_CONTEXT and then process the resulting CONTEXT_LOCK "
+                "in the SAME iteration, never loop back into the graph first."
+            )
+        self.calls.append(state.model_copy(deep=True))
+        if not self._script:
+            raise AssertionError(
+                "the loop invoked the pipeline more times than the script "
+                "allows — it is not terminating"
+            )
+        yield self._script.pop(0)(state)
+
+
+def test_optional_context_falls_through_to_context_lock_in_the_same_iteration(
+    monkeypatch, capsys
+):
+    """The exact fall-through regression, exercised through the real `drive()`
+    caller flow (not `resolve_optional_gate()` in isolation).
+
+    1. the first `stream_once` result is an OPTIONAL_CONTEXT pause;
+    2. resolving it changes `pending_decision` to CONTEXT_LOCK;
+    3/4. `drive()` processes that lock (prints the gate, reads "accept" from
+       the stubbed keyboard) BEFORE calling `stream_once` again — the fake
+       pipeline would fail the test outright if that lock were ever still
+       pending on a call;
+    5/6. only once the lock is genuinely accepted does the SECOND
+       `stream_once` call run, reaching DONE / EXIT_OK;
+    7. no LLM/API call anywhere — `run_pipeline_streaming` is fully faked.
+    """
+    fake = _FailOnUnresolvedContextLockPipeline([_optional_paused, _done])
+    monkeypatch.setattr(cli, "run_pipeline_streaming", fake)
+    # Not --no-input: the context gate needs a keyboard, so stub one that
+    # always accepts. AnswerSource.line is patched at the class level, which
+    # bypasses the allow_stdin gate the same way the existing gate tests do.
+    monkeypatch.setattr(cli.AnswerSource, "line", lambda self, label: "accept")
+
+    code = cli.main([PROMPT, "--approve-context"])
+
+    assert code == cli.EXIT_OK
+    # Exactly two graph invocations: the initial run, and the one AFTER the
+    # context lock was accepted. Nothing ran in between while the lock was
+    # unresolved — the fake would have raised if it had.
+    assert len(fake.calls) == 2
+    assert fake.calls[0].pending_decision is None  # the very first call
+    assert fake.calls[1].pending_decision is None  # accepted -> CLARIFYING, resumed cleanly
+
+    out = _flat(capsys.readouterr().out)
+    assert "optional question" in out  # the skip was announced, not silent
+    assert "CONTEXT LOCK" in out  # the gate was actually shown, not bypassed
+    assert "Approved" in out
+    assert "Final stage: done" in out
+
+
+def test_optional_context_pause_with_no_input_stops_honestly_at_the_lock(
+    monkeypatch, capsys
+):
+    """`--no-input` must not turn the optional skip into a silent full
+    auto-approval: falling through to CONTEXT_LOCK still means a HUMAN is
+    needed there, exactly as it would be if the record had locked straight
+    to CONTEXT_LOCK with no optional round at all. Only ONE graph invocation
+    happens — the run stops at the gate, it does not barrel through it.
+    """
+    fake = _install(monkeypatch, [_optional_paused, _done])
+
+    code = cli.main([PROMPT, "--approve-context", "--no-input"])
+
+    assert code == cli.EXIT_CANNOT_CONTINUE
+    assert len(fake.calls) == 1  # the run never reached a second stream_once
+
+    captured = capsys.readouterr()  # ONE read: readouterr() drains the buffer
+    out = _flat(captured.out)
+    assert "optional question" in out  # the skip was announced, not silent
+    assert "CONTEXT LOCK" in out  # fell through to the gate in the same pass
+    assert "needs a human" in _flat(captured.err)
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # 2. Answers MERGE across rounds, never replace
 # ══════════════════════════════════════════════════════════════════════════
 def test_answers_merge_across_two_rounds(monkeypatch, tmp_path):

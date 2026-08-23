@@ -458,7 +458,13 @@ def test_rejudge_never_pauses_with_questions():
     out = clar.clarifier_node(_locked_state(require_context_approval=True))
 
     assert out["stage"] is Stage.AWAITING_HUMAN
-    assert out["pending_decision"] is PendingDecision.CONTEXT_LOCK
+    # `non_functional_requirements`/`cloud_provider` are both REQUIRED here
+    # (PROMPT signals both), so absorbing them does not make them optional —
+    # but `compliance_requirements` is an `OPTIONAL_CONTEXT_FIELDS` member
+    # this fixture's captured never sets, and is NOT required for PROMPT, so
+    # it is what stops the run here FIRST, before the review screen (see
+    # `clarifier.optional_slots`).
+    assert out["pending_decision"] is PendingDecision.OPTIONAL_CONTEXT
     assert out["clarifying_questions"] == []
 
     record = out["context_record"]

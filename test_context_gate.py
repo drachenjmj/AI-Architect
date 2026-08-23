@@ -61,6 +61,7 @@ def _record(**overrides) -> ContextRecord:
     base = dict(
         business_goal="Sell sneakers online",
         problem_statement="The monolith falls over on sale days",
+        functional_requirements=["Browse and buy sneakers online"],
         non_functional_requirements=["50k peak users"],
         cloud_provider="AWS",
         budget="medium",
@@ -261,9 +262,14 @@ def test_edit_that_empties_a_critical_field_re_judges_without_asking(monkeypatch
 
     resumed = orchestrator.run_pipeline(state)
 
-    # Back at the gate, NOT at a question form.
+    # Back at the gate, NOT at a question form. `non_functional_requirements`/
+    # `cloud_provider` are both REQUIRED for PROMPT, so absorbing them does
+    # not make them optional — but the fresh `_missing` captured never
+    # restates `compliance_requirements`, which is an `OPTIONAL_CONTEXT_
+    # FIELDS` member NOT required for PROMPT, so it is what stops the
+    # non-blocking optional round here first (see `clarifier.optional_slots`).
     assert resumed.stage is Stage.AWAITING_HUMAN
-    assert resumed.pending_decision is PendingDecision.CONTEXT_LOCK
+    assert resumed.pending_decision is PendingDecision.OPTIONAL_CONTEXT
     assert resumed.clarifying_questions == []
 
     record = resumed.context_record
@@ -464,6 +470,323 @@ def test_derive_max_steps_exceeds_a_full_budget_run(monkeypatch):
     # And the default every caller gets is the derived number, not a constant
     # that has to be remembered separately.
     assert orchestrator.MAX_STEPS == derive_max_steps()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 6b. The optional-context round — a small FIXED candidate set, offered only
+#     when NOT currently required, resolved entirely by the caller exactly
+#     like CONTEXT_LOCK itself
+#
+# A fresh E2E run exposed a UX problem: non-blocking gaps surfaced as
+# free-text "Open questions" bolted onto the bottom of the review form, and
+# one of them combined two unrelated concepts in a single sentence with no
+# safe field for an answer to land in. A first fix introduced the dedicated
+# `OPTIONAL_CONTEXT` pause, but reused the REQUIRED-question eligibility test
+# (`_slot_is_relevant`) to decide what counts as "optional" too — which is
+# not actually a required-vs-optional split at all, and could make the
+# optional screen disappear entirely in exactly the scenario that motivated
+# it (see `test_optional_slots_offer_relevant_but_not_required_gaps` below).
+# `clarifier.OPTIONAL_CONTEXT_FIELDS` is the real fix: a small fixed
+# candidate set, offered whenever empty and NOT a currently required
+# question — deliberately independent of whether the prompt signals it.
+# ══════════════════════════════════════════════════════════════════════════
+
+# Brownfield/modernization + scale signal, so `non_functional_requirements`
+# and `existing_systems` are genuinely REQUIRED — but no cloud/budget/
+# compliance wording anywhere. Reproduces the exact e-commerce scenario from
+# the review: a required scale question answered qualitatively, with
+# cloud/budget/compliance left to the optional round rather than silently
+# skipped because nothing in the prompt happened to mention them.
+E2E_PROMPT = (
+    "We're modernizing our legacy monolithic e-commerce platform to handle "
+    "a much higher scale of peak sale-day traffic."
+)
+
+
+def _e2e_record(**overrides) -> ContextRecord:
+    """The record as the REQUIRED round would lock it for `E2E_PROMPT`:
+    `non_functional_requirements` answered qualitatively, `existing_systems`
+    filled (brownfield), and no cloud/budget/compliance stated at all."""
+    base = dict(
+        business_goal="Sell products online",
+        problem_statement="The legacy monolith cannot handle sale-day traffic",
+        functional_requirements=["Browse and buy products online"],
+        non_functional_requirements=[
+            "Substantially higher peak traffic than today; exact target unknown"
+        ],
+        existing_systems=["Legacy monolithic e-commerce platform"],
+        cloud_provider="",
+        budget="",
+        compliance_requirements=[],
+        assumptions=[],
+        open_questions=[],
+    )
+    base.update(overrides)
+    return ContextRecord(**base)
+
+
+def _paused_at_optional(**overrides) -> ArchitectState:
+    """A state exactly as the clarifier leaves it when the optional round is
+    owed: `cloud_provider`/`budget`/`compliance_requirements` are candidates
+    and still empty; `non_functional_requirements`/`existing_systems` are
+    required and already filled."""
+    state = new_run(E2E_PROMPT, require_context_approval=True)
+    state.context_record = _e2e_record(**overrides)
+    state.stage = Stage.AWAITING_HUMAN
+    state.pending_decision = PendingDecision.OPTIONAL_CONTEXT
+    return state
+
+
+def test_optional_slots_offer_relevant_but_not_required_gaps():
+    """THE regression this whole fix is for. `non_functional_requirements`
+    is REQUIRED (relevant) and already filled, so it is never re-offered;
+    `cloud_provider`/`budget`/`compliance_requirements` are NOT required (no
+    signal in `E2E_PROMPT` at all) and still empty, so all three are offered
+    — exactly the scenario that could skip the optional screen entirely
+    under the old (required-eligibility-reused) policy, since nothing in the
+    prompt signalled any of them."""
+    state = new_run(E2E_PROMPT)
+    record = _e2e_record()
+    assert clar.optional_slots(state, record) == [
+        "cloud_provider", "budget", "compliance_requirements",
+    ]
+
+
+def test_optional_slots_exclude_a_currently_required_missing_field():
+    """Negative control: a field that IS currently required (relevant) and
+    still missing must not ALSO show up as optional — required-vs-optional
+    stays a semantic split, never a second chance at the same question, even
+    when the required round skipped it or the ask cap absorbed it."""
+    state = new_run(PROMPT)  # module PROMPT signals scale + cloud
+    record = _record(non_functional_requirements=[], cloud_provider="")
+    slots = clar.optional_slots(state, record)
+    assert "non_functional_requirements" not in slots
+    assert "cloud_provider" not in slots
+
+
+def test_optional_slots_exclude_a_filled_optional_field():
+    """Negative control: a candidate field that already has a value is never
+    re-offered, regardless of relevance."""
+    state = new_run(E2E_PROMPT)
+    assert clar.optional_slots(state, _e2e_record(cloud_provider="AWS")) == [
+        "budget", "compliance_requirements",
+    ]
+
+
+def test_optional_slots_never_offers_always_required_fields():
+    """The candidate set is small and fixed — business_goal/problem_statement/
+    functional_requirements are never offered here, empty or not: a design
+    cannot proceed without them, so they are always required, never optional."""
+    state = new_run(E2E_PROMPT)
+    record = _e2e_record(
+        business_goal="", problem_statement="", functional_requirements=[]
+    )
+    slots = clar.optional_slots(state, record)
+    assert "business_goal" not in slots
+    assert "problem_statement" not in slots
+    assert "functional_requirements" not in slots
+
+
+def test_optional_slots_never_offer_existing_systems():
+    """`existing_systems` is never a candidate, even on a greenfield record
+    where it is empty and not relevant — it is either a required brownfield
+    question or there is nothing greenfield-specific worth asking."""
+    state = new_run("Build a brand-new internal tool from scratch.")
+    record = _e2e_record(existing_systems=[])
+    assert "existing_systems" not in clar.optional_slots(state, record)
+
+
+def test_optional_slots_exclude_fields_already_filled():
+    state = new_run(E2E_PROMPT)
+    assert clar.optional_slots(state, _e2e_record(
+        cloud_provider="AWS", budget="medium", compliance_requirements=["GDPR"],
+    )) == []
+
+
+def test_optional_slots_recomputed_fresh_reflects_only_current_gaps():
+    """The 'genuinely newly relevant' guarantee, structurally: `optional_
+    slots` reads the CURRENT record, never a cached list, so a field that
+    already got an answer (from an earlier optional round, or any edit)
+    never reappears — without any special-cased revision logic."""
+    state = new_run(E2E_PROMPT)
+    before = clar.optional_slots(state, _e2e_record())
+    assert set(before) == {"cloud_provider", "budget", "compliance_requirements"}
+
+    after = clar.optional_slots(state, _e2e_record(cloud_provider="AWS"))
+    assert after == ["budget", "compliance_requirements"]
+
+
+def test_skipping_the_optional_round_advances_to_context_lock_unfilled():
+    state = _paused_at_optional()
+
+    clar.resolve_optional_context(state)
+
+    assert state.pending_decision is PendingDecision.CONTEXT_LOCK
+    assert state.context_record.cloud_provider == ""
+    assert state.context_record.budget == ""
+    assert state.context_record.compliance_requirements == []
+    assert state.optional_context_resolved_version == state.context_record.version
+
+
+def test_answering_the_optional_round_writes_only_the_named_field():
+    """Answering only compliance writes only `compliance_requirements`."""
+    state = _paused_at_optional()
+
+    clar.resolve_optional_context(
+        state,
+        ContextEdits(fields={"compliance_requirements": ["GDPR"]}),
+    )
+
+    assert state.pending_decision is PendingDecision.CONTEXT_LOCK
+    assert state.context_record.compliance_requirements == ["GDPR"]
+    # The fields nobody answered stay exactly as they were — untouched, never guessed.
+    assert state.context_record.cloud_provider == ""
+    assert state.context_record.budget == ""
+
+
+def test_optional_answer_cannot_cross_populate_a_different_field():
+    """A cloud answer must never land in budget or compliance — structurally
+    guaranteed by `ContextEdits.fields` being keyed by field name, the same
+    safe channel a direct review-screen edit already uses. Answering only
+    cloud writes only `cloud_provider`."""
+    state = _paused_at_optional()
+
+    clar.resolve_optional_context(
+        state,
+        ContextEdits(fields={"cloud_provider": "GCP"}),
+    )
+
+    assert state.context_record.cloud_provider == "GCP"
+    assert state.context_record.budget == ""
+    assert state.context_record.compliance_requirements == []
+
+
+def test_cloud_provider_answer_maps_only_to_cloud_provider():
+    state = _paused_at_optional()
+
+    clar.resolve_optional_context(state, ContextEdits(fields={"cloud_provider": "GCP"}))
+
+    assert state.context_record.cloud_provider == "GCP"
+    assert state.context_record.budget == ""  # untouched, not guessed
+    assert state.context_record.compliance_requirements == []  # untouched
+
+
+def test_review_screen_never_calls_an_answered_optional_field_unresolved():
+    """After Continue, an answered optional field must not still carry a
+    deterministic 'unresolved'/'not confirmed' marker on the record the
+    human is about to review at CONTEXT_LOCK."""
+    state = _paused_at_optional()
+
+    clar.resolve_optional_context(state, ContextEdits(fields={"cloud_provider": "GCP"}))
+
+    record = state.context_record
+    assert not any("(cloud_provider)" in a for a in record.assumptions)
+    assert not any("(cloud_provider)" in q for q in record.open_questions)
+
+
+def test_answering_the_optional_round_clears_a_stale_recommend_marker():
+    """Edge case: a human can reach the optional round for a candidate field
+    that ALSO carries a stale '[recommendation requested] ... (field)'
+    marker from an earlier "you recommend" edit that forced it blank and
+    re-judged (see `_freeze_context_record`'s `critical_recommend`
+    handling). Filling the field here must clear that marker too — an
+    answered field must never still read as unresolved."""
+    state = _paused_at_optional(
+        assumptions=[
+            f"{clar.CLARIFIER_LABEL} [recommendation requested] budget or cost "
+            "constraint (budget): not safe to auto-recommend — filling this "
+            "would require an architecture/domain decision only a human can "
+            "make.",
+        ],
+        open_questions=[
+            "budget or cost constraint (budget) — you asked the clarifier to "
+            "recommend this, but it requires an architecture/domain decision "
+            "the clarifier cannot make; still unconfirmed.",
+        ],
+    )
+
+    clar.resolve_optional_context(
+        state, ContextEdits(fields={"budget": "small, cost-sensitive"})
+    )
+
+    assert state.context_record.budget == "small, cost-sensitive"
+    assert not any("(budget)" in a for a in state.context_record.assumptions)
+    assert not any("(budget)" in q for q in state.context_record.open_questions)
+
+
+def test_resolving_when_nothing_is_pending_is_refused():
+    state = new_run(PROMPT)
+    with pytest.raises(ValueError, match="no optional-context round"):
+        clar.resolve_optional_context(state)
+
+
+def test_graph_refuses_entry_while_the_optional_round_is_still_pending():
+    state = _paused_at_optional()
+    with pytest.raises(RuntimeError, match="OPTIONAL_CONTEXT"):
+        orchestrator._entry_route(state)
+
+
+def test_resolving_optional_context_makes_no_llm_call(monkeypatch):
+    monkeypatch.setattr(clar, "llm_call", _explode)
+    state = _paused_at_optional()
+
+    clar.resolve_optional_context(state, ContextEdits(fields={"cloud_provider": "AWS"}))
+
+    assert state.pending_decision is PendingDecision.CONTEXT_LOCK
+
+
+def test_required_and_optional_rounds_never_ask_the_same_field_in_one_pass(
+    monkeypatch,
+):
+    """The required-question branch returns BEFORE the record is even frozen,
+    so within one `clarifier_node` pass a field is asked at most once, never
+    both as a required question and as an optional one."""
+    monkeypatch.setattr(clar, "llm_call", _missing)
+
+    out = clar.clarifier_node(new_run(PROMPT, require_context_approval=True))
+
+    assert out["pending_decision"] is PendingDecision.CLARIFICATION
+    assert "context_record" not in out  # no record frozen -> no optional round either
+
+
+def test_already_resolved_optional_round_is_not_shown_again(monkeypatch):
+    """Defensive: once the watermark covers a record's version, the round is
+    not shown again for that version even though an optional-eligible gap
+    remains (`compliance_requirements` — not required for PROMPT, and the
+    fresh `_missing` captured never restates it) — this is what makes
+    'resolved' durable rather than a one-shot flag a reload could re-trip."""
+    monkeypatch.setattr(clar, "llm_call", _missing)
+    state = _paused_at_lock(non_functional_requirements=[], cloud_provider="")
+    # Pre-resolved for the NEXT version this re-judge is about to produce.
+    state.optional_context_resolved_version = state.context_record.version + 1
+
+    out = clar.clarifier_node(state)
+
+    assert out["context_record"].version == state.optional_context_resolved_version
+    assert out["pending_decision"] is PendingDecision.CONTEXT_LOCK
+
+
+def test_clarifier_skips_the_optional_round_when_nothing_is_left_to_ask(monkeypatch):
+    """A fresh lock where the model captured everything relevant goes
+    straight to CONTEXT_LOCK — no empty optional screen."""
+    monkeypatch.setattr(clar, "llm_call", _complete)
+
+    out = clar.clarifier_node(new_run(PROMPT, require_context_approval=True))
+
+    assert out["pending_decision"] is PendingDecision.CONTEXT_LOCK
+
+
+def test_optional_context_state_round_trips_through_a_checkpoint():
+    state = _paused_at_optional()
+    clar.resolve_optional_context(state, ContextEdits(fields={"cloud_provider": "GCP"}))
+
+    save_state(state)
+    loaded = load_state(state.run_id)
+
+    assert loaded == state
+    assert loaded.pending_decision is PendingDecision.CONTEXT_LOCK
+    assert loaded.optional_context_resolved_version == loaded.context_record.version
+    assert loaded.context_record.cloud_provider == "GCP"
 
 
 # ══════════════════════════════════════════════════════════════════════════

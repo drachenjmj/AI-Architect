@@ -57,6 +57,37 @@ Approval is OPT-IN (default False) because a mandatory pause would hang the CLI,
 the eval harness and every test. The UI, which has a human in front of it, sets
 it True. See `ArchitectState.require_context_approval`.
 
+THE OPTIONAL-CONTEXT ROUND (a distinct step BEFORE the review screen)
+-----------------------------------------------------------------------
+A fresh E2E run exposed a UX problem: non-blocking gaps (scale, compliance,
+cloud, budget, ...) surfaced as free-text "Open questions" bolted onto the
+BOTTOM of the review form, indistinguishable from an afterthought, and one of
+them could combine two unrelated concepts in a single sentence with no safe
+field for an answer to land in. `PendingDecision.OPTIONAL_CONTEXT` fixes
+both: when locking, if `optional_slots` finds any of a small, FIXED
+candidate set (`OPTIONAL_CONTEXT_FIELDS`) still empty and NOT a currently
+REQUIRED question, the pause stops there FIRST — one deterministic,
+one-field-per-question step, resolved by `resolve_optional_context` (skip,
+or answer some/all) before the human ever reaches CONTEXT_LOCK.
+
+REQUIRED-VS-OPTIONAL IS A SEMANTIC SPLIT, NOT A SECOND CHANCE AT THE SAME
+QUESTION. `optional_slots` deliberately does NOT reuse `missing_critical_
+slots`'s eligibility test: a field that is currently a REQUIRED question
+(`_slot_is_relevant` is True for it — whether or not the required round
+actually got to ask it, or the ask cap absorbed it as an assumption instead)
+is never ALSO offered here. Only `OPTIONAL_CONTEXT_FIELDS` members that are
+NOT currently required qualify — "useful but not required", the field code
+would never have asked about at all otherwise. That is what stops a small
+greenfield request (no scale/cloud/budget/compliance wording anywhere) from
+silently skipping this round entirely, which reusing the required policy
+used to do: nothing in play means nothing REQUIRED, but cloud/budget/
+compliance/scale are still worth OFFERING once, non-blockingly.
+
+Same resolution shape as CONTEXT_LOCK itself: entirely by the caller, the
+graph is never entered with it pending, and it costs no LLM call — the
+fields it offers are a deterministic fact about the record the SAME
+`clarifier_node` pass already produced.
+
 WHO WRITES THE CONTEXT RECORD (unchanged: this module, and only this module)
 ----------------------------------------------------------------------------
 The gate introduced a second writer — the human — so it had to introduce a
@@ -357,6 +388,85 @@ def missing_critical_slots(
         for field in CRITICAL_RECORD_FIELDS
         if _slot_is_relevant(field, state) and not _slot_is_filled(captured, field)
     ]
+
+
+def _record_slot_is_filled(record: ContextRecord, field: str) -> bool:
+    """Does the FROZEN record already have a value for this field? Pure.
+
+    Same emptiness test as `_slot_is_filled`, against a `ContextRecord`
+    instead of a `CapturedContext` — the two share every field name and type
+    this reads, but are different Pydantic models with no common base.
+    """
+    value = getattr(record, field)
+    return bool(value.strip()) if isinstance(value, str) else bool(value)
+
+
+# The small, FIXED candidate set the optional round is ever allowed to offer
+# — deliberately NOT "every empty CRITICAL_RECORD_FIELDS entry" (that reused
+# the REQUIRED-question eligibility test, `_slot_is_relevant`, for a decision
+# that has nothing to do with it; see `optional_slots`). Each is a field that
+# can meaningfully improve the design when known but does not, on its own,
+# block one from being produced. `business_goal`, `problem_statement`, and
+# `functional_requirements` are NEVER candidates — a design cannot proceed
+# without them, so they are always either required or already known, never
+# "optional". `existing_systems` is also never a candidate: it is either
+# genuinely required (brownfield/modernization signal present) or the run is
+# greenfield, and a greenfield run has no "existing systems, if you want to
+# mention any" question worth asking.
+#
+# STABLE ORDER MATTERS, same reason as `CRITICAL_RECORD_FIELDS`.
+OPTIONAL_CONTEXT_FIELDS: tuple[str, ...] = (
+    "non_functional_requirements",
+    "cloud_provider",
+    "budget",
+    "compliance_requirements",
+)
+
+
+def optional_slots(state: ArchitectState, record: ContextRecord) -> list[str]:
+    """`OPTIONAL_CONTEXT_FIELDS` entries still empty on the JUST-FROZEN
+    record AND not currently a REQUIRED question — the deterministic optional
+    round. Pure.
+
+    THE required-vs-optional eligibility split, spelled out: a field lands
+    here only when (1) it is in the small fixed `OPTIONAL_CONTEXT_FIELDS`
+    set, (2) the record has no value for it yet, and (3) `_slot_is_relevant`
+    is FALSE for it — i.e. it is NOT a field the required round would ask
+    about (or already did, or absorbed as an assumption after the ask cap).
+    Condition 3 is deliberately the required policy's NEGATION, never its
+    reuse: a field that IS currently required must stay a required question
+    (or a labelled ask-cap assumption) and never ALSO show up here — this is
+    what keeps "required" and "optional" a semantic split rather than a
+    second chance at the same question. A request with no scale/cloud/
+    budget/compliance wording anywhere makes every one of those fields NOT
+    required, which is exactly when this round is most worth showing, not
+    when it should quietly have nothing to offer.
+
+    THIS, not `ClarificationResult.questions`, is what the optional round
+    shows: the model's own free-text bonus questions can (and did, in a real
+    run) combine two unrelated concepts into one sentence with nowhere safe
+    for an answer to land. A slot returned here is always ONE
+    `OPTIONAL_CONTEXT_FIELDS` name, so the caller can route its answer
+    through `ContextEdits.fields` — the same safe, unambiguous per-field
+    write `apply_user_edits` already gives a direct field edit — never
+    through the free-text `answered_questions` channel that cannot know
+    which field an arbitrary question was about.
+    """
+    return [
+        field
+        for field in OPTIONAL_CONTEXT_FIELDS
+        if not _record_slot_is_filled(record, field) and not _slot_is_relevant(field, state)
+    ]
+
+
+def slot_question(field: str) -> ClarifyingQuestion:
+    """The deterministic question/rationale for one `CRITICAL_RECORD_FIELDS`
+    name — the SAME template the required round uses (see
+    `_CRITICAL_SLOT_QUESTIONS`), so a field asked about required or optional
+    reads in the same voice. Public: the UI's optional-round panel needs the
+    question text for each `optional_slots` entry without reaching into a
+    private module dict."""
+    return _CRITICAL_SLOT_QUESTIONS[field]
 
 
 # ── Architecture decisions are never a Clarifier assumption ──────────────
@@ -758,8 +868,19 @@ def _freeze_context_record(
 
     The Clarifier is the WRITER of the ContextRecord (schema owned by Maheen).
     The extracted `captured` fields map ~1:1 onto it; the control signals fold in
-    too: labelled `assumptions` carry across, and any remaining (non-critical)
-    `questions` become `open_questions` the Architect should keep in mind.
+    too: labelled `assumptions` carry across, and `open_questions` is built
+    ENTIRELY from deterministic, code-owned markers below — never from
+    `result.questions`. The model's own free-text bonus questions are read
+    for nothing but display during the required-question pause
+    (`clarifier_node` builds that screen straight from `_CRITICAL_SLOT_
+    QUESTIONS`); they are never copied onto the frozen record, because a
+    real run showed one combining two unrelated concepts ("what's your scale
+    target, and do you have any compliance requirements?") into a single
+    sentence with no safe field for an answer to land in. Every line
+    `open_questions` DOES carry is one this function writes itself, tied to
+    one exact field name, which is what makes it safe for `optional_slots`/
+    `resolve_optional_context` to route an answer through `ContextEdits.
+    fields` with no guessing.
 
     `absorbed_gaps` are the architecture-critical facts the clarifier was NOT
     allowed to ask about (see "ask once, then assume"). Each one is guaranteed
@@ -828,7 +949,10 @@ def _freeze_context_record(
     must not turn unknown facts into fake facts" (see the module docstring).
     """
     c = result.captured
-    open_questions = [q.question for q in result.questions]
+    # NOT `[q.question for q in result.questions]` — see the docstring above.
+    # Every entry from here on is written by THIS function, tied to one exact
+    # field name.
+    open_questions: list[str] = []
     assumptions: list[str] = []
     vetoed = set(vetoed_assumptions)
     recommend_set = set(recommend_requested)
@@ -1165,6 +1289,110 @@ def open_for_rejudge(state: ArchitectState) -> None:
     this call is also what makes that re-entry legal.
     """
     state.pending_decision = None
+
+
+def _field_marker(field: str) -> str:
+    """The exact literal substring `_freeze_context_record` embeds in every
+    `assumptions`/`open_questions` line it writes about `field` — e.g.
+    `"(budget)"`. Every such line is built as `f"...{label} ({field})..."`
+    (see the `absorbed`/`critical_recommend` branches above), so this
+    substring names the field EXACTLY, never fuzzily. Used only to clear a
+    now-stale marker for a field the human just answered — see
+    `resolve_optional_context`."""
+    return f"({field})"
+
+
+def _clear_stale_field_markers(record: ContextRecord, fields: Sequence[str]) -> ContextRecord:
+    """Drop any `assumptions`/`open_questions` line naming one of `fields` —
+    by the exact code-owned marker `_field_marker` builds, never a fuzzy or
+    free-text match. Returns a NEW record; `record` is untouched.
+
+    WHY THIS CAN BE NEEDED even though `optional_slots` fields are never
+    absorbed-critical gaps: a field can still carry a stale
+    "[recommendation requested] ... (field): not safe to auto-recommend"
+    marker from an earlier "you recommend" edit at the CONTEXT_LOCK screen
+    that forced it blank and sent the record back for re-judging (see
+    `_freeze_context_record`'s `critical_recommend` handling) — and that
+    re-judge is exactly what can re-open the optional round for the SAME
+    field on the new record version. A field the human just answered here
+    must never still read as "unresolved" on the record they are about to
+    review.
+    """
+    if not fields:
+        return record
+    markers = {_field_marker(field) for field in fields}
+    updated = record.model_copy(deep=True)
+    updated.assumptions = [
+        a for a in updated.assumptions if not any(m in a for m in markers)
+    ]
+    updated.open_questions = [
+        q for q in updated.open_questions if not any(m in q for m in markers)
+    ]
+    return updated
+
+
+def resolve_optional_context(
+    state: ArchitectState, edits: ContextEdits | None = None
+) -> None:
+    """Resolve the optional-context round: apply any answers, then advance to
+    the Context Record review (CONTEXT_LOCK). Mutates `state` in place — the
+    same style as `accept_context_lock`/`submit_context_edits`, not a fourth
+    convention.
+
+    `edits=None` (or an edits object `apply_user_edits` would treat as a
+    no-op) means SKIP: every optional field is left exactly as the record
+    already has it, which is a fully valid, non-blocking outcome — no gap
+    opens, no re-judge, no LLM call. When `edits.fields` names one of
+    `optional_slots`' fields, its value is written through the SAME safe
+    per-field path a direct review-screen edit uses (`apply_user_edits`) —
+    the deterministic one-question-per-field shape of `optional_slots` is
+    what makes that safe: there is never a free-text answer with an unclear
+    field to guess at. Any now-stale marker for a field that was just given a
+    real value is cleared too (`_clear_stale_field_markers`) — an answered
+    field must never still read as "unresolved" on the record the human is
+    about to review.
+
+    NO STAGE CHANGE: `stage` stays `AWAITING_HUMAN` throughout — this moves
+    the human from one caller-resolved sub-pause to the next, not into the
+    graph, so the caller redraws the review screen rather than calling
+    `run_pipeline`. `optional_context_resolved_version` is stamped with the
+    record's CURRENT version, which is what stops a reload or an unrelated
+    rerun from showing this round again for the same version while still
+    letting a genuine revision (a strictly higher version) re-evaluate which
+    fields are still worth asking about.
+    """
+    if state.pending_decision is not PendingDecision.OPTIONAL_CONTEXT:
+        raise ValueError(
+            f"resolve_optional_context called with pending_decision="
+            f"{state.pending_decision!r}; there is no optional-context round "
+            "to resolve."
+        )
+    record = state.context_record
+    if record is None:
+        raise ValueError("resolve_optional_context called with no locked Context Record.")
+
+    if edits is not None and not edits.is_empty():
+        updated = apply_user_edits(record, edits)
+        answered_fields = [
+            name for name in edits.fields
+            if name in OPTIONAL_CONTEXT_FIELDS and _record_slot_is_filled(updated, name)
+        ]
+        updated = _clear_stale_field_markers(updated, answered_fields)
+        state.context_record = updated
+        for assumption in edits.struck_assumptions:
+            if assumption not in state.vetoed_assumptions:
+                state.vetoed_assumptions.append(assumption)
+        # Same non-guess as `submit_context_edits`: an answered free-text
+        # question joins the Q&A log, never a record field. The optional
+        # round's own answers never travel this way (see the docstring
+        # above) — this only matters if a caller passes `answered_questions`
+        # anyway, for parity with the review-screen edit panel.
+        state.clarification_answers.update(
+            {q: a.strip() for q, a in edits.answered_questions.items() if a.strip()}
+        )
+
+    state.optional_context_resolved_version = state.context_record.version
+    state.pending_decision = PendingDecision.CONTEXT_LOCK
 
 
 # ── Resolution 3 of 3: the advisory side channel ─────────────────────────
@@ -1534,7 +1762,26 @@ def clarifier_node(state: ArchitectState) -> dict:
         # single research/design/review token is spent on this ground truth.
         # Not required (CLI, eval, tests) → advance exactly as before.
         if state.require_context_approval:
-            note = f"context locked for approval; {len(context_record.assumptions)} assumption(s)"
+            # 3a. A dedicated, non-blocking OPTIONAL round before the review
+            # screen — the small `OPTIONAL_CONTEXT_FIELDS` set, minus
+            # whatever is currently a REQUIRED question, offered once per
+            # record version (see `optional_slots` / `ArchitectState.
+            # optional_context_resolved_version`). No LLM involved: purely a
+            # fact about the record just
+            # produced above.
+            optional = optional_slots(state, context_record)
+            already_resolved = (
+                state.optional_context_resolved_version >= context_record.version
+            )
+            if optional and not already_resolved:
+                pending = PendingDecision.OPTIONAL_CONTEXT
+                note = (
+                    f"context locked; {len(optional)} optional question(s) "
+                    "pending before approval"
+                )
+            else:
+                pending = PendingDecision.CONTEXT_LOCK
+                note = f"context locked for approval; {len(context_record.assumptions)} assumption(s)"
             if absorbed:
                 note += f", {len(absorbed)} gap(s) assumed rather than asked"
             step = make_step(
@@ -1544,7 +1791,7 @@ def clarifier_node(state: ArchitectState) -> dict:
                 "context_record": context_record,
                 "clarifying_questions": [],  # clear any stale questions from a prior pause
                 "stage": Stage.AWAITING_HUMAN,
-                "pending_decision": PendingDecision.CONTEXT_LOCK,
+                "pending_decision": pending,
                 "history": [step],
                 "input_tokens": usage.input_tokens,
                 "output_tokens": usage.output_tokens,

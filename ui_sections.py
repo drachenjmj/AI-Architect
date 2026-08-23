@@ -15,13 +15,14 @@ mutates the state, or reaches for a second source of truth — so re-running any
 of them against the same state produces the same screen. That is the same
 property that lets a checkpoint reload replay a whole run for free.
 
-`render_context_approval` is the one INTERACTIVE panel in the file, and it keeps
-the rule rather than bending it: it draws the frozen record from the state and
-RETURNS what the human asked for as a plain value. It writes nothing. Every
-write — the edit, the accept, the advisory call — happens in ui.py, which owns
-the REACT half, and lands in the pipeline through `pipeline.agents.clarifier`,
-which is the only writer of a `ContextRecord`. The panel is not allowed to touch
-the record for the same reason the UI is not: there would then be two writers of
+`render_context_approval` and `render_optional_context` are the two INTERACTIVE
+panels in the file, and both keep the rule rather than bending it: each draws
+the frozen record from the state and RETURNS what the human asked for as a
+plain value. Neither writes anything. Every write — the edit, the accept, the
+optional answers, the advisory call — happens in ui.py, which owns the REACT
+half, and lands in the pipeline through `pipeline.agents.clarifier`, which is
+the only writer of a `ContextRecord`. Neither panel is allowed to touch the
+record for the same reason the UI is not: there would then be two writers of
 Maheen's schema and no way to tell which one produced a given field.
 
 WHAT IT MAKES VISIBLE (and why that is the point)
@@ -66,6 +67,8 @@ import streamlit.components.v1 as components
 from pipeline.agents.clarifier import (
     CLARIFIER_LABEL,
     EDITABLE_RECORD_FIELDS,
+    optional_slots,
+    slot_question,
 )
 from pipeline.agents.reviewer import ADVISORY_CRITERIA
 from pipeline.llm import PRICING_USD_PER_MTOK
@@ -1023,14 +1026,98 @@ def _render_advisory_thread(
             st.write(turn.answer)
 
 
+def render_optional_context(state: ArchitectState) -> tuple[str, object] | None:
+    """The optional-context round. Returns the human's intent, or None.
+
+    One of:
+        ("skip",     None)          leave every optional field as it stands
+        ("continue", ContextEdits)  apply whatever was filled in (may be none)
+        None                        this rerun carried no submission
+
+    Shown BETWEEN the required clarification questions and the Context Record
+    review (`render_context_approval`) — never at the same time as either.
+    Every field here is one entry from `clarifier.optional_slots`: a relevant
+    Context Record field the required round did not (or could not) ask
+    about, each rendered as exactly ONE input tied to exactly ONE field, so
+    an answer can never land anywhere but the field it was asked about (see
+    `optional_slots`'s docstring on the combined-question bug this
+    structurally prevents). Leaving every box blank and clicking "Skip
+    optional questions" is a fully valid, unstyled outcome — this panel never
+    adds warning/error styling for an empty field.
+    """
+    record = state.context_record
+    if record is None:  # defensive: only reachable with a record locked
+        _missing("Optional context", "no record was locked, so there is nothing to ask.")
+        return None
+
+    slots = optional_slots(state, record)
+    if not slots:  # defensive: the caller only shows this panel when non-empty
+        return "skip", None
+
+    nonce = _record_nonce(record)
+    st.markdown("#### Optional context")
+    st.caption(
+        "These details may improve the design, but they are not required. "
+        "You can answer any of them, leave fields blank, or skip this step."
+    )
+
+    with st.form(f"optional_context_{nonce}"):
+        fields: dict[str, str | list[str]] = {}
+        for field in slots:
+            question = slot_question(field)
+            help_text = question.why_needed or None
+            if isinstance(getattr(record, field), list):
+                text = st.text_area(
+                    question.question,
+                    value="",
+                    help=help_text,
+                    height=68,
+                    key=f"oc_field_{field}_{nonce}",
+                )
+                value: str | list[str] = [
+                    line.strip() for line in text.splitlines() if line.strip()
+                ]
+            else:
+                value = st.text_input(
+                    question.question,
+                    value="",
+                    help=help_text,
+                    key=f"oc_field_{field}_{nonce}",
+                ).strip()
+            if value:
+                fields[field] = value
+
+        left, right = st.columns(2)
+        with left:
+            skip = st.form_submit_button(
+                "Skip optional questions", use_container_width=True
+            )
+        with right:
+            cont = st.form_submit_button(
+                "Continue", type="primary", use_container_width=True
+            )
+
+    if skip:
+        return "skip", None
+    if cont:
+        return "continue", ContextEdits(fields=fields)
+    return None
+
+
 def render_context_approval(state: ArchitectState) -> tuple[str, object] | None:
     """The approval panel. Returns the human's intent, or None if they did nothing.
 
     One of:
         ("accept", None)            approve the record as it stands
-        ("edit",   ContextEdits)    a veto pass — fields, strikes, answers, "you recommend"
+        ("edit",   ContextEdits)    a veto pass — fields, strikes, "you recommend"
         ("ask",    "question")      a read-only question; resolves nothing
         None                        this rerun carried no submission
+
+    Called AFTER the dedicated optional-context round (`render_optional_
+    context`, resolved before this screen is ever reached — see
+    `pipeline.agents.clarifier.PendingDecision.OPTIONAL_CONTEXT`), so any
+    `record.open_questions` still outstanding here are shown PASSIVELY, not
+    as a second active answer form.
 
     Returning the intent instead of acting on it is what keeps this file
     DRAW-only (see the module docstring): ui.py performs every write, and every
@@ -1102,17 +1189,24 @@ def render_context_approval(state: ArchitectState) -> tuple[str, object] | None:
                 if st.checkbox(assumption, key=f"cg_strike_{assumption}_{nonce}"):
                     struck.append(assumption)
 
-        answered: dict[str, str] = {}
         if record.open_questions:
-            st.markdown("**Open questions — answer any you can**")
+            # PASSIVE on purpose: the dedicated optional round (see
+            # `render_optional_context`, shown BEFORE this screen) is where
+            # a relevant, unresolved field gets an actual answer box, tied
+            # to exactly one Context Record field. Anything still listed
+            # here — a field the human skipped there, or a free-text bonus
+            # question the model raised that maps to no single field — is
+            # shown for traceability only, never as a second active form:
+            # that second form is exactly what let one combined question
+            # ("expected traffic and compliance?") risk an answer landing in
+            # the wrong field, since a raw question has no field of its own.
+            st.markdown("**Unresolved optional context**")
             st.caption(
-                "These travel with the record to the Architect. Answering one "
-                "resolves it and adds your answer to the run's Q&A."
+                "Not required to approve. Edit a field above to answer any of "
+                "these directly."
             )
             for question in record.open_questions:
-                reply = st.text_input(question, key=f"cg_oq_{question}_{nonce}")
-                if reply.strip():
-                    answered[question] = reply.strip()
+                st.caption(f"• {question}")
 
         left, right = st.columns(2)
         with left:
@@ -1136,7 +1230,6 @@ def render_context_approval(state: ArchitectState) -> tuple[str, object] | None:
         edits = ContextEdits(
             fields=changed,
             struck_assumptions=struck,
-            answered_questions=answered,
             recommend=list(recommend),
         )
         return None if edits.is_empty() else ("edit", edits)

@@ -71,3 +71,48 @@ def test_render_with_numeric_string_version():
 
 def test_render_with_malformed_version_does_not_crash():
     ui_sections.render_context_record(_state(_record("garbage")))
+
+
+# ── the optional-context round (Clarifier UX cleanup) ───────────────────────
+#
+# `render_optional_context` and `render_context_approval` both use `st.form`,
+# and calling a function that opens an `st.form` OUTSIDE a real Streamlit
+# script-run (bare mode, as the version tests above do for the form-free
+# `render_context_record`) leaks Streamlit's form-id tracking into every
+# later AppTest in the process — exactly the hazard test_ui_workspace.py's
+# docstring documents for importing ui.py itself. So only the DEFENSIVE
+# early-return paths (no record locked yet; nothing left to ask) are smoke
+# tested here, since neither ever reaches `st.form`. The FIELD-MAPPING
+# behaviour these panels exist to make safe is pinned at the state level in
+# test_context_gate.py, where a real `ContextEdits` is constructed and
+# applied without needing a live browser to click a button.
+
+def test_render_optional_context_with_nothing_to_ask_returns_skip():
+    """Every `OPTIONAL_CONTEXT_FIELDS` entry already has a value -> a
+    defensive no-op skip, never an empty form (so this path never opens
+    `st.form`). `optional_slots` offers a field whenever it is empty AND not
+    currently required (see `clarifier.optional_slots`) -- it does NOT
+    require prompt signal, so leaving these fields unset here would make
+    every one of them show up rather than none."""
+    state = new_run("Build an internal admin tool.")  # no NFR/cloud/etc. signal
+    state.context_record = ContextRecord(
+        project_name="Admin Tool",
+        business_goal="g",
+        problem_statement="p",
+        functional_requirements=["Manage internal records"],
+        non_functional_requirements=["Single small internal team; no scale target"],
+        cloud_provider="On-prem, no preference",
+        budget="No specific budget constraint",
+        compliance_requirements=["None applicable"],
+    )
+    assert ui_sections.render_optional_context(state) == ("skip", None)
+
+
+def test_render_optional_context_without_a_record_returns_none():
+    state = new_run("Build a system to sell sneakers online.")
+    assert ui_sections.render_optional_context(state) is None
+
+
+def test_render_context_approval_without_a_record_returns_none():
+    state = new_run("Build a system to sell sneakers online.")
+    assert ui_sections.render_context_approval(state) is None
