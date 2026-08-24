@@ -127,7 +127,13 @@ final verdict; Python owns all of those decisions.
    actually informed the choice? A decorative/unrelated citation is a
    best_practice_grounding failure even though the ID itself resolves.
    Conversely, an ADR that leaves evidence_ids EMPTY and says so honestly in
-   its rationale is not a failure on this ground alone.
+   its rationale is not a failure on this ground alone. Also check each
+   ADR's `related_decision_topic_ids` genuinely matches what it decided (a
+   decomposition decision mapped only to an unrelated topic is a mismatch),
+   and use <deterministic_check_results> plus <architecture_artifacts> to
+   judge whether any material Blueprint/migration/technology recommendation
+   is effectively hiding outside the ADR trail — described in prose but
+   never recorded as a decision.
 5. refinement_readiness: Considering your preceding answers, are any remaining
    shortcomings described specifically enough for the Architect to correct
    without guessing? If all preceding answers pass, answer yes.

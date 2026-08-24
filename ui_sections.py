@@ -2019,6 +2019,7 @@ def _render_adr(adr: ADR, evidence_by_id: dict[str, KBChunk] | None = None) -> N
     _bullets("Negative consequences", adr.negative_consequences)
     _chips("Related features", adr.related_feature_ids)
     _chips("Related components", adr.related_component_names)
+    _chips("Decision topics", adr.related_decision_topic_ids)
     _render_literature_evidence(adr, evidence_by_id or {})
     _bullets("Sources", adr.source_references)
     st.divider()

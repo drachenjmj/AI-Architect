@@ -472,6 +472,18 @@ class ADR(BaseModel):
         default_factory=list,
         description="Stable KB-Exxx evidence identifiers actually retrieved this run that support this decision.",
     )
+    # Integration note (Kush): additive — extends "every ADR is grounded" to
+    # "every MATERIAL architecture decision is grounded" (see
+    # review_checks.MATERIAL_DECISION_TOPICS / _check_material_decision_coverage).
+    # EXACT DecisionTopic.id values (e.g. "TOPIC-1") this ADR's decision maps
+    # to, never fuzzy text matching. One ADR may legitimately map to several
+    # topics when one decision spans them (e.g. a migration-strategy ADR that
+    # also touches service decomposition). Default empty so existing
+    # ADRs/fixtures built before this field existed load unchanged.
+    related_decision_topic_ids: list[str] = Field(
+        default_factory=list,
+        description="DecisionTopic IDs (e.g. TOPIC-1) this ADR's decision maps to.",
+    )
 
 
 class ComponentDescription(BaseModel):

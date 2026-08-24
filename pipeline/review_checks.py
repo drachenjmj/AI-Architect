@@ -27,7 +27,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from pipeline.flow_syntax import split_directional_flow
-from pipeline.state import ArchitectState, ContextRecord, ReviewIssue
+from pipeline.state import ADR, ArchitectState, ContextRecord, ReviewIssue
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -97,6 +97,26 @@ class DeterministicChecks(BaseModel):
     # this run — an honest evidence gap, not a design defect; see
     # `_check_kb_evidence_grounding` for why this does not block the verdict.
     kb_evidence_gap: bool = False
+
+    # Integration note (Kush): material-decision coverage (see
+    # `_check_material_decision_coverage`). ADR id -> related_decision_topic_ids
+    # values that do not resolve to any DecisionTopic retrieved this run.
+    invalid_adr_decision_topic_ids: dict[str, list[str]] = Field(default_factory=dict)
+    # Material decision topic strings (see MATERIAL_DECISION_TOPICS /
+    # MIGRATION_MATERIAL_TOPIC) planned this run with NO ADR mapped to them.
+    material_decisions_without_adr: list[str] = Field(default_factory=list)
+    # ADR id -> evidence_ids that ARE genuinely qualifying curated-KB
+    # evidence this run, but were retrieved for a decision topic OTHER than
+    # any this ADR maps to (see `_check_adr_evidence_topic_provenance`).
+    adr_evidence_outside_mapped_topics: dict[str, list[str]] = Field(default_factory=dict)
+
+    # Invented performance/scale targets found in architecture-owned prose
+    # (Blueprint, ADR, Component, migration-step text) that the locked
+    # Context Record never authorized — defense-in-depth for the same
+    # invariant enforced fail-fast on generated Features (see
+    # `architect._validate_no_invented_quantitative_targets` and
+    # `find_unauthorized_quantitative_targets`). Keyed by artifact location.
+    invented_quantitative_targets: dict[str, list[str]] = Field(default_factory=dict)
 
     # Target-architecture service references (name -> referencing locations)
     # that resolve to no Component Description and carry no explicit legacy,
@@ -230,6 +250,195 @@ def _design_text(state: ArchitectState) -> str:
         parts.extend(component.scalability_considerations)
 
     return "\n".join(_non_empty(parts)).lower()
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Invented quantitative targets (Integration, Kush)
+#
+# Real E2E gap: the Architect prompt has always FORBIDDEN inventing numeric
+# SLOs/latency/availability/scale figures ("QUANTITATIVE TARGETS (strict)"
+# in agents/architect.py), but that was prompt-only — nothing deterministic
+# ever checked it, so a generated Feature could carry "under 200ms" or "10x
+# traffic" straight through refinement and a PASS even though the locked
+# Context Record explicitly stated no numeric target was defined.
+#
+# Deliberately NARROW pattern set: only the categories the project actually
+# needs to catch (latency, percentage/availability, multiplier claims,
+# concurrency/user-load, throughput) — not a blanket "flag every number",
+# which would also catch requirement ordinals, IDs, page numbers, version
+# strings, and port numbers that legitimately belong in architecture text.
+# ─────────────────────────────────────────────────────────────────────────
+
+_QUANTITATIVE_TARGET_PATTERNS: tuple[re.Pattern, ...] = (
+    # Percentages: availability/uptime/error-rate targets ("99.9%").
+    re.compile(r"\b\d+(?:\.\d+)?\s?%"),
+    # Latency budgets: "200ms", "1.5 seconds".
+    re.compile(r"\b\d+(?:\.\d+)?\s?(?:milliseconds?|ms)\b", re.IGNORECASE),
+    re.compile(r"\b\d+(?:\.\d+)?\s?(?:seconds?|secs?|sec)\b", re.IGNORECASE),
+    # Multiplier claims: "10x traffic".
+    re.compile(r"\b\d+(?:\.\d+)?\s?x\b", re.IGNORECASE),
+    # Concurrency / user-load targets: "10k concurrent users", "50,000 users".
+    re.compile(
+        r"\b\d{1,3}(?:,\d{3})*(?:k|K)?\+?\s?(?:concurrent\s+)?users?\b"
+    ),
+    # Throughput targets: "1000 req/s", "500 rps", "200 transactions/sec".
+    re.compile(
+        r"\b\d+(?:,\d{3})*\s?"
+        r"(?:req(?:uests)?/s(?:ec)?|rps|qps|tps|transactions?/(?:sec|second|s))\b",
+        re.IGNORECASE,
+    ),
+)
+
+
+def _normalize_quantitative_target(value: str) -> str:
+    """Whitespace/case-insensitive identity for comparing a matched target
+    string against the locked Context Record's own wording. Pure."""
+
+    return re.sub(r"\s+", "", value).lower()
+
+
+def _quantitative_target_matches(text: str) -> dict[str, str]:
+    """normalized -> first-seen original spelling, for every quantitative
+    target-shaped substring in `text`. Pure."""
+
+    matches: dict[str, str] = {}
+    for pattern in _QUANTITATIVE_TARGET_PATTERNS:
+        for match in pattern.finditer(text or ""):
+            original = match.group(0)
+            matches.setdefault(_normalize_quantitative_target(original), original)
+    return matches
+
+
+def _authorized_quantitative_targets(context_record: ContextRecord | None) -> set[str]:
+    """Quantitative targets the LOCKED Context Record itself authorizes —
+    the only values a generated target may legitimately preserve. Pure."""
+
+    if context_record is None:
+        return set()
+    parts = [
+        context_record.business_goal,
+        context_record.problem_statement,
+        context_record.summary,
+        context_record.budget,
+        *context_record.functional_requirements,
+        *context_record.non_functional_requirements,
+        *context_record.compliance_requirements,
+        *context_record.assumptions,
+        *context_record.open_questions,
+        *context_record.existing_systems,
+        *context_record.users,
+    ]
+    text = "\n".join(_non_empty(parts))
+    return set(_quantitative_target_matches(text))
+
+
+def find_unauthorized_quantitative_targets(
+    text: str, context_record: ContextRecord | None
+) -> list[str]:
+    """Quantitative performance/scale targets in generated TEXT that the
+    locked Context Record never authorized. Pure; the ONE detector reused by
+    both the architect's fail-fast Feature validation (before phase 2 ever
+    runs) and this module's defense-in-depth deterministic Reviewer check,
+    so there is exactly one place "what counts as an invented target" is
+    decided rather than two that could drift.
+
+    Returns the exact matched substrings (original spelling, not the
+    normalized comparison form), sorted for determinism. Empty when nothing
+    unauthorized is found, including when `text` is empty.
+    """
+
+    if not text:
+        return []
+    authorized = _authorized_quantitative_targets(context_record)
+    found = _quantitative_target_matches(text)
+    return sorted(
+        original
+        for normalized, original in found.items()
+        if normalized not in authorized
+    )
+
+
+def _quantitative_target_locations(state: ArchitectState) -> list[tuple[str, str]]:
+    """(location label, text) pairs across architecture-OWNED prose — the
+    defense-in-depth scan surface for `find_unauthorized_quantitative_targets`.
+    Pure. Deliberately excludes Feature text: that channel is validated
+    fail-fast, before phase 2 ever runs (see
+    `architect._validate_no_invented_quantitative_targets`), so by the time
+    this deterministic Reviewer check runs, Features are already clean —
+    this covers the phase-2-owned fields that fail-fast cannot reach."""
+
+    locations: list[tuple[str, str]] = []
+    if state.blueprint is not None:
+        b = state.blueprint
+        for label, value in (
+            ("Blueprint.rationale", b.rationale),
+            ("Blueprint.stakeholder_view", b.stakeholder_view),
+            ("Blueprint.technical_view", b.technical_view),
+        ):
+            if value:
+                locations.append((label, value))
+        for step in b.migration_steps:
+            for label, value in (
+                (f"MigrationStep[{step.title}].objective", step.objective),
+                (
+                    f"MigrationStep[{step.title}].coexistence_or_data_strategy",
+                    step.coexistence_or_data_strategy,
+                ),
+            ):
+                if value:
+                    locations.append((label, value))
+            for change in step.changes:
+                if change:
+                    locations.append((f"MigrationStep[{step.title}].changes", change))
+
+    for adr in state.adrs:
+        label_prefix = adr.id or adr.title
+        for label, value in (
+            (f"{label_prefix}.context", adr.context),
+            (f"{label_prefix}.decision", adr.decision),
+            (f"{label_prefix}.rationale", adr.rationale),
+        ):
+            if value:
+                locations.append((label, value))
+        for value in adr.positive_consequences:
+            if value:
+                locations.append((f"{label_prefix}.positive_consequences", value))
+        for value in adr.negative_consequences:
+            if value:
+                locations.append((f"{label_prefix}.negative_consequences", value))
+
+    for component in state.components:
+        for label, value in (
+            (f"{component.name}.purpose", component.purpose),
+            (f"{component.name}.description", component.description),
+        ):
+            if value:
+                locations.append((label, value))
+        for value in component.scalability_considerations:
+            if value:
+                locations.append((f"{component.name}.scalability_considerations", value))
+
+    return locations
+
+
+def _check_quantitative_targets(state: ArchitectState) -> dict[str, list[str]]:
+    """Defense-in-depth deterministic scan: architecture-owned prose must not
+    carry an invented quantitative target (see
+    `find_unauthorized_quantitative_targets`). Primary enforcement is
+    fail-fast at Feature generation; this catches the same invention if it
+    enters through Blueprint/ADR/Component/migration-step prose instead.
+    Pure."""
+
+    findings: dict[str, list[str]] = {}
+    for label, text in _quantitative_target_locations(state):
+        targets = find_unauthorized_quantitative_targets(text, state.context_record)
+        if not targets:
+            continue
+        existing = findings.setdefault(label, [])
+        for target in targets:
+            if target not in existing:
+                existing.append(target)
+    return findings
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -1233,6 +1442,144 @@ def _check_kb_evidence_grounding(
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# Rubric item: material architecture decision coverage (Integration, Kush)
+#
+# The project could previously only claim "every final ADR is traceable to
+# literature actually retrieved this run" — true, but narrower than what a
+# real E2E run exposed: the final design also carried MATERIAL
+# recommendations (a migration strategy, a service-decomposition choice)
+# that never became an ADR at all, so they were invisible to every existing
+# grounding check.
+#
+# The extension is additive, not a new model: `ADR.related_decision_topic_ids`
+# (state.py) is an EXACT, non-fuzzy mapping from an ADR to the
+# `DecisionTopic`(s) it decided — reusing the SAME bounded, case-derived
+# topic catalog the researcher already plans literature retrieval against
+# (pipeline/agents/researcher.py `plan_decision_topics`), so "what counts as
+# a material decision category" cannot drift from "what the researcher
+# already treats as a decision worth grounding".
+# ─────────────────────────────────────────────────────────────────────────
+
+# Every architecture necessarily makes a decision in each of these three
+# baseline categories — decomposition, data ownership, integration style —
+# regardless of case specifics (see researcher._BASELINE_TOPICS). Unlike the
+# conditional topics (compliance, observability, technology conservation),
+# which only apply when the case actually raises the question, these three
+# can never be "no material decision was made" — a design always decomposes
+# something, owns its data somehow, and integrates its parts somehow. A
+# regression test pins these strings against researcher._BASELINE_TOPICS so
+# the two catalogs cannot silently drift apart.
+MATERIAL_DECISION_TOPICS: tuple[str, ...] = (
+    "service decomposition and boundaries",
+    "data ownership and persistence strategy",
+    "integration style: synchronous vs asynchronous communication",
+)
+
+# The fourth material category — brownfield migration/evolution strategy —
+# is CONDITIONALLY material: merely planning the topic for retrieval does
+# not mean a migration decision was actually made (a greenfield case never
+# plans it at all; a brownfield case might still end up not modernizing).
+# It becomes material exactly when the Architect actually produced a
+# migration sequence (`Blueprint.migration_steps` non-empty) — see
+# `_check_material_decision_coverage`.
+MIGRATION_MATERIAL_TOPIC = "brownfield migration and evolution strategy"
+
+
+def _adr_topic_ids(adr: ADR) -> set[str]:
+    return {value.strip() for value in adr.related_decision_topic_ids if value.strip()}
+
+
+def _check_material_decision_coverage(
+    state: ArchitectState,
+) -> tuple[dict[str, list[str]], list[str]]:
+    """Deterministic material-decision coverage gate. Pure.
+
+    Returns (invalid_topic_ids, material_decisions_without_adr):
+
+    * `invalid_topic_ids`: ADR id -> `related_decision_topic_ids` values
+      that do not resolve to any `state.decision_topics` ID this run
+      (fabricated or stale) — the same non-fuzzy-reference discipline as
+      `invalid_evidence_ids` and `invalid_source_references`.
+    * `material_decisions_without_adr`: topic strings from
+      `MATERIAL_DECISION_TOPICS` (always required once planned) plus
+      `MIGRATION_MATERIAL_TOPIC` (required only when a migration sequence
+      was actually produced) that were planned this run but have NO ADR
+      whose `related_decision_topic_ids` names them. Deliberately NOT every
+      planned `DecisionTopic` — a topic outside this bounded set (e.g.
+      observability, technology conservation) never forces an ADR merely
+      because it was planned for retrieval; see the module comment above
+      for why. A topic never planned this run at all is not required
+      either — there is nothing to be material ABOUT.
+    """
+    topic_id_by_name = {topic.topic: topic.id for topic in state.decision_topics}
+    valid_topic_ids = {topic.id for topic in state.decision_topics}
+
+    invalid_topic_ids: dict[str, list[str]] = {}
+    covered_topic_ids: set[str] = set()
+    for adr in state.adrs:
+        mapped = _adr_topic_ids(adr)
+        bad = sorted(mapped - valid_topic_ids)
+        if bad:
+            invalid_topic_ids[adr.id or adr.title] = bad
+        covered_topic_ids |= (mapped & valid_topic_ids)
+
+    required_topic_names = list(MATERIAL_DECISION_TOPICS)
+    if state.blueprint is not None and state.blueprint.migration_steps:
+        required_topic_names.append(MIGRATION_MATERIAL_TOPIC)
+
+    missing: list[str] = []
+    for topic_name in required_topic_names:
+        topic_id = topic_id_by_name.get(topic_name)
+        if topic_id is None:
+            continue  # never planned this run — nothing to require coverage of
+        if topic_id not in covered_topic_ids:
+            missing.append(topic_name)
+
+    return invalid_topic_ids, missing
+
+
+def _check_adr_evidence_topic_provenance(
+    state: ArchitectState,
+) -> dict[str, list[str]]:
+    """Tightened evidence provenance for ADRs that declare a topic mapping.
+
+    Pure. An ADR's cited `evidence_id` must belong to the qualifying
+    evidence of at least one of ITS OWN mapped decision topics — not merely
+    be SOME qualifying evidence retrieved this run for an unrelated topic.
+    Without this, an ADR for a migration strategy could satisfy the plain
+    fabrication check in `_check_kb_evidence_grounding` by citing a chunk
+    that was only ever retrieved for, say, the data-ownership topic.
+
+    Only applies to ADRs that declared `related_decision_topic_ids` — an
+    ADR with no topic mapping is judged by the existing, looser
+    `_check_kb_evidence_grounding` alone (any qualifying evidence at all).
+    This is additive tightening, not a second competing evidence gate.
+    """
+    if not state.decision_topics:
+        return {}
+    evidence_by_topic_id = {
+        topic.id: set(topic.evidence_ids) for topic in state.decision_topics
+    }
+    qualifying = qualifying_kb_evidence_ids(state)
+
+    outside: dict[str, list[str]] = {}
+    for adr in state.adrs:
+        mapped_topic_ids = _adr_topic_ids(adr) & evidence_by_topic_id.keys()
+        if not mapped_topic_ids:
+            continue
+        allowed: set[str] = set()
+        for topic_id in mapped_topic_ids:
+            allowed |= evidence_by_topic_id[topic_id]
+        cited = {value.strip() for value in adr.evidence_ids if value.strip()}
+        # Restricted to QUALIFYING citations: an already-fabricated ID is
+        # `_check_kb_evidence_grounding`'s finding to report, not this one's.
+        bad = sorted((cited & qualifying) - allowed)
+        if bad:
+            outside[adr.id or adr.title] = bad
+    return outside
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # Rubric item 2: constraints
 # ─────────────────────────────────────────────────────────────────────────
 
@@ -2006,6 +2353,27 @@ def run_deterministic_checks(
         score_kb_evidence_grounding,
         kb_evidence_gap_non_refinable,
     ) = _check_kb_evidence_grounding(state)
+
+    invalid_adr_decision_topic_ids, material_decisions_without_adr = (
+        _check_material_decision_coverage(state)
+    )
+    # A material decision with no governing ADR is a traceability failure,
+    # exactly like `unowned_target_services`/`requirements_without_feature`
+    # above — a design cannot score 2/2 traceability while a recommendation
+    # it actually made is untraceable to any ADR.
+    traceability["material_decisions_without_adr"] = material_decisions_without_adr
+
+    adr_evidence_outside_mapped_topics = _check_adr_evidence_topic_provenance(state)
+    if invalid_adr_decision_topic_ids or adr_evidence_outside_mapped_topics:
+        # Fabricated topic references and off-topic citations are the same
+        # family of failure as `invalid_evidence_ids` above: the grounding
+        # claim ("this ADR is traceable to literature retrieved for ITS
+        # decision") is false, so the score cannot read 2 regardless of what
+        # `_check_kb_evidence_grounding` alone computed.
+        score_kb_evidence_grounding = 0
+
+    invented_quantitative_targets = _check_quantitative_targets(state)
+
     repository_expected = bool(state.initial_request.repo_url.strip())
     repository_available = state.repo_representation is not None
 
@@ -2570,6 +2938,60 @@ def run_deterministic_checks(
             ),
         )
 
+    if invalid_adr_decision_topic_ids:
+        add_issue(
+            "high",
+            "evidence",
+            "One or more ADRs reference a decision topic ID that was not "
+            "planned/retrieved this run.",
+            str(invalid_adr_decision_topic_ids),
+            "Use only decision topic IDs (e.g. 'TOPIC-1') that appear in "
+            "<decision_topics> this run; remove any that do not.",
+        )
+
+    if adr_evidence_outside_mapped_topics:
+        add_issue(
+            "high",
+            "evidence",
+            "One or more ADRs cite KB evidence that was retrieved for a "
+            "different decision topic than the one(s) the ADR maps to.",
+            str(adr_evidence_outside_mapped_topics),
+            "Cite only evidence retrieved for a decision topic this ADR "
+            "actually maps to via related_decision_topic_ids, or broaden "
+            "the ADR's own topic mapping if the citation is genuinely "
+            "relevant to a topic it does not yet list.",
+        )
+
+    if material_decisions_without_adr:
+        add_issue(
+            "high",
+            "adr",
+            "Material architecture decision(s) are not represented by any "
+            f"ADR: {', '.join(material_decisions_without_adr)}.",
+            f"material_decisions_without_adr={material_decisions_without_adr}",
+            "Add or extend an ADR whose related_decision_topic_ids names "
+            "each listed decision topic, recording the actual decision "
+            "made and citing genuinely relevant retrieved evidence if any "
+            "exists for it.",
+        )
+
+    if invented_quantitative_targets:
+        add_issue(
+            "high",
+            "grounding",
+            "Architecture text states a quantitative performance/scale "
+            "target the locked Context Record never authorized: "
+            + "; ".join(
+                f"{location}: {', '.join(values)}"
+                for location, values in list(invented_quantitative_targets.items())[:4]
+            )
+            + ("; …" if len(invented_quantitative_targets) > 4 else ""),
+            str(invented_quantitative_targets),
+            "Remove the invented figure; state the target qualitatively, "
+            "or note it must be measured/agreed later, unless the Context "
+            "Record explicitly authorizes that exact number.",
+        )
+
     return DeterministicChecks(
         artifacts_present=present,
         missing_fields=missing,
@@ -2593,6 +3015,10 @@ def run_deterministic_checks(
         adrs_without_kb_evidence=adrs_without_kb_evidence,
         invalid_evidence_ids=invalid_evidence_ids,
         kb_evidence_gap=kb_evidence_gap,
+        invalid_adr_decision_topic_ids=invalid_adr_decision_topic_ids,
+        material_decisions_without_adr=material_decisions_without_adr,
+        adr_evidence_outside_mapped_topics=adr_evidence_outside_mapped_topics,
+        invented_quantitative_targets=invented_quantitative_targets,
         unowned_target_services=unowned_target_services,
         unjustified_language_drift=unjustified_language_drift,
         unresolved_flow_participants=unresolved_flow_participants,

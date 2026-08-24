@@ -156,6 +156,16 @@ Rules:
 - Use priority values only from: must, should, could.
 - Each feature needs a concrete scenario and observable acceptance criteria.
 - Do not invent requirements that are unsupported by the context.
+- QUANTITATIVE TARGETS (strict): do not invent numeric SLOs, latency
+  budgets (e.g. "under 200ms"), throughput or concurrency figures (e.g.
+  "10k concurrent users"), multiplier claims (e.g. "10x traffic"), or
+  availability percentages in `scenario` or `acceptance_criteria` unless
+  the Context Record states that exact number. When the Context Record
+  gives only a qualitative signal ("substantially higher peak traffic",
+  "high availability", magnitude unstated), write a qualitative scenario
+  or acceptance criterion instead — a precise-sounding fabricated figure is
+  worse than an honest qualitative one, and is rejected deterministically
+  before architecture design ever runs.
 - Return only the structured output requested by the response schema.
 """.strip()
 
@@ -223,6 +233,21 @@ DECISION EVIDENCE GROUNDING (strict):
   <decision_topics> is a known KB gap, not something to fabricate around.
 - Fabricated or unresolvable evidence IDs are removed deterministically
   after you return; a removed ID never becomes evidence.
+
+DECISION-TOPIC MAPPING (strict):
+- Every ADR's `related_decision_topic_ids` must list ONLY topic IDs
+  ("TOPIC-1", "TOPIC-2", ...) copied EXACTLY from <decision_topics> that
+  this decision actually addresses — never fabricated, never every topic.
+  One ADR may map to several topics when one decision legitimately spans
+  them (e.g. a migration-strategy ADR that also touches service
+  decomposition).
+- At minimum, map an ADR to its matching topic for: service
+  decomposition/boundaries, data ownership/persistence strategy,
+  integration style, and — when this is a brownfield modernization with a
+  populated `migration_steps` — the migration/evolution strategy. Every
+  design makes a decision in each of those categories; leaving the
+  matching ADR's `related_decision_topic_ids` empty when a topic for it was
+  planned is a missing decision record, not an acceptable omission.
 
 QUANTITATIVE TARGETS (strict):
 - Do not invent numeric SLOs, throughput figures, latency budgets (e.g.
@@ -476,6 +501,45 @@ def _normalize_and_validate_requirement_coverage(
         )
 
     return normalized
+
+
+def _validate_no_invented_quantitative_targets(
+    state: ArchitectState, features: list[Feature]
+) -> None:
+    """FAIL FAST, BEFORE PHASE 2: reject any invented quantitative
+    performance/scale target in a generated Feature's `scenario` or
+    `acceptance_criteria`. Pure with respect to `features` — raises, never
+    mutates.
+
+    SAME FAIL-FAST SHAPE AS `_normalize_and_validate_requirement_coverage`,
+    and for the identical reason: a refine pass reuses `state.features`
+    verbatim (`_reuses_features`) and phase 1 never runs again, so an
+    invented number that reached the stored Feature set would be a
+    PERMANENT, unrepairable blocker — no later Architect pass can edit a
+    Feature to remove it. Catching it here, before phase 2 (and before the
+    Feature set is ever written to state), means the run fails once with an
+    actionable error instead of shipping a design built on a number nobody
+    approved.
+
+    Detection is `review_checks.find_unauthorized_quantitative_targets` —
+    the ONE detector this module and the deterministic Reviewer check both
+    use, so "what counts as an invented target" cannot drift between the
+    fail-fast gate and the defense-in-depth gate.
+    """
+    from pipeline.review_checks import find_unauthorized_quantitative_targets
+
+    offenders: list[str] = []
+    for feature in features:
+        for text in (feature.scenario, *feature.acceptance_criteria):
+            targets = find_unauthorized_quantitative_targets(text, state.context_record)
+            if targets:
+                offenders.append(f"{feature.id}: {', '.join(targets)}")
+
+    if offenders:
+        raise ValueError(
+            "Architect phase-1 invented unauthorized quantitative target(s) "
+            "not present in the locked Context Record: " + "; ".join(offenders)
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -1047,6 +1111,10 @@ def architect_node(state: ArchitectState) -> dict:
             # `_normalize_and_validate_requirement_coverage` for why a bad
             # requirement mapping must never reach the Reviewer at all.
             features = _normalize_and_validate_requirement_coverage(state, features)
+
+            # Same fail-fast discipline, for invented numeric targets — see
+            # `_validate_no_invented_quantitative_targets`.
+            _validate_no_invented_quantitative_targets(state, features)
 
         # Phase 2 — architecture derived from those features
         design_result: ArchitectureDesign
