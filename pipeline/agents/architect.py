@@ -243,11 +243,16 @@ DECISION-TOPIC MAPPING (strict):
   decomposition).
 - At minimum, map an ADR to its matching topic for: service
   decomposition/boundaries, data ownership/persistence strategy,
-  integration style, and — when this is a brownfield modernization with a
-  populated `migration_steps` — the migration/evolution strategy. Every
-  design makes a decision in each of those categories; leaving the
-  matching ADR's `related_decision_topic_ids` empty when a topic for it was
-  planned is a missing decision record, not an acceptable omission.
+  integration style, scaling/availability strategy, and — when this is a
+  brownfield modernization with a populated `migration_steps` — the
+  migration/evolution strategy. Every design makes a decision in each of
+  those categories; leaving the matching ADR's `related_decision_topic_ids`
+  empty when a topic for it was planned is a missing decision record, not
+  an acceptable omission.
+- EVERY ADR needs at least one entry in `related_decision_topic_ids` when
+  <decision_topics> is non-empty this run — not only the ones above. An
+  ADR with no topic mapping at all cannot have its cited evidence checked
+  against the decision it actually supports.
 
 QUANTITATIVE TARGETS (strict):
 - Do not invent numeric SLOs, throughput figures, latency budgets (e.g.

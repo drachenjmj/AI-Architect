@@ -1,5 +1,6 @@
 """test_material_decisions.py — material architecture decision coverage
-(Kush integration, Part 2 of the final grounding-hardening pass).
+(Kush integration, Part 2 of the final grounding-hardening pass, plus the
+follow-up microfix closing three remaining contract gaps).
 
 Real E2E gap: the project could truthfully claim "every final ADR is
 traceable to literature actually retrieved this run" — but a live Gemini
@@ -14,15 +15,23 @@ The mechanism is additive, not a new model:
     mapping from an ADR to the `DecisionTopic`(s) it decided, reusing the
     SAME bounded, case-derived topic catalog the researcher already plans
     literature retrieval against (`pipeline.agents.researcher`).
-  * `review_checks.MATERIAL_DECISION_TOPICS` / `MIGRATION_MATERIAL_TOPIC` —
-    the narrow, generic set of categories that are ALWAYS (or, for
-    migration, conditionally) material, deliberately excluding the
+  * `review_checks.MATERIAL_DECISION_TOPICS` (all FOUR of the researcher's
+    universal baseline topics — decomposition, data ownership, integration
+    style, scaling/availability) / `MIGRATION_MATERIAL_TOPIC` (conditional
+    on an actual migration sequence) — deliberately excluding the
     conditional topics (observability, technology conservation, ...) so a
     planned topic never forces ADR inflation on its own.
-  * `_check_material_decision_coverage` / `_check_adr_evidence_topic_provenance`
-    — the deterministic gate: every material topic must resolve to an ADR,
-    every ADR's topic references must be real, and evidence cited by a
+  * `_check_material_decision_coverage` — every material topic must
+    resolve to an ADR.
+  * `_check_adr_topic_mapping_presence` — when topics were planned at all,
+    EVERY ADR (not just ones covering a material topic) must declare SOME
+    topic mapping — closes the gap where an unmapped extra ADR could cite
+    any globally qualifying evidence and escape topic-scoped provenance.
+  * `_check_adr_evidence_topic_provenance` — evidence cited by a
     topic-mapped ADR must belong to one of ITS OWN mapped topics.
+  * `_check_material_topic_evidence_gaps` — a required material topic with
+    ZERO qualifying evidence retrieved is an honest, `non_refinable`
+    per-topic gap, distinct from the whole-run `kb_evidence_gap`.
 
 All offline; no LLM calls.
 """
@@ -33,6 +42,7 @@ import inspect
 
 from pipeline.agents import reviewer as rev
 from pipeline.agents.researcher import _BASELINE_TOPICS
+from pipeline.refine_gate import evaluate_caps
 from pipeline.review_checks import (
     MATERIAL_DECISION_TOPICS,
     MIGRATION_MATERIAL_TOPIC,
@@ -47,10 +57,13 @@ from pipeline.state import (
     Feature,
     KBChunk,
     MigrationStep,
+    ReviewResult,
+    RubricScores,
+    Stage,
     new_run,
 )
 
-DECOMPOSITION, DATA_OWNERSHIP, INTEGRATION = MATERIAL_DECISION_TOPICS
+DECOMPOSITION, DATA_OWNERSHIP, INTEGRATION, SCALING = MATERIAL_DECISION_TOPICS
 
 
 def _topic(topic_id, name, evidence_ids=()):
@@ -99,27 +112,30 @@ def _state(*, topics, adrs, kb_chunks=(), migration_steps=()):
 
 
 def _baseline_covered(*, migration=False):
-    """Fully compliant baseline: all three always-material topics covered
-    by their own ADR with genuinely-mapped evidence; optionally the
-    migration topic too."""
+    """Fully compliant baseline: all FOUR always-material topics covered by
+    their own ADR with genuinely-mapped evidence; optionally the migration
+    topic too."""
     topics = [
         _topic("TOPIC-1", DECOMPOSITION, ["KB-E001"]),
         _topic("TOPIC-2", DATA_OWNERSHIP, ["KB-E002"]),
         _topic("TOPIC-3", INTEGRATION, ["KB-E003"]),
+        _topic("TOPIC-4", SCALING, ["KB-E004"]),
     ]
     adrs = [
         _adr("ADR-001", "ADR-1: Decompose into services", ["TOPIC-1"], ["KB-E001"]),
         _adr("ADR-002", "ADR-2: Own data per service", ["TOPIC-2"], ["KB-E002"]),
         _adr("ADR-003", "ADR-3: Integrate asynchronously", ["TOPIC-3"], ["KB-E003"]),
+        _adr("ADR-004", "ADR-4: Scale horizontally with redundancy", ["TOPIC-4"], ["KB-E004"]),
     ]
     kb_chunks = [
-        _chunk("KB-E001", "s1.pdf"), _chunk("KB-E002", "s2.pdf"), _chunk("KB-E003", "s3.pdf"),
+        _chunk("KB-E001", "s1.pdf"), _chunk("KB-E002", "s2.pdf"),
+        _chunk("KB-E003", "s3.pdf"), _chunk("KB-E004", "s4.pdf"),
     ]
     migration_steps = []
     if migration:
-        topics.append(_topic("TOPIC-4", MIGRATION_MATERIAL_TOPIC, ["KB-E004"]))
-        adrs.append(_adr("ADR-004", "ADR-4: Strangler-fig migration", ["TOPIC-4"], ["KB-E004"]))
-        kb_chunks.append(_chunk("KB-E004", "s4.pdf"))
+        topics.append(_topic("TOPIC-5", MIGRATION_MATERIAL_TOPIC, ["KB-E005"]))
+        adrs.append(_adr("ADR-005", "ADR-5: Strangler-fig migration", ["TOPIC-5"], ["KB-E005"]))
+        kb_chunks.append(_chunk("KB-E005", "s5.pdf"))
         migration_steps = [MigrationStep(title="Extract order handling", objective="Coexist with legacy.")]
     return topics, adrs, kb_chunks, migration_steps
 
@@ -169,8 +185,10 @@ def test_material_migration_strategy_outside_the_adr_trail_fails():
     topics, adrs, kb_chunks, migration_steps = _baseline_covered(migration=True)
     # The migration ADR exists textually but never declares the mapping —
     # exactly the real E2E gap (a Strangler-fig plan described in prose,
-    # never recorded as a decision).
-    adrs[-1] = adrs[-1].model_copy(update={"related_decision_topic_ids": []})
+    # never recorded as a decision). It still maps to SOMETHING else so it
+    # does not also trip the new "every ADR must map to a topic" rule —
+    # isolating this test to the material-coverage failure specifically.
+    adrs[-1] = adrs[-1].model_copy(update={"related_decision_topic_ids": ["TOPIC-1"]})
     state = _state(topics=topics, adrs=adrs, kb_chunks=kb_chunks, migration_steps=migration_steps)
 
     checks = run_deterministic_checks(state)
@@ -183,7 +201,7 @@ def test_migration_topic_planned_but_no_migration_steps_is_not_material():
     migration decision ever being MADE (design stays greenfield-shaped) —
     that must not force a migration ADR."""
     topics, adrs, kb_chunks, _ = _baseline_covered()
-    topics.append(_topic("TOPIC-4", MIGRATION_MATERIAL_TOPIC, ["KB-E004"]))
+    topics.append(_topic("TOPIC-5", MIGRATION_MATERIAL_TOPIC, ["KB-E005"]))
     state = _state(topics=topics, adrs=adrs, kb_chunks=kb_chunks, migration_steps=[])
 
     checks = run_deterministic_checks(state)
@@ -232,12 +250,15 @@ def test_one_adr_covering_two_related_topics_is_supported():
         _topic("TOPIC-1", DECOMPOSITION, ["KB-E001"]),
         _topic("TOPIC-2", DATA_OWNERSHIP, ["KB-E002"]),
         _topic("TOPIC-3", INTEGRATION, ["KB-E001"]),
+        _topic("TOPIC-4", SCALING, ["KB-E002"]),
     ]
     adrs = [
         # One decision spans decomposition AND integration style.
         _adr("ADR-001", "ADR-1: Extract services with async integration",
              ["TOPIC-1", "TOPIC-3"], ["KB-E001"]),
-        _adr("ADR-002", "ADR-2: Own data per service", ["TOPIC-2"], ["KB-E002"]),
+        # Another spans data ownership AND scaling/availability.
+        _adr("ADR-002", "ADR-2: Replicate owned data stores for availability",
+             ["TOPIC-2", "TOPIC-4"], ["KB-E002"]),
     ]
     kb_chunks = [_chunk("KB-E001", "s1.pdf"), _chunk("KB-E002", "s2.pdf")]
     state = _state(topics=topics, adrs=adrs, kb_chunks=kb_chunks)
@@ -245,6 +266,8 @@ def test_one_adr_covering_two_related_topics_is_supported():
     checks = run_deterministic_checks(state)
 
     assert checks.material_decisions_without_adr == []
+    assert checks.adr_evidence_outside_mapped_topics == {}
+    assert checks.adrs_without_decision_topic_mapping == []
 
 
 # ── 8/9: non-mandatory conditional topics never force an ADR ────────────
@@ -252,6 +275,7 @@ def test_one_adr_covering_two_related_topics_is_supported():
 def test_observability_topic_with_no_adr_is_not_forced():
     topics, adrs, kb_chunks, _ = _baseline_covered()
     topics.append(_topic("TOPIC-5", "observability and operations", []))
+    adrs.append(_adr("ADR-005", "ADR-5: Placeholder", ["TOPIC-5"], []))
     state = _state(topics=topics, adrs=adrs, kb_chunks=kb_chunks)
 
     checks = run_deterministic_checks(state)
@@ -262,6 +286,7 @@ def test_observability_topic_with_no_adr_is_not_forced():
 def test_technology_conservation_topic_with_no_adr_is_not_forced():
     topics, adrs, kb_chunks, _ = _baseline_covered()
     topics.append(_topic("TOPIC-5", "technology conservation vs replacement", []))
+    adrs.append(_adr("ADR-005", "ADR-5: Placeholder", ["TOPIC-5"], []))
     state = _state(topics=topics, adrs=adrs, kb_chunks=kb_chunks)
 
     checks = run_deterministic_checks(state)
@@ -301,7 +326,7 @@ def test_reviewer_prompt_contains_material_decision_coverage_information():
 
     assert "related_decision_topic_ids" in prompt
     assert "material_decisions_without_adr" in prompt
-    assert "TOPIC-4" in prompt
+    assert "TOPIC-5" in prompt
 
 
 def test_reviewer_system_prompt_asks_about_material_decision_topic_mapping():
@@ -312,13 +337,14 @@ def test_reviewer_system_prompt_asks_about_material_decision_topic_mapping():
 
 # ── generic, no hard-coding, no catalog drift ────────────────────────────
 
-def test_material_decision_topics_are_a_subset_of_researcher_baseline_topics():
+def test_material_decision_topics_equal_all_four_researcher_baseline_topics():
     """MATERIAL_DECISION_TOPICS is an independent policy choice from
     researcher._BASELINE_TOPICS, but must never silently drift from it —
-    every mandatory string here has to be one the researcher actually
-    plans retrieval for."""
-    for topic in MATERIAL_DECISION_TOPICS:
-        assert topic in _BASELINE_TOPICS
+    after the scaling/availability fix it covers ALL FOUR of the
+    researcher's universal baseline topics, no more and no fewer."""
+    assert set(MATERIAL_DECISION_TOPICS) == set(_BASELINE_TOPICS)
+    assert len(MATERIAL_DECISION_TOPICS) == 4
+    assert SCALING in MATERIAL_DECISION_TOPICS
     assert MIGRATION_MATERIAL_TOPIC not in _BASELINE_TOPICS  # it's conditional, not baseline
 
 
@@ -327,7 +353,9 @@ def test_material_decision_coverage_carries_no_domain_hardcoding():
 
     source = "".join([
         inspect.getsource(rc._check_material_decision_coverage),
+        inspect.getsource(rc._check_adr_topic_mapping_presence),
         inspect.getsource(rc._check_adr_evidence_topic_provenance),
+        inspect.getsource(rc._check_material_topic_evidence_gaps),
         repr(rc.MATERIAL_DECISION_TOPICS),
         rc.MIGRATION_MATERIAL_TOPIC,
     ])
@@ -335,3 +363,213 @@ def test_material_decision_coverage_carries_no_domain_hardcoding():
     lowered = source.lower()
     for term in forbidden:
         assert term not in lowered, f"found domain-specific term {term!r}"
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Microfix 1 — every ADR must map to at least one real DecisionTopic
+# ═════════════════════════════════════════════════════════════════════════
+
+def test_extra_adr_with_valid_evidence_but_no_topic_mapping_fails():
+    """An ADR beyond the four material ones — no topic mapping at all —
+    must not be able to cite globally-qualifying evidence and pass
+    unnoticed. Previously `_check_adr_evidence_topic_provenance` simply
+    skipped any ADR with an empty `related_decision_topic_ids`."""
+    topics, adrs, kb_chunks, _ = _baseline_covered()
+    extra = _adr("ADR-999", "ADR-999: An extra decision", [], ["KB-E001"])
+    adrs = adrs + [extra]
+    state = _state(topics=topics, adrs=adrs, kb_chunks=kb_chunks)
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.adrs_without_decision_topic_mapping == ["ADR-999"]
+    assert checks.score_kb_evidence_grounding == 0
+    issue = next(i for i in checks.issues if "no related_decision_topic_ids" in i.finding)
+    assert issue.severity == "high"
+    assert issue.requires_refinement is True
+    assert issue.non_refinable is False  # always fixable: add the mapping
+
+
+def test_extra_adr_with_valid_topic_mapping_passes():
+    topics, adrs, kb_chunks, _ = _baseline_covered()
+    extra = _adr("ADR-999", "ADR-999: An extra decision", ["TOPIC-1"], ["KB-E001"])
+    adrs = adrs + [extra]
+    state = _state(topics=topics, adrs=adrs, kb_chunks=kb_chunks)
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.adrs_without_decision_topic_mapping == []
+    assert checks.score_kb_evidence_grounding == 2
+
+
+def test_no_decision_topics_planned_never_requires_a_mapping():
+    """Backward compatibility: an older/direct state with NO decision_topics
+    at all makes no claim about ADR topic mappings — there is nothing to
+    map TO."""
+    adr = ADR(
+        id="ADR-001", title="ADR-1: Decision", context="c", decision="d",
+        rationale="r", related_feature_ids=["FEAT-001"],
+        related_component_names=["Svc A"],
+    )
+    state = _state(topics=[], adrs=[adr], kb_chunks=[])
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.adrs_without_decision_topic_mapping == []
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Microfix 2 — scaling/availability joins the always-material core set
+# ═════════════════════════════════════════════════════════════════════════
+
+def test_scaling_topic_planned_but_not_mapped_to_any_adr_is_blocking():
+    topics, adrs, kb_chunks, _ = _baseline_covered()
+    # Strip the scaling ADR's mapping the same way the decomposition test
+    # above does — the decision exists (topic planned + evidenced) but no
+    # ADR records it. Point it at another real topic so it does not ALSO
+    # trip the "every ADR must map to something" rule, isolating this to
+    # the material-coverage failure specifically.
+    adrs[3] = adrs[3].model_copy(update={"related_decision_topic_ids": ["TOPIC-1"]})
+    state = _state(topics=topics, adrs=adrs, kb_chunks=kb_chunks)
+
+    checks = run_deterministic_checks(state)
+
+    assert SCALING in checks.material_decisions_without_adr
+
+
+def test_one_adr_may_cover_integration_and_scaling_together():
+    """One decision can legitimately span two of the four material
+    categories — this does NOT force a minimum of four separate ADRs."""
+    topics = [
+        _topic("TOPIC-1", DECOMPOSITION, ["KB-E001"]),
+        _topic("TOPIC-2", DATA_OWNERSHIP, ["KB-E002"]),
+        _topic("TOPIC-3", INTEGRATION, ["KB-E003"]),
+        _topic("TOPIC-4", SCALING, ["KB-E003"]),
+    ]
+    adrs = [
+        _adr("ADR-001", "ADR-1: Decompose into services", ["TOPIC-1"], ["KB-E001"]),
+        _adr("ADR-002", "ADR-2: Own data per service", ["TOPIC-2"], ["KB-E002"]),
+        # ONE ADR legitimately grounds both integration style AND the
+        # scaling/availability posture (async messaging IS the scaling
+        # strategy here), citing evidence genuinely retrieved for both.
+        _adr("ADR-003", "ADR-3: Scale via async, redundant messaging",
+             ["TOPIC-3", "TOPIC-4"], ["KB-E003"]),
+    ]
+    kb_chunks = [_chunk("KB-E001", "s1.pdf"), _chunk("KB-E002", "s2.pdf"), _chunk("KB-E003", "s3.pdf")]
+    state = _state(topics=topics, adrs=adrs, kb_chunks=kb_chunks)
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.material_decisions_without_adr == []
+    assert checks.adr_evidence_outside_mapped_topics == {}
+    assert len(state.adrs) == 3  # not forced to 4
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Microfix 3 — per-topic material KB gaps are explicit and non-refinable
+# ═════════════════════════════════════════════════════════════════════════
+
+def test_material_topic_with_zero_evidence_is_an_explicit_nonrefinable_gap():
+    topics, adrs, kb_chunks, _ = _baseline_covered()
+    # Decomposition retrieved NOTHING this run, while the other three
+    # material topics genuinely have evidence.
+    topics[0] = _topic("TOPIC-1", DECOMPOSITION, [])
+    adrs[0] = adrs[0].model_copy(update={"evidence_ids": []})
+    state = _state(topics=topics, adrs=adrs, kb_chunks=kb_chunks[1:])
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.material_topics_without_evidence == [DECOMPOSITION]
+    issue = next(i for i in checks.issues if DECOMPOSITION in i.finding and "curated-KB evidence" in i.finding)
+    assert issue.severity == "high"
+    assert issue.requires_refinement is True
+    assert issue.non_refinable is True
+    assert checks.score_kb_evidence_grounding == 0
+
+
+def test_material_topic_gap_cannot_be_satisfied_with_evidence_from_another_topic():
+    """The decomposition ADR reaches for the data-ownership topic's
+    evidence instead of leaving its own citation empty — still rejected by
+    the exact topic-provenance check, on top of the honest per-topic gap
+    finding. Neither check patches the gap for the other."""
+    topics, adrs, kb_chunks, _ = _baseline_covered()
+    topics[0] = _topic("TOPIC-1", DECOMPOSITION, [])
+    adrs[0] = adrs[0].model_copy(update={"evidence_ids": ["KB-E002"]})  # borrowed from TOPIC-2
+    state = _state(topics=topics, adrs=adrs, kb_chunks=kb_chunks)
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.material_topics_without_evidence == [DECOMPOSITION]
+    assert checks.adr_evidence_outside_mapped_topics == {"ADR-001": ["KB-E002"]}
+
+
+def test_adr_spanning_a_gap_topic_and_an_evidenced_topic_is_not_penalized_for_the_other_topic():
+    """An ADR mapped to BOTH the gap topic and a topic that DOES have
+    evidence can still legitimately ground itself in the evidenced topic —
+    the per-topic gap finding is independent of, and does not veto, that."""
+    topics, adrs, kb_chunks, _ = _baseline_covered()
+    topics[0] = _topic("TOPIC-1", DECOMPOSITION, [])  # gap
+    # ADR-001 now spans the gap topic AND integration (which has evidence),
+    # citing only the integration evidence — legitimate.
+    adrs[0] = adrs[0].model_copy(update={
+        "related_decision_topic_ids": ["TOPIC-1", "TOPIC-3"],
+        "evidence_ids": ["KB-E003"],
+    })
+    state = _state(topics=topics, adrs=adrs, kb_chunks=kb_chunks[1:])
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.material_topics_without_evidence == [DECOMPOSITION]
+    # No off-topic citation: KB-E003 belongs to TOPIC-3, one of ADR-001's
+    # own mapped topics.
+    assert checks.adr_evidence_outside_mapped_topics == {}
+    # The decomposition topic is still COVERED (an ADR maps to it) even
+    # though it has no evidence of its own — that is the honest-gap case,
+    # not a missing-ADR case.
+    assert checks.material_decisions_without_adr == []
+
+
+def test_pure_material_topic_gap_triggers_the_existing_nonrefinable_stop():
+    topics, adrs, kb_chunks, _ = _baseline_covered()
+    topics[0] = _topic("TOPIC-1", DECOMPOSITION, [])
+    adrs[0] = adrs[0].model_copy(update={"evidence_ids": []})
+    state = _state(topics=topics, adrs=adrs, kb_chunks=kb_chunks[1:])
+    checks = run_deterministic_checks(state)
+
+    state.review = ReviewResult(
+        overall_status="fail",
+        rubric_scores=RubricScores(),
+        issues=checks.issues,
+        requires_refinement=any(i.requires_refinement for i in checks.issues),
+    )
+    state.stage = Stage.REFINING
+
+    stop, reason = evaluate_caps(state)
+
+    assert stop is True
+    assert reason == "non_refinable_findings"
+
+
+def test_mixed_refinable_and_nonrefinable_material_blockers_still_loop():
+    """The non-refinable per-topic gap coexists with an ordinary, fixable
+    finding (an ADR with no topic mapping at all) — the mix is not pure, so
+    the loop must still run for the fixable one."""
+    topics, adrs, kb_chunks, _ = _baseline_covered()
+    topics[0] = _topic("TOPIC-1", DECOMPOSITION, [])
+    adrs[0] = adrs[0].model_copy(update={"evidence_ids": []})
+    extra = _adr("ADR-999", "ADR-999: An extra decision", [], [])  # unmapped, refinable
+    state = _state(topics=topics, adrs=adrs + [extra], kb_chunks=kb_chunks[1:])
+    checks = run_deterministic_checks(state)
+    assert any(i.non_refinable for i in checks.issues)  # the per-topic gap
+    assert any(not i.non_refinable and i.requires_refinement for i in checks.issues)  # the unmapped ADR
+
+    state.review = ReviewResult(
+        overall_status="fail",
+        rubric_scores=RubricScores(),
+        issues=checks.issues,
+        requires_refinement=True,
+    )
+    state.stage = Stage.REFINING
+
+    stop, reason = evaluate_caps(state)
+
+    assert stop is False

@@ -109,6 +109,16 @@ class DeterministicChecks(BaseModel):
     # evidence this run, but were retrieved for a decision topic OTHER than
     # any this ADR maps to (see `_check_adr_evidence_topic_provenance`).
     adr_evidence_outside_mapped_topics: dict[str, list[str]] = Field(default_factory=dict)
+    # ADR ids/titles with NO related_decision_topic_ids at all, when decision
+    # topics were planned this run (see `_check_adr_topic_mapping_presence`).
+    adrs_without_decision_topic_mapping: list[str] = Field(default_factory=list)
+    # Required material decision topics (MATERIAL_DECISION_TOPICS /
+    # MIGRATION_MATERIAL_TOPIC) planned this run with ZERO qualifying
+    # curated-KB evidence retrieved for that topic specifically — an
+    # honest, non_refinable per-topic gap (see
+    # `_check_material_topic_evidence_gaps`), distinct from `kb_evidence_gap`
+    # (which only fires when nothing was retrieved for ANY topic at all).
+    material_topics_without_evidence: list[str] = Field(default_factory=list)
 
     # Invented performance/scale targets found in architecture-owned prose
     # (Blueprint, ADR, Component, migration-step text) that the locked
@@ -1460,19 +1470,24 @@ def _check_kb_evidence_grounding(
 # already treats as a decision worth grounding".
 # ─────────────────────────────────────────────────────────────────────────
 
-# Every architecture necessarily makes a decision in each of these three
-# baseline categories — decomposition, data ownership, integration style —
-# regardless of case specifics (see researcher._BASELINE_TOPICS). Unlike the
-# conditional topics (compliance, observability, technology conservation),
-# which only apply when the case actually raises the question, these three
-# can never be "no material decision was made" — a design always decomposes
-# something, owns its data somehow, and integrates its parts somehow. A
-# regression test pins these strings against researcher._BASELINE_TOPICS so
-# the two catalogs cannot silently drift apart.
+# Every architecture necessarily makes a decision in each of these FOUR
+# baseline categories — decomposition, data ownership, integration style,
+# and scaling/availability — regardless of case specifics; this is exactly
+# researcher._BASELINE_TOPICS, the researcher's own universal (always
+# planned) topic set. Unlike the CONDITIONAL topics (compliance,
+# observability, technology conservation), which only apply when the case
+# actually raises the question, these four can never be "no material
+# decision was made" — a design always decomposes something, owns its data
+# somehow, integrates its parts somehow, and has SOME scaling/availability
+# posture. A regression test pins these strings against
+# researcher._BASELINE_TOPICS so the two catalogs cannot silently drift
+# apart. One ADR may legitimately cover several of these topics at once —
+# this is a coverage requirement, not a forced minimum ADR count.
 MATERIAL_DECISION_TOPICS: tuple[str, ...] = (
     "service decomposition and boundaries",
     "data ownership and persistence strategy",
     "integration style: synchronous vs asynchronous communication",
+    "scaling and availability strategy",
 )
 
 # The fourth material category — brownfield migration/evolution strategy —
@@ -1538,6 +1553,33 @@ def _check_material_decision_coverage(
     return invalid_topic_ids, missing
 
 
+def _check_adr_topic_mapping_presence(state: ArchitectState) -> list[str]:
+    """ADR ids/titles with NO `related_decision_topic_ids` at all. Pure.
+
+    Only asserted when `state.decision_topics` is non-empty this run — with
+    topics actually planned, the Architect contract is that EVERY ADR maps
+    to the decision topic(s) it addresses (see the DECISION-TOPIC MAPPING
+    prompt rule in agents/architect.py), not just the ones this module
+    treats as unconditionally material. Without this, an ADR outside
+    `MATERIAL_DECISION_TOPICS` could carry no topic mapping at all and cite
+    any globally qualifying evidence, silently escaping
+    `_check_adr_evidence_topic_provenance`'s tightened check (which only
+    applies to ADRs that DO declare a mapping).
+
+    Backward compatible: a state with no decision_topics at all (old
+    checkpoints, a caller/test that never planned topics) makes no claim
+    here — there is nothing for an ADR to map TO, so an absent mapping is
+    not a defect.
+    """
+    if not state.decision_topics:
+        return []
+    return [
+        adr.id or adr.title
+        for adr in state.adrs
+        if not _adr_topic_ids(adr)
+    ]
+
+
 def _check_adr_evidence_topic_provenance(
     state: ArchitectState,
 ) -> dict[str, list[str]]:
@@ -1551,9 +1593,9 @@ def _check_adr_evidence_topic_provenance(
     that was only ever retrieved for, say, the data-ownership topic.
 
     Only applies to ADRs that declared `related_decision_topic_ids` — an
-    ADR with no topic mapping is judged by the existing, looser
-    `_check_kb_evidence_grounding` alone (any qualifying evidence at all).
-    This is additive tightening, not a second competing evidence gate.
+    ADR with no topic mapping at all is `_check_adr_topic_mapping_presence`'s
+    finding to report, not this one's; this check only tightens the ADRs
+    that DID map. This is additive, not a second competing evidence gate.
     """
     if not state.decision_topics:
         return {}
@@ -1577,6 +1619,87 @@ def _check_adr_evidence_topic_provenance(
         if bad:
             outside[adr.id or adr.title] = bad
     return outside
+
+
+def _check_material_topic_evidence_gaps(state: ArchitectState) -> list[str]:
+    """Required material decision topics that retrieved ZERO qualifying
+    curated-KB evidence for THAT topic specifically. Pure.
+
+    Distinct from the whole-run `kb_evidence_gap` in
+    `_check_kb_evidence_grounding` (which fires only when NOTHING
+    qualifying was retrieved for ANY topic all run): this fires PER TOPIC,
+    so a run where every OTHER required topic has evidence but one
+    material category came back completely empty is still surfaced
+    honestly, rather than folded into the generic (refinable)
+    `adrs_without_kb_evidence` finding. Research runs exactly once, before
+    the refine loop exists, so no amount of re-designing can manufacture
+    evidence for a topic that was never retrieved — `run_deterministic_checks`
+    marks the resulting issue `non_refinable` for exactly the same reason
+    the whole-run gap already is.
+
+    Purely topic-centric by design: it does not inspect which ADR maps to
+    the topic or what ELSE that ADR maps to. An ADR spanning both this gap
+    topic and another topic that DOES have evidence is unaffected — it can
+    still legitimately ground itself in the other topic's evidence, which
+    `_check_adr_evidence_topic_provenance` and `_check_material_decision_coverage`
+    (not this function) continue to judge on their own terms.
+    """
+    required_topic_names = list(MATERIAL_DECISION_TOPICS)
+    if state.blueprint is not None and state.blueprint.migration_steps:
+        required_topic_names.append(MIGRATION_MATERIAL_TOPIC)
+    if not required_topic_names:
+        return []
+
+    return [
+        topic.topic
+        for topic in state.decision_topics
+        if topic.topic in required_topic_names and not topic.evidence_ids
+    ]
+
+
+def _actionable_adrs_without_kb_evidence(
+    state: ArchitectState,
+    adrs_without_kb_evidence: list[str],
+    material_topics_without_evidence: list[str],
+) -> list[str]:
+    """`adrs_without_kb_evidence`, minus any ADR whose empty citation is
+    FULLY explained by a required material topic that itself retrieved
+    ZERO evidence this run. Pure.
+
+    WHY: without this, an ADR mapped only to a gapped material topic was
+    double-reported — once by the generic (refinable) finding below, which
+    tells the Architect to "cite a retrieved evidence_id ... if one
+    genuinely supports" it, and once by `_check_material_topic_evidence_gaps`'s
+    honest `non_refinable` finding, which says no such evidence exists to
+    cite. The refinable copy invited a refine round that could never
+    succeed — exactly the wasted-iteration bug this exists to close.
+
+    An ADR mapped to the gap topic ALONGSIDE another topic that DOES have
+    evidence is NOT excluded — it genuinely could have cited that other
+    topic's evidence, so the generic finding still legitimately applies.
+    An ADR with NO topic mapping at all is also not excluded here — its
+    absence is `_check_adr_topic_mapping_presence`'s finding to explain,
+    not this filter's to silently drop.
+    """
+    if not material_topics_without_evidence or not adrs_without_kb_evidence:
+        return adrs_without_kb_evidence
+    gap_topics = set(material_topics_without_evidence)
+    topic_by_id = {topic.id: topic for topic in state.decision_topics}
+    adr_by_label = {(adr.id or adr.title): adr for adr in state.adrs}
+
+    actionable: list[str] = []
+    for label in adrs_without_kb_evidence:
+        adr = adr_by_label.get(label)
+        mapped_ids = _adr_topic_ids(adr) if adr is not None else set()
+        mapped_names = {
+            topic_by_id[topic_id].topic
+            for topic_id in mapped_ids
+            if topic_id in topic_by_id
+        }
+        if mapped_names and mapped_names <= gap_topics:
+            continue  # fully explained by an honest per-topic evidence gap
+        actionable.append(label)
+    return actionable
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -2364,12 +2487,21 @@ def run_deterministic_checks(
     traceability["material_decisions_without_adr"] = material_decisions_without_adr
 
     adr_evidence_outside_mapped_topics = _check_adr_evidence_topic_provenance(state)
-    if invalid_adr_decision_topic_ids or adr_evidence_outside_mapped_topics:
-        # Fabricated topic references and off-topic citations are the same
-        # family of failure as `invalid_evidence_ids` above: the grounding
-        # claim ("this ADR is traceable to literature retrieved for ITS
-        # decision") is false, so the score cannot read 2 regardless of what
-        # `_check_kb_evidence_grounding` alone computed.
+    adrs_without_decision_topic_mapping = _check_adr_topic_mapping_presence(state)
+    material_topics_without_evidence = _check_material_topic_evidence_gaps(state)
+    if (
+        invalid_adr_decision_topic_ids
+        or adr_evidence_outside_mapped_topics
+        or adrs_without_decision_topic_mapping
+        or material_topics_without_evidence
+    ):
+        # Fabricated topic references, off-topic citations, an ADR with no
+        # topic mapping at all, and a required topic with zero retrieved
+        # evidence are all the same family of failure as `invalid_evidence_ids`
+        # above: the grounding claim ("every material decision is traceable
+        # to literature retrieved for ITS OWN topic") is false, so the score
+        # cannot read 2 regardless of what `_check_kb_evidence_grounding`
+        # alone computed.
         score_kb_evidence_grounding = 0
 
     invented_quantitative_targets = _check_quantitative_targets(state)
@@ -2912,31 +3044,43 @@ def run_deterministic_checks(
         # evidence" apart from "nothing retrieved was actually relevant to
         # this specific decision" — the latter being its own KB coverage
         # gap, not a fabrication risk to paper over with a decorative cite.
-        topics_with_evidence = [
-            topic.topic for topic in state.decision_topics if topic.evidence_ids
-        ]
-        add_issue(
-            "high",
-            "evidence",
-            (
-                "ADR(s) claim no traceable curated-KB literature support: "
-                f"{', '.join(adrs_without_kb_evidence)}."
-            ),
-            (
-                f"adrs_without_kb_evidence={adrs_without_kb_evidence}; "
-                f"decision topics with qualifying evidence available this "
-                f"run: {topics_with_evidence or '(none)'}"
-            ),
-            (
-                "For each listed ADR: cite a retrieved evidence_id from "
-                "<evidence_catalog> if one genuinely supports that specific "
-                "decision (see <decision_topics> for what was retrieved per "
-                "topic); if nothing retrieved is actually relevant to it, "
-                "that is a knowledge-base coverage gap for this decision — "
-                "say so in the ADR's rationale rather than citing an "
-                "unrelated ID merely to satisfy this check."
-            ),
+        #
+        # ACTIONABLE ONLY: an ADR mapped exclusively to a required topic
+        # `_check_material_topic_evidence_gaps` already reports as a
+        # zero-evidence, non_refinable gap is excluded here — see
+        # `_actionable_adrs_without_kb_evidence`. Reporting it AGAIN as a
+        # refinable "go cite something" finding would invite a refine round
+        # that can never succeed, exactly the wasted-iteration bug that
+        # check exists to close.
+        actionable_adrs_without_kb_evidence = _actionable_adrs_without_kb_evidence(
+            state, adrs_without_kb_evidence, material_topics_without_evidence
         )
+        if actionable_adrs_without_kb_evidence:
+            topics_with_evidence = [
+                topic.topic for topic in state.decision_topics if topic.evidence_ids
+            ]
+            add_issue(
+                "high",
+                "evidence",
+                (
+                    "ADR(s) claim no traceable curated-KB literature support: "
+                    f"{', '.join(actionable_adrs_without_kb_evidence)}."
+                ),
+                (
+                    f"adrs_without_kb_evidence={actionable_adrs_without_kb_evidence}; "
+                    f"decision topics with qualifying evidence available this "
+                    f"run: {topics_with_evidence or '(none)'}"
+                ),
+                (
+                    "For each listed ADR: cite a retrieved evidence_id from "
+                    "<evidence_catalog> if one genuinely supports that specific "
+                    "decision (see <decision_topics> for what was retrieved per "
+                    "topic); if nothing retrieved is actually relevant to it, "
+                    "that is a knowledge-base coverage gap for this decision — "
+                    "say so in the ADR's rationale rather than citing an "
+                    "unrelated ID merely to satisfy this check."
+                ),
+            )
 
     if invalid_adr_decision_topic_ids:
         add_issue(
@@ -2962,6 +3106,19 @@ def run_deterministic_checks(
             "relevant to a topic it does not yet list.",
         )
 
+    if adrs_without_decision_topic_mapping:
+        add_issue(
+            "high",
+            "evidence",
+            "ADR(s) declare no related_decision_topic_ids even though "
+            "decision topics were planned this run: "
+            f"{', '.join(adrs_without_decision_topic_mapping)}.",
+            f"adrs_without_decision_topic_mapping={adrs_without_decision_topic_mapping}",
+            "Add related_decision_topic_ids naming the decision topic(s) "
+            "this ADR actually addresses, copied exactly from "
+            "<decision_topics>.",
+        )
+
     if material_decisions_without_adr:
         add_issue(
             "high",
@@ -2973,6 +3130,23 @@ def run_deterministic_checks(
             "each listed decision topic, recording the actual decision "
             "made and citing genuinely relevant retrieved evidence if any "
             "exists for it.",
+        )
+
+    if material_topics_without_evidence:
+        add_issue(
+            "high",
+            "evidence",
+            "No curated-KB evidence was retrieved for material decision "
+            f"topic(s): {', '.join(material_topics_without_evidence)}. "
+            "This design cannot claim literature grounding for those "
+            "decisions.",
+            f"material_topics_without_evidence={material_topics_without_evidence}",
+            "This is a knowledge-base coverage gap for these specific "
+            "decision topics, not something the Architect can fix by "
+            "redesigning: expand the curated KB's coverage of these "
+            "topics and re-run research, or accept the design without a "
+            "literature-grounding claim for them.",
+            non_refinable=True,
         )
 
     if invented_quantitative_targets:
@@ -3018,6 +3192,8 @@ def run_deterministic_checks(
         invalid_adr_decision_topic_ids=invalid_adr_decision_topic_ids,
         material_decisions_without_adr=material_decisions_without_adr,
         adr_evidence_outside_mapped_topics=adr_evidence_outside_mapped_topics,
+        adrs_without_decision_topic_mapping=adrs_without_decision_topic_mapping,
+        material_topics_without_evidence=material_topics_without_evidence,
         invented_quantitative_targets=invented_quantitative_targets,
         unowned_target_services=unowned_target_services,
         unjustified_language_drift=unjustified_language_drift,

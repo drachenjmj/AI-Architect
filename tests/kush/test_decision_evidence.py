@@ -532,8 +532,11 @@ def test_adr_with_no_evidence_fails_when_some_other_adr_engages():
     reader can tell an Architect oversight apart from a per-decision KB
     coverage gap (Finding 6)."""
     kb = KBChunk(content="c", source="s.pdf", page=1, box=1, evidence_id="KB-E001")
-    engaged = _adr(id="ADR-001", evidence_ids=["KB-E001"])
-    unengaged = _adr(id="ADR-002", title="ADR-2: Do another thing", evidence_ids=[])
+    engaged = _adr(id="ADR-001", evidence_ids=["KB-E001"], related_decision_topic_ids=["TOPIC-1"])
+    unengaged = _adr(
+        id="ADR-002", title="ADR-2: Do another thing", evidence_ids=[],
+        related_decision_topic_ids=["TOPIC-1"],
+    )
     topics = [DecisionTopic(id="TOPIC-1", topic="data ownership", query="q", evidence_ids=["KB-E001"])]
     state = _design_state([engaged, unengaged], [kb], decision_topics=topics)
 
