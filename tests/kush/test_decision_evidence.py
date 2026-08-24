@@ -330,6 +330,90 @@ def test_web_topic_still_fills_remaining_capacity_after_kb_is_exhausted():
     assert {c["source"] for c in pool} == {"kb.pdf", "web.pdf"}
 
 
+# ── cross-origin evidence dedup provenance ───────────────────────────────
+
+def test_allocate_evidence_web_topic_does_not_inherit_kb_evidence_via_dedup():
+    """Direct unit test of the allocator for the cross-origin dedup bug: a
+    KB topic and a web topic both retrieve the IDENTICAL chunk. The web
+    topic must not be handed the KB pool index — it gets nothing, not a
+    borrowed citation."""
+    shared = _chunk("shared content", "shared.pdf")
+    topic_chunks = [[shared], [shared]]
+    topic_origins = ["kb", "web"]
+
+    pool, pool_origins, indices = res.allocate_evidence(topic_chunks, topic_origins, cap=15)
+
+    assert len(pool) == 1
+    assert pool_origins == ["kb"]
+    assert indices[0] == [0]  # KB topic owns the pool item
+    assert indices[1] == []  # web topic's identical hit is a no-op, not a borrowed citation
+
+
+def test_cross_origin_dedup_web_topic_does_not_inherit_kb_evidence_id(monkeypatch):
+    """End-to-end regression: KB Topic A and web Topic B both retrieve the
+    same chunk. A gets the citable KB-E001; B must NOT inherit it merely
+    because A's identical chunk was already in the pool."""
+    context = ContextRecord()
+    state = _state(context_record=context)
+    shared = _chunk("Use event-driven boundaries.", "pattern.pdf", page=3)
+    topic_a, topic_b = res._BASELINE_TOPICS[0], res._BASELINE_TOPICS[1]
+    by_query = {
+        res._topic_query(topic_a, context): ([shared], "kb"),
+        res._topic_query(topic_b, context): ([shared], "web"),
+    }
+    fake = FakeRetrieval(by_query=by_query, default=([], "none"))
+    monkeypatch.setattr(architect, "retrieve_chunks", fake)
+
+    output = res.researcher_node(state)
+
+    topics_by_name = {t.topic: t for t in output["decision_topics"]}
+    assert topics_by_name[topic_a].evidence_ids == ["KB-E001"]
+    assert topics_by_name[topic_b].evidence_ids == []
+    assert len(output["retrieved_knowledge"]) == 1
+    assert output["retrieved_knowledge"][0].evidence_id == "KB-E001"
+
+
+def test_two_kb_topics_sharing_identical_chunk_both_get_the_same_evidence_id(monkeypatch):
+    context = ContextRecord()
+    state = _state(context_record=context)
+    shared = _chunk("Use event-driven boundaries.", "pattern.pdf", page=3)
+    topic_a, topic_b = res._BASELINE_TOPICS[0], res._BASELINE_TOPICS[1]
+    by_query = {
+        res._topic_query(topic_a, context): ([shared], "kb"),
+        res._topic_query(topic_b, context): ([shared], "kb"),
+    }
+    fake = FakeRetrieval(by_query=by_query, default=([], "none"))
+    monkeypatch.setattr(architect, "retrieve_chunks", fake)
+
+    output = res.researcher_node(state)
+
+    topics_by_name = {t.topic: t for t in output["decision_topics"]}
+    assert topics_by_name[topic_a].evidence_ids == ["KB-E001"]
+    assert topics_by_name[topic_b].evidence_ids == ["KB-E001"]
+    assert len(output["retrieved_knowledge"]) == 1
+
+
+def test_two_web_topics_sharing_identical_chunk_neither_gets_an_evidence_id(monkeypatch):
+    context = ContextRecord()
+    state = _state(context_record=context)
+    shared = _chunk("Use event-driven boundaries.", "pattern.pdf", page=3)
+    topic_a, topic_b = res._BASELINE_TOPICS[0], res._BASELINE_TOPICS[1]
+    by_query = {
+        res._topic_query(topic_a, context): ([shared], "web"),
+        res._topic_query(topic_b, context): ([shared], "web"),
+    }
+    fake = FakeRetrieval(by_query=by_query, default=([], "none"))
+    monkeypatch.setattr(architect, "retrieve_chunks", fake)
+
+    output = res.researcher_node(state)
+
+    topics_by_name = {t.topic: t for t in output["decision_topics"]}
+    assert topics_by_name[topic_a].evidence_ids == []
+    assert topics_by_name[topic_b].evidence_ids == []
+    assert len(output["retrieved_knowledge"]) == 1
+    assert output["retrieved_knowledge"][0].evidence_id == ""
+
+
 # ── Finding 3: origin, not box, is the provenance authority ─────────────
 
 def test_web_origin_never_gets_an_evidence_id_even_with_malformed_box(monkeypatch):

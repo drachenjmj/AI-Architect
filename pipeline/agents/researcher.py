@@ -179,7 +179,11 @@ def allocate_evidence(
     is the retrieval origin ("kb"/"web"/"none") of `pool[i]`, and
     `topic_chunk_indices[t]` lists — in rank order — the `pool` indices
     each topic's own retrieval contributed (including indices shared with
-    an earlier topic via dedup).
+    an earlier topic via dedup) — EXCEPT that a non-KB topic never gains an
+    index that resolves to a KB-origin pool item merely because an earlier
+    KB topic already inserted that identical chunk: the per-topic
+    provenance contract requires a topic's own retrieval to have actually
+    hit the curated index before it can cite curated-KB evidence.
     """
     seen: dict[tuple, int] = {}
     pool: list[dict] = []
@@ -202,7 +206,18 @@ def allocate_evidence(
                 chunk = chunks[rank]
                 key = _dedupe_key(chunk)
                 if key in seen:
-                    topic_chunk_indices[topic_position].append(seen[key])
+                    existing_index = seen[key]
+                    # A non-KB topic must not inherit a KB pool index: that
+                    # would let it cite the earlier KB topic's evidence ID
+                    # despite its OWN retrieval having fallen back to the
+                    # web. Skipping the redundant web copy is fine — the
+                    # identical content already exists in the pool via the
+                    # KB topic that owns it.
+                    if (
+                        topic_origins[topic_position] == "kb"
+                        or pool_origins[existing_index] != "kb"
+                    ):
+                        topic_chunk_indices[topic_position].append(existing_index)
                     continue
                 index = len(pool)
                 pool.append(chunk)
