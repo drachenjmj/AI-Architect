@@ -628,25 +628,28 @@ if state is None:
         "Point us at the existing codebase — the Clarifier grounds its questions "
         "in it and only asks about what the repo cannot answer."
     )
-    # Structured intake: st.form batches both fields so nothing fires until the
-    # user clicks Start (a half-filled form never starts a run). The URL gets
-    # its own hard-validated box — the repo is first-class input, not something
-    # to bury in the prompt text.
+    # Structured intake, plain (non-form) widgets: nothing still fires until
+    # the human clicks "Start" below (a half-filled screen never starts a
+    # run) — but NOT an `st.form`, because the description field's own
+    # "Ask AI" popover (a plain button — see ui_sections.render_ask_ai) needs
+    # the CURRENTLY VISIBLE draft, and a form would only hand it the
+    # last-submitted value. The URL gets its own hard-validated box — the
+    # repo is first-class input, not something to bury in the prompt text.
     #
     # "Ask AI" is offered on the system description only — the field that
     # actually needs reasoning about — not the repo URL, which has nothing
-    # to discuss (see ui_sections.render_ask_ai's docstring for why it is
-    # drawn outside this form). No `ArchitectState` exists yet here, so the
-    # discussion is scoped by `field_discussion.PRE_RUN_SCOPE` rather than a
-    # run_id, and its "project context" IS the draft description itself.
+    # to discuss. No `ArchitectState` exists yet here, so the discussion is
+    # scoped by `field_discussion.PRE_RUN_SCOPE` rather than a run_id, and
+    # its "project context" IS the draft description itself.
     _INTAKE_DESC_KEY = "intake_system_description"
     _INTAKE_REPO_KEY = "intake_repo_url"
+    _pre_run_scope = field_discussion.pre_run_scope()
     col1, col2 = st.columns([6, 1])
     with col1:
         st.markdown("System description")
     with col2:
         intent = render_ask_ai(
-            scope_id=field_discussion.PRE_RUN_SCOPE,
+            scope_id=_pre_run_scope,
             field_key="start.system_description",
             field_label="System description",
         )
@@ -661,7 +664,7 @@ if state is None:
             _handle_field_ask(
                 None,
                 {
-                    "scope_id": field_discussion.PRE_RUN_SCOPE,
+                    "scope_id": _pre_run_scope,
                     "field_key": "start.system_description",
                     "raw_prompt": draft_desc,
                     "repo_representation": None,  # never inspected pre-run
@@ -673,8 +676,7 @@ if state is None:
                 },
             )
 
-    form = st.form("intake")
-    prompt = form.text_area(
+    prompt = st.text_area(
         "System description",
         height=160,
         key=_INTAKE_DESC_KEY,
@@ -684,13 +686,13 @@ if state is None:
             "On AWS, medium budget, must stay GDPR-compliant, ~50k peak users."
         ),
     )
-    repo_url = form.text_input(
+    repo_url = st.text_input(
         "GitHub repository URL (optional)",
         key=_INTAKE_REPO_KEY,
         placeholder="https://github.com/org/repo",
     )
-    form.caption("Leave empty for a greenfield project (no existing code).")
-    submitted = form.form_submit_button("Start")
+    st.caption("Leave empty for a greenfield project (no existing code).")
+    submitted = st.button("Start", key="intake_start")
     if submitted:
         clean_url = repo_url.strip()
         if not prompt.strip():
@@ -730,13 +732,20 @@ else:
     ):
         with st.chat_message("assistant"):
             st.write("Before I can design safely, I need a few answers:")
-            # st.form batches the inputs: nothing happens until Submit,
-            # so a half-filled form never triggers a pipeline run. The
-            # per-question "Ask AI" popover is drawn OUTSIDE the form (see
-            # ui_sections.render_ask_ai — Streamlit forbids any button but
-            # form_submit_button inside a form); only the actual input stays
-            # inside, via the form object's own method.
-            form = st.form("clarify_form")
+            # NOT `st.form`. A form batches its widgets until one submit —
+            # which broke two things at once: the per-question "Ask AI"
+            # popover (a plain button, so it has to live outside any
+            # wrapping form — see ui_sections.render_ask_ai) would fire on a
+            # rerun that still carried the FORM's last-submitted answer
+            # rather than whatever the human had just typed and not yet
+            # submitted, and the form's own reserved slot painted as one
+            # block — every answer input, then the submit button — AFTER
+            # every question's label+Ask-AI pair, instead of each question
+            # being one interleaved unit. Plain, session-state-backed
+            # widgets fix both: they sync on the same blur that opens the
+            # popover, and they paint in call order. "Submit answers"
+            # (below) stays the only thing that writes into
+            # `state.clarification_answers` and re-enters the pipeline.
             answer_keys = [f"answer_{i}" for i in range(len(state.clarifying_questions))]
             for i, q in enumerate(state.clarifying_questions):
                 # Question TEXT is the stable field identity here — the
@@ -782,8 +791,8 @@ else:
                                 "message": value,
                             },
                         )
-                form.text_input(q, key=f"answer_{i}", label_visibility="collapsed")
-            if form.form_submit_button("Submit answers"):
+                st.text_input(q, key=f"answer_{i}", label_visibility="collapsed")
+            if st.button("Submit answers", key="clarify_submit"):
                 # Merge (not replace): keep earlier rounds so the
                 # Clarifier re-judges with the FULL Q&A history.
                 state.clarification_answers.update(

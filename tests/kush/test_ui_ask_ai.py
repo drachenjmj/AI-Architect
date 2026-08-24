@@ -119,6 +119,115 @@ def _send(at: AppTest, needle: str, message: str) -> AppTest:
     return at
 
 
+def _document_order(at: AppTest) -> list[tuple[str, str]]:
+    """Every (element type, key-or-label) pair in `at.main`, in actual paint
+    order — a DFS over the real render tree, not the type-grouped `at.button`
+    / `at.text_input` collections. This is what lets a test tell "input
+    directly follows its own label" from "every input, then every label",
+    which the type-grouped collections cannot: they lose position entirely.
+    """
+    order: list[tuple[str, str]] = []
+
+    def walk(node) -> None:
+        kind = type(node).__name__
+        # Concatenate every identifying bit (key, label, raw value) rather
+        # than picking one: a plain `st.button`'s `.key` is a short internal
+        # id ("clarify_submit") that tells a reader nothing, so a needle
+        # search has to be able to match on the visible `.label` too.
+        bits = [
+            str(v)
+            for v in (
+                getattr(node, "key", None),
+                getattr(node, "label", None),
+                getattr(node, "value", None),
+            )
+            if v
+        ]
+        if kind not in ("Block", "Column", "SpecialBlock", "ChatMessage"):
+            order.append((kind, " | ".join(bits)))
+        children = getattr(node, "children", None)
+        if children:
+            for child in (children.values() if isinstance(children, dict) else children):
+                walk(child)
+
+    walk(at.main)
+    return order
+
+
+def _index_of(order: list[tuple[str, str]], kind: str, needle: str) -> int:
+    return next(i for i, (k, ident) in enumerate(order) if k == kind and needle in ident)
+
+
+# ── 1-5: layout — label + Ask AI + input stay one interleaved unit ────────
+
+
+def test_required_clarification_layout_interleaves_question_ask_ai_and_input(
+    booby_trap, fake_discuss
+):
+    """Regression for the reported layout bug: Ask AI moving the label out of
+    `st.form` made every ANSWER INPUT render as one block first, followed by
+    every LABEL afterward. Each question's label, its Ask AI popover trigger,
+    and its own answer input must appear as one unit, in question order, with
+    "Submit answers" last."""
+    state = _clarification_state(
+        questions=["What are the core capabilities?", "What scale targets?"]
+    )
+    at = _app(state)
+    order = _document_order(at)
+
+    q1_label = _index_of(order, "Markdown", "What are the core capabilities?")
+    q1_ask_ai = _index_of(order, "TextInput", "ask_ai_msg_")  # first match is Q1's
+    q1_input = _index_of(order, "TextInput", "answer_0")
+    q2_label = _index_of(order, "Markdown", "What scale targets?")
+    q2_input = _index_of(order, "TextInput", "answer_1")
+    submit = _index_of(order, "Button", "Submit answers")
+
+    assert q1_label < q1_ask_ai < q1_input < q2_label < q2_input < submit
+
+
+def test_opening_and_using_ask_ai_does_not_reorder_the_questions(booby_trap, fake_discuss):
+    """Doc §12 item 4: sending a message (and getting a reply back into the
+    popover's transcript) must not displace the surrounding question blocks."""
+    state = _clarification_state(questions=["Question A?", "Question B?"])
+    at = _app(state)
+    at = _send(at, "Question A", "About A")
+
+    order = _document_order(at)
+    a_label = _index_of(order, "Markdown", "Question A?")
+    a_input = _index_of(order, "TextInput", "answer_0")
+    b_label = _index_of(order, "Markdown", "Question B?")
+    b_input = _index_of(order, "TextInput", "answer_1")
+    submit = _index_of(order, "Button", "Submit answers")
+
+    assert a_label < a_input < b_label < b_input < submit
+
+
+def test_context_approval_layout_interleaves_label_and_input(booby_trap, fake_discuss):
+    state = _context_lock_state(business_goal="Survive peak sales.")
+    at = _app(state)
+    order = _document_order(at)
+
+    goal_label = _index_of(order, "Markdown", "Business goal")
+    goal_input = _index_of(order, "TextInput", "cg_field_business_goal_")
+    problem_label = _index_of(order, "Markdown", "Problem statement")
+    problem_input = _index_of(order, "TextInput", "cg_field_problem_statement_")
+
+    assert goal_label < goal_input < problem_label < problem_input
+
+
+def test_optional_context_layout_interleaves_label_and_input(booby_trap, fake_discuss):
+    state = _context_lock_state()  # no NFR/cloud/budget/compliance set yet
+    state.pending_decision = PendingDecision.OPTIONAL_CONTEXT
+    at = _app(state)
+    order = _document_order(at)
+
+    cloud_input = _index_of(order, "TextInput", "oc_field_cloud_provider_")
+    budget_input = _index_of(order, "TextInput", "oc_field_budget_")
+    skip = _index_of(order, "Button", "Skip optional questions")
+
+    assert cloud_input < budget_input < skip
+
+
 # ── 13/14: every screen exposes Ask AI, generically ───────────────────────
 
 
@@ -158,7 +267,11 @@ def test_intake_form_exposes_ask_ai_for_system_description_only():
     assert not at.exception
 
     msg_inputs = [t.key for t in at.text_input if t.key and t.key.startswith("ask_ai_msg_")]
-    assert msg_inputs == ["ask_ai_msg___pre_run___start.system_description"]
+    assert len(msg_inputs) == 1
+    # Scoped under the pre-run draft id (see field_discussion.pre_run_scope),
+    # not a bare fixed sentinel — the field key is still the stable part.
+    assert msg_inputs[0].startswith("ask_ai_msg___pre_run__:")
+    assert msg_inputs[0].endswith("_start.system_description")
 
 
 # ── 6/7: field and run isolation ──────────────────────────────────────────
@@ -353,3 +466,162 @@ def test_intake_ask_ai_never_starts_a_run(monkeypatch, fake_discuss):
 
     assert "state" not in at.session_state or at.session_state["state"] is None
     assert fake_discuss.calls[0]["state"] is None  # no ArchitectState was ever created
+
+
+# ── 6/7 (doc §3): the visible DRAFT reaches Ask AI, not a stale value ─────
+# `render_ask_ai` is a plain (non-form) widget's sibling now — see the note
+# on why `st.form` was removed from every screen that pairs it with a field
+# in ui.py / ui_sections.py. These pin the exact acceptance case: a draft
+# typed but never submitted must still reach `discuss_field`.
+
+
+def test_ask_ai_sees_the_unsubmitted_clarification_draft(booby_trap, fake_discuss):
+    """The literal acceptance case: type an answer, do NOT click Submit, ask
+    Ask AI about the SAME field — the draft must be in the prompt context."""
+    state = _clarification_state(
+        questions=["What scale, availability, or performance targets does this need to meet?"]
+    )
+    at = _app(state)
+
+    a0 = next(t for t in at.text_input if t.key == "answer_0")
+    a0.set_value("Handle much higher peak traffic")
+    at.run()
+
+    at = _send(at, "clarification::", "Is this enough?")
+
+    assert fake_discuss.calls[-1]["current_draft_answer"] == "Handle much higher peak traffic"
+    # Never submitted — the veto boundary is still Submit answers alone.
+    assert at.session_state["state"].clarification_answers == {}
+
+
+def test_ask_ai_sees_other_unsubmitted_clarification_drafts(booby_trap, fake_discuss):
+    """Doc §12 item 8: other currently-visible, still-unsubmitted answers on
+    the SAME screen must be included as known context."""
+    state = _clarification_state(questions=["Question A?", "Question B?"])
+    at = _app(state)
+
+    a0 = next(t for t in at.text_input if t.key == "answer_0")
+    a0.set_value("Draft answer for A")
+    at.run()
+
+    at = _send(at, "Question B", "what about B?")
+
+    assert fake_discuss.calls[-1]["known_context"]["Question A?"] == "Draft answer for A"
+
+
+def test_ask_ai_sees_the_unsubmitted_context_approval_edit(booby_trap, fake_discuss):
+    """Doc §9: edit one field, then ask about a DIFFERENT field before
+    Approve — the edited (unsaved) value must be visible as known context."""
+    state = _context_lock_state(business_goal="Old goal.")
+    at = _app(state)
+
+    goal_widget = next(
+        t for t in at.text_input if t.key and t.key.startswith("cg_field_business_goal_")
+    )
+    goal_widget.set_value("Survive peak sales, edited but not yet saved.")
+    at.run()
+
+    at = _send(at, "context.problem_statement", "what belongs here?")
+
+    assert (
+        fake_discuss.calls[-1]["known_context"]["business_goal"]
+        == "Survive peak sales, edited but not yet saved."
+    )
+    # Not committed to the record — only Save/Approve does that.
+    assert at.session_state["state"].context_record.business_goal == "Old goal."
+
+
+def test_ask_ai_sees_the_unsubmitted_optional_context_draft(booby_trap, fake_discuss):
+    state = _context_lock_state()
+    state.pending_decision = PendingDecision.OPTIONAL_CONTEXT
+    at = _app(state)
+
+    cloud_widget = next(
+        t for t in at.text_input if t.key and t.key.startswith("oc_field_cloud_provider_")
+    )
+    cloud_widget.set_value("AWS, no strong preference")
+    at.run()
+
+    at = _send(at, "context.budget", "what should I put here?")
+
+    assert (
+        fake_discuss.calls[-1]["known_context"]["cloud_provider"] == "AWS, no strong preference"
+    )
+
+
+# ── doc §5: pre-run draft discussion isolation ─────────────────────────────
+
+
+def test_pre_run_draft_scope_is_stable_across_an_ordinary_rerun(fake_discuss):
+    """The SAME unsubmitted draft keeps its discussion across a plain rerun
+    (e.g. typing in an unrelated field) — no reset just from redrawing."""
+    at = AppTest.from_file(_UI, default_timeout=30)
+    at.run()
+    at.text_area(key="intake_system_description").set_value("A shop with peak issues.")
+    at.run()
+    at = _send(at, "start.system_description", "thoughts?")
+    first_key = next(
+        t.key for t in at.text_input if t.key and t.key.startswith("ask_ai_msg_")
+    )
+
+    at.text_input(key="intake_repo_url").set_value("")  # an unrelated, no-op rerun
+    at.run()
+    second_key = next(
+        t.key for t in at.text_input if t.key and t.key.startswith("ask_ai_msg_")
+    )
+
+    assert first_key == second_key
+    # And the transcript from the first turn is still there.
+    texts = [cm.markdown[0].value for cm in at.chat_message if cm.markdown]
+    assert "thoughts?" in texts
+
+
+def test_pre_run_draft_scope_resets_after_new_run_clears_the_session(fake_discuss):
+    """Doc §5's leak scenario: clicking "New run" (`st.session_state.clear()`
+    — see ui.py) must hand the NEXT pre-run draft a fresh discussion scope,
+    with no memory of what was discussed about the abandoned one. Reaching
+    "New run" requires a run to exist first (the button is gated on
+    `state is not None`), so this simulates a run existing the cheap way —
+    injecting a state directly — rather than driving the real pipeline."""
+    at = AppTest.from_file(_UI, default_timeout=30)
+    at.run()
+    at.text_area(key="intake_system_description").set_value("Draft A: a payment system.")
+    at.run()
+    at = _send(at, "start.system_description", "thoughts on draft A?")
+    old_key = next(t.key for t in at.text_input if t.key and t.key.startswith("ask_ai_msg_"))
+    assert "field_discussions" in at.session_state
+
+    at.session_state["state"] = new_run("Draft A: a payment system.")
+    at.run()
+    assert not at.exception
+    next(b for b in at.sidebar.button if "New run" in (b.label or "")).click()
+    at.run()
+    assert not at.exception
+    # The clear wipes the store; the very next render immediately recreates
+    # it EMPTY (`field_discussion.history_for`'s `setdefault`), so what
+    # proves the clear worked is that draft A's OWN scope is gone, not that
+    # the top-level key is absent.
+    assert old_key.split("ask_ai_msg_", 1)[1] not in at.session_state["field_discussions"]
+
+    at.text_area(key="intake_system_description").set_value("Draft B: a logistics platform.")
+    at.run()
+    at = _send(at, "start.system_description", "thoughts on draft B?")
+
+    new_key = next(t.key for t in at.text_input if t.key and t.key.startswith("ask_ai_msg_"))
+    assert new_key != old_key
+    # Nothing from draft A's discussion leaked into draft B's transcript.
+    assert fake_discuss.calls[-1]["history"] == []
+
+
+# ── doc §6: dynamic clarification-question identity is duplicate-safe ─────
+
+
+def test_critical_clarification_questions_have_no_duplicate_text():
+    """`clarification::<question text>` is only a safe field identity if no
+    two critical fields can ever produce the same question text — pin that
+    invariant directly, since it is what the field-key scheme relies on
+    (see clarifier._CRITICAL_SLOT_QUESTIONS and CRITICAL_RECORD_FIELDS)."""
+    texts = [
+        clar.slot_question(field).question for field in clar.CRITICAL_RECORD_FIELDS
+    ]
+    assert len(texts) == len(set(texts))

@@ -1044,21 +1044,29 @@ def render_ask_ai(
                                    draft/widget value, then rerun
         None                   -> nothing submitted this render
 
-    MUST be called OUTSIDE the surrounding `st.form(...)` for that field:
-    Streamlit forbids any button but `st.form_submit_button` inside a form,
-    so every caller draws this (and the field's own label) ABOVE the form,
-    then renders the actual input INSIDE the form via the form object's own
-    method (`form.text_input(...)`/`form.text_area(...)`) with
-    `label_visibility="collapsed"` — see `render_context_approval` /
-    `render_optional_context` / ui.py's clarification and intake forms for
-    the exact interleaving pattern. A popover, not an expander: its content
-    is cheap (a session-state read, no disk/network I/O), so it needs none
-    of the lazy-render gating the sidebar's "Switch run" expander does.
+    Draws two plain `st.button`s ("Send", "Use suggestion") inside a
+    `st.popover`, so it MUST NOT be called from inside an `st.form(...)`:
+    Streamlit forbids any button but `st.form_submit_button` in a form. That
+    is also WHY the three screens that use this (the required clarification
+    questions, the optional round, and the Context Record approval screen)
+    do not wrap their fields in `st.form` at all any more — a form batches
+    every widget inside it until one submit, which silently fed a stale,
+    pre-edit draft to a discussion opened before the human submitted, and
+    reordered the page into "every input, then every label" because a form
+    is one reserved slot that paints as a single block whichever field's
+    label/Ask-AI pair was drawn beside it. Each caller instead renders the
+    label, this popover, and the field's own plain (non-form) input inline,
+    one question at a time — see `render_context_approval` /
+    `render_optional_context` / ui.py's clarification and intake fields for
+    the exact interleaving, and each one's own note on why `st.form` is
+    gone. A popover, not an expander: its content is cheap (a session-state
+    read, no disk/network I/O), so it needs none of the lazy-render gating
+    the sidebar's "Switch run" expander does.
 
     `scope_id`/`field_key` are the SAME stable identity `field_discussion`
     keys history by — see that module's docstring for the exact scheme
     each screen uses (run_id + "context.<field>"/"clarification::<question>",
-    or `field_discussion.PRE_RUN_SCOPE` + "start.system_description" before
+    or `field_discussion.pre_run_scope()` + "start.system_description" before
     a run exists).
     """
     history = field_discussion.history_for(scope_id, field_key)
@@ -1112,7 +1120,8 @@ def render_optional_context(state: ArchitectState) -> tuple[str, object] | None:
     adds warning/error styling for an empty field.
 
     ASK AI, PER FIELD: each field also carries a compact `render_ask_ai`
-    popover (see its docstring for why it is drawn OUTSIDE this form). An
+    popover, drawn inline beside the field's own label (see its docstring
+    for why there is no wrapping `st.form` here at all any more). An
     "apply" intent from it is handled RIGHT HERE — it is a session-state-only
     write, not an LLM call or a ContextRecord mutation, so it stays within
     the DRAW-only rule. An "ask" intent DOES need the model, so it is the one
@@ -1136,7 +1145,20 @@ def render_optional_context(state: ArchitectState) -> tuple[str, object] | None:
         "You can answer any of them, leave fields blank, or skip this step."
     )
 
-    form = st.form(f"optional_context_{nonce}")
+    # NOT `st.form`. A form batches every widget inside it until submit —
+    # which is exactly wrong here: the per-field "Ask AI" button sits OUTSIDE
+    # the form (Streamlit forbids anything but `form_submit_button` inside
+    # one) and needs the CURRENTLY VISIBLE draft the human is looking at when
+    # they click it, not the last-submitted value. A plain, session-state-
+    # backed widget commits its value to `st.session_state` on every blur/
+    # change — including the blur that fires when the human clicks Ask AI —
+    # so the draft `render_ask_ai` reads below is always live. It is also
+    # what keeps every question block (label + Ask AI + input) ONE unit in
+    # the page's actual paint order: a form is a single reserved slot whose
+    # own widgets render as one block AFTER it, wherever in the script it was
+    # opened, which is what silently pushed every input above every label
+    # here before. "Continue"/"Skip" stay the only commit boundary into the
+    # pipeline — nothing here writes `ContextEdits` until one of them fires.
     fields: dict[str, str | list[str]] = {}
     for field in slots:
         question = slot_question(field)
@@ -1182,7 +1204,7 @@ def render_optional_context(state: ArchitectState) -> tuple[str, object] | None:
                 }
 
         if isinstance(getattr(record, field), list):
-            text = form.text_area(
+            text = st.text_area(
                 question.question,
                 value="",
                 help=help_text,
@@ -1192,7 +1214,7 @@ def render_optional_context(state: ArchitectState) -> tuple[str, object] | None:
             )
             value = [line.strip() for line in text.splitlines() if line.strip()]
         else:
-            value = form.text_input(
+            value = st.text_input(
                 question.question,
                 value="",
                 help=help_text,
@@ -1204,12 +1226,15 @@ def render_optional_context(state: ArchitectState) -> tuple[str, object] | None:
 
     left, right = st.columns(2)
     with left:
-        skip = form.form_submit_button(
-            "Skip optional questions", use_container_width=True
+        skip = st.button(
+            "Skip optional questions", key=f"oc_skip_{nonce}", use_container_width=True
         )
     with right:
-        cont = form.form_submit_button(
-            "Continue", type="primary", use_container_width=True
+        cont = st.button(
+            "Continue",
+            key=f"oc_continue_{nonce}",
+            type="primary",
+            use_container_width=True,
         )
 
     if skip:
@@ -1240,16 +1265,23 @@ def render_context_approval(state: ArchitectState) -> tuple[str, object] | None:
     DRAW-only (see the module docstring): ui.py performs every write, and every
     write goes through `pipeline.agents.clarifier`.
 
-    The edits and the question are two separate forms on purpose. Batching an
-    edit is right — nothing should fire until the whole veto pass is submitted —
-    but batching a QUESTION with it would mean you could not ask what a field
-    means without also submitting your changes to it.
+    The edits and the whole-record question are two separate, DELIBERATELY
+    different mechanisms. The edit fields are plain, session-state-backed
+    widgets (see `render_ask_ai`'s docstring for why: a wrapping `st.form`
+    both hid a typed-but-unsubmitted edit from an Ask AI call made before
+    "Save changes"/"Approve", and pushed every input above every label),
+    committed only when "Save changes" or "✓ Approve and continue" is
+    clicked below. The whole-record question keeps its OWN small `st.form`
+    (`context_gate_ask_{nonce}`) — a single field with nothing else in it,
+    so batching costs it nothing — specifically so it stays a separate
+    submission: batching a QUESTION together with the edit fields would mean
+    you could not ask what a field means without also submitting your
+    changes to it.
 
     ASK AI, PER FIELD: same pattern as `render_optional_context` — an
     "apply" intent from `render_ask_ai` is a session-state-only write,
     handled right here; an "ask" intent needs the model and is returned as
-    "field_ask" for ui.py to act on. See `render_ask_ai`'s docstring for why
-    it is drawn outside this form.
+    "field_ask" for ui.py to act on.
     """
     record = state.context_record
     if record is None:  # defensive: the gate is only reachable with a record
@@ -1267,7 +1299,18 @@ def render_context_approval(state: ArchitectState) -> tuple[str, object] | None:
         "accept, then approve."
     )
 
-    form = st.form(f"context_gate_{nonce}")
+    # NOT `st.form` — see the identical note in `render_optional_context`.
+    # Batching every field until one submit is exactly what let a typed-but-
+    # unsent edit go missing from an Ask AI call made before "Save changes"/
+    # "Approve", and what pushed every input above every label on this
+    # screen: a form is one reserved slot, and everything inside it paints as
+    # a single block wherever in the script it was opened, regardless of
+    # where the label/Ask-AI pair for the same field was drawn. Plain widgets
+    # commit to `st.session_state` on the same blur that opens the popover,
+    # so the draft `render_ask_ai` reads is always the one on screen, and the
+    # page paints in call order — label, Ask AI, input, next field, ...
+    # "Save changes"/"Approve and continue" stay the only commit boundary:
+    # nothing here writes back to the Context Record until one of them fires.
     st.markdown("**The record**")
     edited: dict[str, str | list[str]] = {}
     for name in EDITABLE_RECORD_FIELDS:
@@ -1287,11 +1330,23 @@ def render_context_approval(state: ArchitectState) -> tuple[str, object] | None:
                 st.session_state[input_key] = value
                 st.rerun()
             else:  # "ask" — needs the model; bubble up to ui.py's REACT half
-                other_known = {
-                    other: getattr(record, other)
-                    for other in EDITABLE_RECORD_FIELDS
-                    if other != name and getattr(record, other)
-                }
+                # LIVE, not the frozen record: a field drawn earlier in this
+                # same pass (business_goal, say) already has its just-typed,
+                # not-yet-saved edit sitting in `st.session_state` under its
+                # own widget key by the time we reach a LATER field's Ask AI
+                # (problem_statement, say) — see the doc's acceptance case
+                # for this screen. `getattr(record, other)` would only ever
+                # see the last-Approved value, silently hiding that edit from
+                # the discussion until Save/Approve was clicked.
+                other_known = {}
+                for other in EDITABLE_RECORD_FIELDS:
+                    if other == name:
+                        continue
+                    live = st.session_state.get(
+                        f"cg_field_{other}_{nonce}", getattr(record, other)
+                    )
+                    if live:
+                        other_known[other] = live
                 return "field_ask", {
                     "scope_id": scope_id,
                     "field_key": field_key,
@@ -1305,7 +1360,7 @@ def render_context_approval(state: ArchitectState) -> tuple[str, object] | None:
                 }
 
         if isinstance(current, list):
-            text = form.text_area(
+            text = st.text_area(
                 label,
                 value="\n".join(str(v) for v in current),
                 help=_LIST_HELP,
@@ -1315,64 +1370,68 @@ def render_context_approval(state: ArchitectState) -> tuple[str, object] | None:
             )
             edited[name] = [line.strip() for line in text.splitlines() if line.strip()]
         else:
-            edited[name] = form.text_input(
+            edited[name] = st.text_input(
                 label,
                 value=str(current),
                 key=input_key,
                 label_visibility="collapsed",
             ).strip()
 
-    with form:
-        recommend = st.multiselect(
-            "I do not know — you recommend",
-            options=list(EDITABLE_RECORD_FIELDS),
-            format_func=_field_label,
-            help=(
-                "The clarifier proposes a value with a one-line reason, recorded "
-                "as its own labelled assumption. It comes back here for you to "
-                "accept or override — the same veto, in the other direction."
-            ),
-            key=f"cg_recommend_{nonce}",
+    recommend = st.multiselect(
+        "I do not know — you recommend",
+        options=list(EDITABLE_RECORD_FIELDS),
+        format_func=_field_label,
+        help=(
+            "The clarifier proposes a value with a one-line reason, recorded "
+            "as its own labelled assumption. It comes back here for you to "
+            "accept or override — the same veto, in the other direction."
+        ),
+        key=f"cg_recommend_{nonce}",
+    )
+
+    struck: list[str] = []
+    if record.assumptions:
+        st.markdown("**Assumptions — tick anything you do not accept**")
+        st.caption(
+            f"`{CLARIFIER_LABEL}` marks a value the clarifier filled in "
+            f"instead of asking you. A struck assumption stays struck: it "
+            f"will not be proposed again later in this run."
         )
+        for assumption in record.assumptions:
+            if st.checkbox(assumption, key=f"cg_strike_{assumption}_{nonce}"):
+                struck.append(assumption)
 
-        struck: list[str] = []
-        if record.assumptions:
-            st.markdown("**Assumptions — tick anything you do not accept**")
-            st.caption(
-                f"`{CLARIFIER_LABEL}` marks a value the clarifier filled in "
-                f"instead of asking you. A struck assumption stays struck: it "
-                f"will not be proposed again later in this run."
-            )
-            for assumption in record.assumptions:
-                if st.checkbox(assumption, key=f"cg_strike_{assumption}_{nonce}"):
-                    struck.append(assumption)
+    if record.open_questions:
+        # PASSIVE on purpose: the dedicated optional round (see
+        # `render_optional_context`, shown BEFORE this screen) is where
+        # a relevant, unresolved field gets an actual answer box, tied
+        # to exactly one Context Record field. Anything still listed
+        # here — a field the human skipped there, or a free-text bonus
+        # question the model raised that maps to no single field — is
+        # shown for traceability only, never as a second active form:
+        # that second form is exactly what let one combined question
+        # ("expected traffic and compliance?") risk an answer landing in
+        # the wrong field, since a raw question has no field of its own.
+        st.markdown("**Unresolved optional context**")
+        st.caption(
+            "Not required to approve. Edit a field above to answer any of "
+            "these directly."
+        )
+        for question in record.open_questions:
+            st.caption(f"• {question}")
 
-        if record.open_questions:
-            # PASSIVE on purpose: the dedicated optional round (see
-            # `render_optional_context`, shown BEFORE this screen) is where
-            # a relevant, unresolved field gets an actual answer box, tied
-            # to exactly one Context Record field. Anything still listed
-            # here — a field the human skipped there, or a free-text bonus
-            # question the model raised that maps to no single field — is
-            # shown for traceability only, never as a second active form:
-            # that second form is exactly what let one combined question
-            # ("expected traffic and compliance?") risk an answer landing in
-            # the wrong field, since a raw question has no field of its own.
-            st.markdown("**Unresolved optional context**")
-            st.caption(
-                "Not required to approve. Edit a field above to answer any of "
-                "these directly."
-            )
-            for question in record.open_questions:
-                st.caption(f"• {question}")
-
-        left, right = st.columns(2)
-        with left:
-            save = st.form_submit_button("Save changes", use_container_width=True)
-        with right:
-            accept = st.form_submit_button(
-                "✓ Approve and continue", type="primary", use_container_width=True
-            )
+    left, right = st.columns(2)
+    with left:
+        save = st.button(
+            "Save changes", key=f"cg_save_{nonce}", use_container_width=True
+        )
+    with right:
+        accept = st.button(
+            "✓ Approve and continue",
+            key=f"cg_accept_{nonce}",
+            type="primary",
+            use_container_width=True,
+        )
 
     if accept:
         return "accept", None

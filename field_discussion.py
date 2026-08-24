@@ -46,11 +46,16 @@ NOT survive a resumed run's checkpoint reload in a NEW browser session (only
 the run's own persisted artifacts do); it DOES survive an ordinary rerun,
 and switching to a DIFFERENT run and back within the SAME session, because
 history is keyed by `run_id` exactly like `architecture_chat.messages_for`.
-The pre-run intake screen (before any run/run_id exists) uses the fixed
-`PRE_RUN_SCOPE` sentinel instead — there is only ever one pre-run draft in a
-given browser session, and `st.session_state.clear()` on "New run" (see
-ui.py) already gives every genuinely new draft a clean slate, the same
-mechanism every other pre-run widget already relies on.
+The pre-run intake screen (before any run/run_id exists) uses `pre_run_scope()`
+instead of a bare run_id: a `PRE_RUN_SCOPE`-prefixed id that is generated once
+per DRAFT and cached in `st.session_state`, not a single sentinel reused for
+the whole browser session. "New run" (see ui.py) clears the whole session,
+which drops that cached id along with every other pre-run widget's state, so
+the very next call to `pre_run_scope()` mints a fresh one and the new draft
+starts with no discussion history — the same mechanism every other pre-run
+widget already relies on to reset. An ordinary rerun of the SAME unsubmitted
+draft keeps reading the SAME cached id, so its history survives exactly like
+a real run's does.
 
 NO CROSS-RUN / CROSS-FIELD LEAKAGE
 ------------------------------------
@@ -61,18 +66,39 @@ for how each screen derives one). Two different fields, or the same field
 key under two different scopes, can never see each other's turns.
 """
 from __future__ import annotations
+from uuid import uuid4
 
 import streamlit as st
 
 from pipeline.agents import clarifier
 from pipeline.state import ArchitectState, RepoRepresentation
 
-# The fixed scope for the pre-run intake form, before any ArchitectState (and
-# therefore any run_id) exists. See the module docstring's STATE AND
-# PERSISTENCE section for why a single fixed sentinel is sufficient.
+# The scope PREFIX for the pre-run intake form, before any ArchitectState (and
+# therefore any run_id) exists. Callers use `pre_run_scope()`, not this
+# constant directly — see the module docstring's STATE AND PERSISTENCE
+# section for why the scope also needs a per-draft id appended.
 PRE_RUN_SCOPE = "__pre_run__"
 
+_DRAFT_ID_KEY = "_pre_run_draft_id"
 _STORE_KEY = "field_discussions"
+
+
+def pre_run_scope() -> str:
+    """The discussion scope for the CURRENT, not-yet-submitted intake draft.
+
+    One id per draft, cached in `st.session_state` for as long as the draft
+    lives — created lazily on first call, exactly like `history_for` creates
+    an empty history on first read. "New run" clearing the session (see
+    ui.py) removes the cached id along with everything else, so the next
+    draft's first call mints a new one and starts with no history; an
+    ordinary rerun of the same draft keeps returning the same id. See the
+    module docstring's STATE AND PERSISTENCE section.
+    """
+    draft_id = st.session_state.get(_DRAFT_ID_KEY)
+    if not draft_id:
+        draft_id = uuid4().hex
+        st.session_state[_DRAFT_ID_KEY] = draft_id
+    return f"{PRE_RUN_SCOPE}:{draft_id}"
 
 
 def history_for(scope_id: str, field_key: str) -> list[dict[str, str]]:
