@@ -70,7 +70,7 @@ def test_history_view_sees_the_bundled_run(runs_dir):
         assert run_id in ids
 
 
-def test_resume_picker_lists_the_bundled_run(runs_dir):
+def test_resume_picker_offers_all_four_bundled_runs(runs_dir):
     # ui.py's own auto-seed only fires against the TRUE default runs dir
     # (see its guard on `AI_ARCHITECT_RUNS_DIR`) — this fixture redirects
     # that on purpose, so isolated tests are never polluted by it (see
@@ -85,8 +85,13 @@ def test_resume_picker_lists_the_bundled_run(runs_dir):
     assert not at.exception
 
     box = next(s for s in at.selectbox if s.label == "Resume a previous run")
+    # All four bundled runs are distinct entries in the picker (their
+    # timestamps differ even where the prompt excerpt repeats).
+    assert len(box.options) >= len(demo_runs.BUNDLED_RUN_IDS)
     joined = " ".join(box.options)
     assert "modernize an existing e-commerce monolith" in joined.lower()
+    # the holdout run's own prompt excerpt must surface too
+    assert "e-commerce application" in joined.lower()
 
 
 def test_switch_run_lists_the_bundled_run(runs_dir):
@@ -119,7 +124,8 @@ def test_resuming_the_bundled_run_loads_its_exact_stored_artifacts(runs_dir):
     assert not at.exception
 
     loaded = at.session_state["state"]
-    on_disk = persistence.load_state(demo_runs.BUNDLED_RUN_IDS[0])
+    assert loaded.run_id in demo_runs.BUNDLED_RUN_IDS
+    on_disk = persistence.load_state(loaded.run_id)
     assert loaded.context_record == on_disk.context_record
     assert loaded.blueprint == on_disk.blueprint
     assert loaded.adrs == on_disk.adrs
@@ -149,15 +155,17 @@ def test_seeding_never_overwrites_an_existing_run_with_the_same_id(runs_dir):
     """Defensive: even if a run directory already exists under a bundled
     run's id (a real run somehow landed there, or a previous seed used a
     different snapshot), seeding must leave it exactly alone."""
-    run_id = demo_runs.BUNDLED_RUN_IDS[0]
+    claimed_id = demo_runs.BUNDLED_RUN_IDS[0]
     existing = new_run("A user's own, unrelated project.")
-    existing.run_id = run_id
+    existing.run_id = claimed_id
     persistence.save_state(existing)
 
     seeded = demo_runs.seed_bundled_demo_runs()
-    assert seeded == []  # the id was already claimed — nothing copied over it
+    # The claimed id was NOT copied over; every OTHER bundled id still seeds.
+    assert claimed_id not in seeded
+    assert set(seeded) == set(demo_runs.BUNDLED_RUN_IDS) - {claimed_id}
 
-    reloaded = persistence.load_state(run_id)
+    reloaded = persistence.load_state(claimed_id)
     assert reloaded.initial_request.raw_prompt == "A user's own, unrelated project."
 
 
@@ -273,25 +281,99 @@ def test_only_explicitly_selected_run_ids_are_bundled_on_disk():
     assert on_disk == set(demo_runs.BUNDLED_RUN_IDS)
 
 
-def test_bundled_run_ids_do_not_include_the_known_stale_claude_run():
-    # 20260824T084650Z-4447a662 predates the material-grounding hardening
-    # AND used a different repository than the canonical scenario — see
-    # EVAL_DEMO_RUNS.md's PENDING section. It must never be silently bundled.
-    assert "20260824T084650Z-4447a662" not in demo_runs.BUNDLED_RUN_IDS
+def test_bundled_run_ids_are_exactly_the_curated_four():
+    """The bundle is EXACTLY the curated set: one final clean Gemini demo
+    plus the three good historical Claude runs (see EVAL_DEMO_RUNS.md) —
+    and explicitly NOT the older pre-hardening Gemini runs."""
+    assert set(demo_runs.BUNDLED_RUN_IDS) == {
+        "20260824T141045Z-e1cdb3ee",  # Gemini — final clean demo
+        "20260823T171738Z-935663e4",  # Claude — historical monolith
+        "20260823T192225Z-5e6ac35c",  # Claude — historical robustness
+        "20260824T084650Z-4447a662",  # Claude — historical holdout
+    }
+    # The older Gemini runs are deliberately NOT bundled: both predate the
+    # final safeguards (unsupported numeric targets / earlier contract
+    # behavior) — historically useful, not final demos.
+    for stale in ("20260824T130359Z-b1ba2568", "20260823T155114Z-d1bc5c19"):
+        assert stale not in demo_runs.BUNDLED_RUN_IDS
+        assert not (_BUNDLE_ROOT / stale).exists()
 
 
-def test_no_claude_run_is_currently_bundled():
-    """Pins the current, honest state: only the Gemini run is ready. This
-    test is EXPECTED to start failing the day a real, fresh Claude run is
-    bundled — at which point it should be updated, not worked around."""
-    bundled_models = set()
-    for path in _bundled_files():
-        data = json.loads(path.read_text(encoding="utf-8"))
-        for step in data.get("history", []):
-            if step.get("model"):
-                bundled_models.update(m.strip() for m in step["model"].split(","))
-    assert not any("claude" in m.lower() for m in bundled_models)
-    assert any("gemini" in m.lower() for m in bundled_models)
+def _bundled_run_data(run_id: str) -> dict:
+    files = sorted((_BUNDLE_ROOT / run_id).glob("*.json"))
+    assert files, f"no bundled checkpoint for {run_id}"
+    return json.loads(files[-1].read_text(encoding="utf-8"))
+
+
+def _history_models(data: dict) -> set[str]:
+    models = set()
+    for step in data.get("history", []):
+        if step.get("model"):
+            models.update(m.strip() for m in step["model"].split(","))
+    return models
+
+
+_GEMINI = "20260824T141045Z-e1cdb3ee"
+_CLAUDE_MONOLITH = (
+    "20260823T171738Z-935663e4",
+    "20260823T192225Z-5e6ac35c",
+)
+_CLAUDE_HOLDOUT = "20260824T084650Z-4447a662"
+_MONOLITH_REPO = "https://github.com/harsh020/ecommerce-monolith"
+_HOLDOUT_REPO = "https://github.com/ttulka/ddd-example-ecommerce"
+
+
+def test_gemini_run_metadata_resolves_to_google_gemini():
+    data = _bundled_run_data(_GEMINI)
+    models = _history_models(data)
+    assert any("gemini" in m.lower() for m in models)
+    assert not any("claude" in m.lower() for m in models)
+
+
+def test_each_claude_run_metadata_resolves_to_anthropic_claude():
+    """The A/B routing reroutes ONLY Architect + Reviewer; the Clarifier and
+    repo ingestor legitimately stay on Gemini — so a Claude run's history
+    must contain claude-opus on the design/review steps while the Gemini
+    demo above has none."""
+    for run_id in (*_CLAUDE_MONOLITH, _CLAUDE_HOLDOUT):
+        data = _bundled_run_data(run_id)
+        models = _history_models(data)
+        assert any("claude" in m.lower() for m in models), run_id
+        assert any("claude-opus" in m.lower() for m in models), run_id
+        # Architect and Reviewer steps specifically ran on Claude.
+        design_review_models = {
+            m.strip()
+            for step in data.get("history", [])
+            if step.get("agent") in ("architect", "reviewer") and step.get("model")
+            for m in step["model"].split(",")
+        }
+        assert design_review_models == {"claude-opus-5"}, run_id
+
+
+def test_holdout_run_uses_the_holdout_repository():
+    data = _bundled_run_data(_CLAUDE_HOLDOUT)
+    assert data["initial_request"]["repo_url"] == _HOLDOUT_REPO
+    assert data["initial_request"]["repo_url"] != _MONOLITH_REPO
+
+
+def test_main_claude_runs_use_the_canonical_monolith_repository():
+    for run_id in _CLAUDE_MONOLITH:
+        data = _bundled_run_data(run_id)
+        assert data["initial_request"]["repo_url"] == _MONOLITH_REPO, run_id
+
+
+def test_historical_claude_runs_are_not_upgraded_to_final_code_output():
+    """The three Claude runs predate the material-grounding / DecisionTopic
+    hardening, and are bundled AS historical: the stored JSON must carry no
+    invented `decision_topics` or ADR `decision_evidence_topics` mappings —
+    fields the current schema knows but the model never produced back then.
+    Current Pydantic additive defaults may fill them at LOAD time, but the
+    bundled artifact itself must stay byte-honest to its generation time."""
+    for run_id in (*_CLAUDE_MONOLITH, _CLAUDE_HOLDOUT):
+        data = _bundled_run_data(run_id)
+        assert "decision_topics" not in data, run_id
+        for adr in data.get("adrs", []):
+            assert "decision_evidence_topics" not in adr, (run_id, adr.get("id"))
 
 
 # ── 13: one-shots are not pipeline runs ────────────────────────────────────
@@ -313,14 +395,32 @@ def test_one_shots_never_appear_in_pipeline_run_listings(runs_dir):
     assert not any("one_shot" in run_id.lower() for run_id in ids)
 
 
-# ── 14: a missing final run is reported, never silently substituted ───────
+# ── 14: a missing FINAL Claude run is reported, never substituted ───────
 
 
-def test_missing_claude_run_manifest_states_pending_not_a_substitution():
+def test_manifest_keeps_final_claude_run_pending_not_substituted():
     manifest = (_REPO_ROOT / "EVAL_DEMO_RUNS.md").read_text(encoding="utf-8")
+    flattened = " ".join(manifest.split())
+    # The fresh final Claude run stays PENDING...
     assert "PENDING" in manifest
-    assert "4447a662" in manifest  # the stale run is named, not silently dropped
-    assert "must not be substituted" in manifest or "must not be" in manifest.lower()
+    # ...the historical runs are explicitly labeled as substitutes-for-nothing...
+    assert "must not be substituted" in flattened
+    # ...and the qualitative-vs-quantitative caveat is stated verbatim.
+    assert "curated qualitative examples" in flattened
+    assert "not the final quantitative 2×2 evaluation sample" in flattened
+
+
+def test_manifest_classifies_each_bundled_run():
+    manifest = (_REPO_ROOT / "EVAL_DEMO_RUNS.md").read_text(encoding="utf-8")
+    for run_id in demo_runs.BUNDLED_RUN_IDS:
+        assert run_id in manifest, run_id
+    for classification in (
+        "Final clean Gemini demo",
+        "Historical Claude monolith",
+        "Historical Claude robustness",
+        "Historical Claude holdout",
+    ):
+        assert classification in manifest, classification
 
 
 # ── ui.py's auto-seed only ever touches the TRUE default runs dir ────────

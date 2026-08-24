@@ -80,8 +80,17 @@ BUNDLE_ROOT = Path(__file__).resolve().parent / "demo_runs"
 # added to that directory can never silently start seeding — see
 # EVAL_DEMO_RUNS.md for what each one is, its provider/model, and why it
 # was selected.
+#
+# POLICY (see EVAL_DEMO_RUNS.md for the full classification): exactly one
+# FINAL clean Gemini demo plus the good HISTORICAL Claude runs, bundled as
+# qualitative examples only — they predate the final decision-grounding
+# hardening and are NOT the formal 2×2 evaluation sample. Older Gemini
+# runs (b1ba2568, d1bc5c19) and failed/stale runs are deliberately absent.
 BUNDLED_RUN_IDS: tuple[str, ...] = (
-    "20260824T141045Z-e1cdb3ee",  # Gemini flash-lite — e-commerce monolith, PASS
+    "20260824T141045Z-e1cdb3ee",  # Gemini flash-lite — final clean demo (post-hardening)
+    "20260823T171738Z-935663e4",  # Claude Opus — historical monolith demo
+    "20260823T192225Z-5e6ac35c",  # Claude Opus — historical monolith robustness demo
+    "20260824T084650Z-4447a662",  # Claude Opus — historical holdout-repo demo
 )
 
 

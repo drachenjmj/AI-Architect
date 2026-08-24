@@ -1,0 +1,2000 @@
+{
+  "initial_request": {
+    "raw_prompt": "We want to modernize an existing e-commerce monolith. The current system has scalability and maintainability problems, especially during peak traffic, and we want an architecture that can evolve incrementally without disrupting the running business.",
+    "repo_url": "https://github.com/harsh020/ecommerce-monolith"
+  },
+  "repo_representation": {
+    "meta": {
+      "url": "https://github.com/harsh020/ecommerce-monolith",
+      "commit_sha": "23f7ab8b4e7b671587bec68e1a15977e355b57f2",
+      "clone_path": ".cache/repos/ecommerce-monolith-cbbdd00c55",
+      "ingested_at": "2026-08-23T19:22:28.812201+00:00"
+    },
+    "structure": {
+      "file_tree": "ecommerce-monolith-cbbdd00c55/\nâ”œâ”€â”€ .envs/\nâ”‚   â””â”€â”€ .local\nâ”œâ”€â”€ compose/\nâ”‚   â””â”€â”€ django/\nâ”‚       â””â”€â”€ local/\nâ”‚           â””â”€â”€ Dockerfile\nâ”œâ”€â”€ config/\nâ”‚   â”œâ”€â”€ settings/\nâ”‚   â”‚   â”œâ”€â”€ __init__.py  (0 LOC)\nâ”‚   â”‚   â”œâ”€â”€ base.py  (183 LOC)\nâ”‚   â”‚   â”œâ”€â”€ local.py  (5 LOC)\nâ”‚   â”‚   â””â”€â”€ production.py  (0 LOC)\nâ”‚   â”œâ”€â”€ __init__.py  (0 LOC)\nâ”‚   â”œâ”€â”€ asgi.py  (10 LOC)\nâ”‚   â”œâ”€â”€ urls.py  (28 LOC)\nâ”‚   â””â”€â”€ wsgi.py  (10 LOC)\nâ”œâ”€â”€ ecommerce/\nâ”‚   â”œâ”€â”€ address/\nâ”‚   â”‚   â”œâ”€â”€ migrations/\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0001_initial.py  (33 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0002_auto_20220406_1930.py  (17 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0003_auto_20220420_1734.py  (27 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0004_shippingaddress_pincode.py  (13 LOC)\nâ”‚   â”‚   â”‚   â””â”€â”€ __init__.py  (0 LOC)\nâ”‚   â”‚   â”œâ”€â”€ __init__.py  (0 LOC)\nâ”‚   â”‚   â”œâ”€â”€ admin.py  (5 LOC)\nâ”‚   â”‚   â”œâ”€â”€ apps.py  (3 LOC)\nâ”‚   â”‚   â”œâ”€â”€ models.py  (17 LOC)\nâ”‚   â”‚   â”œâ”€â”€ serializers.py  (15 LOC)\nâ”‚   â”‚   â”œâ”€â”€ tests.py  (2 LOC)\nâ”‚   â”‚   â””â”€â”€ views.py  (2 LOC)\nâ”‚   â”œâ”€â”€ core/\nâ”‚   â”‚   â”œâ”€â”€ migrations/\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0001_initial.py  (32 LOC)\nâ”‚   â”‚   â”‚   â””â”€â”€ __init__.py  (0 LOC)\nâ”‚   â”‚   â”œâ”€â”€ __init__.py  (0 LOC)\nâ”‚   â”‚   â”œâ”€â”€ admin.py  (12 LOC)\nâ”‚   â”‚   â”œâ”€â”€ apps.py  (3 LOC)\nâ”‚   â”‚   â”œâ”€â”€ behaviours.py  (28 LOC)\nâ”‚   â”‚   â”œâ”€â”€ models.py  (16 LOC)\nâ”‚   â”‚   â”œâ”€â”€ serializers.py  (16 LOC)\nâ”‚   â”‚   â”œâ”€â”€ tests.py  (2 LOC)\nâ”‚   â”‚   â””â”€â”€ views.py  (2 LOC)\nâ”‚   â”œâ”€â”€ media/\nâ”‚   â”‚   â”œâ”€â”€ 5842f616a6515b1e0ad75b21.png\nâ”‚   â”‚   â”œâ”€â”€ 5842f616a6515b1e0ad75b21_05cNisq.png\nâ”‚   â”‚   â”œâ”€â”€ airpods.jpg\nâ”‚   â”‚   â”œâ”€â”€ alexa.jpg\nâ”‚   â”‚   â”œâ”€â”€ camera.jpg\nâ”‚   â”‚   â”œâ”€â”€ mouse.jpg\nâ”‚   â”‚   â”œâ”€â”€ mouse_6K7XIFF.jpg\nâ”‚   â”‚   â”œâ”€â”€ mouse_xCm1i4H.jpg\nâ”‚   â”‚   â”œâ”€â”€ phone.jpg\nâ”‚   â”‚   â”œâ”€â”€ phone_h5XnVFk.jpg\nâ”‚   â”‚   â”œâ”€â”€ placeholder.png\nâ”‚   â”‚   â””â”€â”€ playstation.jpg\nâ”‚   â”œâ”€â”€ order/\nâ”‚   â”‚   â”œâ”€â”€ migrations/\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0001_initial.py  (34 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0002_auto_20220424_1928.py  (13 LOC)\nâ”‚   â”‚   â”‚   â””â”€â”€ __init__.py  (0 LOC)\nâ”‚   â”‚   â”œâ”€â”€ __init__.py  (0 LOC)\nâ”‚   â”‚   â”œâ”€â”€ admin.py  (5 LOC)\nâ”‚   â”‚   â”œâ”€â”€ apps.py  (3 LOC)\nâ”‚   â”‚   â”œâ”€â”€ models.py  (28 LOC)\nâ”‚   â”‚   â”œâ”€â”€ serializers.py  (60 LOC)\nâ”‚   â”‚   â”œâ”€â”€ tests.py  (2 LOC)\nâ”‚   â”‚   â”œâ”€â”€ urls.py  (9 LOC)\nâ”‚   â”‚   â””â”€â”€ views.py  (55 LOC)\nâ”‚   â”œâ”€â”€ payment/\nâ”‚   â”‚   â”œâ”€â”€ migrations/\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0001_initial.py  (29 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0002_auto_20220419_1942.py  (15 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0003_auto_20220420_2139.py  (15 LOC)\nâ”‚   â”‚   â”‚   â””â”€â”€ __init__.py  (0 LOC)\nâ”‚   â”‚   â”œâ”€â”€ __init__.py  (0 LOC)\nâ”‚   â”‚   â”œâ”€â”€ admin.py  (5 LOC)\nâ”‚   â”‚   â”œâ”€â”€ apps.py  (3 LOC)\nâ”‚   â”‚   â”œâ”€â”€ models.py  (19 LOC)\nâ”‚   â”‚   â”œâ”€â”€ serializers.py  (6 LOC)\nâ”‚   â”‚   â”œâ”€â”€ tests.py  (2 LOC)\nâ”‚   â”‚   â””â”€â”€ views.py  (2 LOC)\nâ”‚   â”œâ”€â”€ product/\nâ”‚   â”‚   â”œâ”€â”€ migrations/\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0001_initial.py  (33 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0002_auto_20220406_1742.py  (19 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0003_auto_20220406_1742.py  (15 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0004_auto_20220406_1749.py  (13 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0005_auto_20220406_1753.py  (30 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0006_productitem.py  (31 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0007_product_image.py  (13 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0008_auto_20220419_1918.py  (23 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0009_auto_20220420_2139.py  (18 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0010_auto_20220420_2151.py  (20 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0011_auto_20220424_1928.py  (19 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0012_auto_20220424_2058.py  (18 LOC)\nâ”‚   â”‚   â”‚   â””â”€â”€ __init__.py  (0 LOC)\nâ”‚   â”‚   â”œâ”€â”€ __init__.py  (0 LOC)\nâ”‚   â”‚   â”œâ”€â”€ admin.py  (8 LOC)\nâ”‚   â”‚   â”œâ”€â”€ apps.py  (3 LOC)\nâ”‚   â”‚   â”œâ”€â”€ models.py  (31 LOC)\nâ”‚   â”‚   â”œâ”€â”€ serializers.py  (55 LOC)\nâ”‚   â”‚   â”œâ”€â”€ tests.py  (2 LOC)\nâ”‚   â”‚   â”œâ”€â”€ urls.py  (12 LOC)\nâ”‚   â”‚   â””â”€â”€ views.py  (91 LOC)\nâ”‚   â”œâ”€â”€ review/\nâ”‚   â”‚   â”œâ”€â”€ migrations/\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0001_initial.py  (31 LOC)\nâ”‚   â”‚   â”‚   â””â”€â”€ __init__.py  (0 LOC)\nâ”‚   â”‚   â”œâ”€â”€ __init__.py  (0 LOC)\nâ”‚   â”‚   â”œâ”€â”€ admin.py  (5 LOC)\nâ”‚   â”‚   â”œâ”€â”€ apps.py  (3 LOC)\nâ”‚   â”‚   â”œâ”€â”€ models.py  (21 LOC)\nâ”‚   â”‚   â”œâ”€â”€ serializers.py  (14 LOC)\nâ”‚   â”‚   â”œâ”€â”€ tests.py  (2 LOC)\nâ”‚   â”‚   â”œâ”€â”€ urls.py  (6 LOC)\nâ”‚   â”‚   â””â”€â”€ views.py  (31 LOC)\nâ”‚   â”œâ”€â”€ user/\nâ”‚   â”‚   â”œâ”€â”€ migrations/\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0001_initial.py  (59 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0002_auto_20220405_2037.py  (19 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0003_auto_20220405_2040.py  (15 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 0004_user_name.py  (13 LOC)\nâ”‚   â”‚   â”‚   â””â”€â”€ __init__.py  (0 LOC)\nâ”‚   â”‚   â”œâ”€â”€ __init__.py  (0 LOC)\nâ”‚   â”‚   â”œâ”€â”€ admin.py  (17 LOC)\nâ”‚   â”‚   â”œâ”€â”€ apps.py  (5 LOC)\nâ”‚   â”‚   â”œâ”€â”€ forms.py  (21 LOC)\nâ”‚   â”‚   â”œâ”€â”€ models.py  (15 LOC)\nâ”‚   â”‚   â”œâ”€â”€ serializers.py  (71 LOC)\nâ”‚   â”‚   â”œâ”€â”€ signals.py  (11 LOC)\nâ”‚   â”‚   â”œâ”€â”€ tests.py  (2 LOC)\nâ”‚   â”‚   â”œâ”€â”€ urls.py  (11 LOC)\nâ”‚   â”‚   â””â”€â”€ views.py  (78 LOC)\nâ”‚   â””â”€â”€ __init__.py  (0 LOC)\nâ”œâ”€â”€ frontend/\nâ”‚   â”œâ”€â”€ public/\nâ”‚   â”‚   â”œâ”€â”€ images/\nâ”‚   â”‚   â”‚   â”œâ”€â”€ 404-error.png\nâ”‚   â”‚   â”‚   â”œâ”€â”€ airpods.jpg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ alexa.jpg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ camera.jpg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ login.png\nâ”‚   â”‚   â”‚   â”œâ”€â”€ mouse.jpg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ order.png\nâ”‚   â”‚   â”‚   â”œâ”€â”€ payment.png\nâ”‚   â”‚   â”‚   â”œâ”€â”€ phone.jpg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ playstation.jpg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ sample.jpg\nâ”‚   â”‚   â”‚   â””â”€â”€ shipping.png\nâ”‚   â”‚   â”œâ”€â”€ favicon.ico\nâ”‚   â”‚   â”œâ”€â”€ index.html  (41 LOC)\nâ”‚   â”‚   â”œâ”€â”€ logo192.png\nâ”‚   â”‚   â”œâ”€â”€ logo512.png\nâ”‚   â”‚   â”œâ”€â”€ manifest.json\nâ”‚   â”‚   â””â”€â”€ robots.txt\nâ”‚   â”œâ”€â”€ src/\nâ”‚   â”‚   â”œâ”€â”€ apis/\nâ”‚   â”‚   â”‚   â”œâ”€â”€ orderApis.js  (54 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ productApis.js  (60 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ reviewApis.js  (19 LOC)\nâ”‚   â”‚   â”‚   â””â”€â”€ userApis.js  (64 LOC)\nâ”‚   â”‚   â”œâ”€â”€ components/\nâ”‚   â”‚   â”‚   â”œâ”€â”€ cart/\nâ”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ Cart.js  (9 LOC)\nâ”‚   â”‚   â”‚   â”‚   â””â”€â”€ CheckoutSteps.js  (46 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ layout/\nâ”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ style/\nâ”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ Container.module.css  (3 LOC)\nâ”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ Content.js  (13 LOC)\nâ”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ Footer.js  (16 LOC)\nâ”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ Header.js  (67 LOC)\nâ”‚   â”‚   â”‚   â”‚   â””â”€â”€ Layout.js  (9 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ product/\nâ”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ style/\nâ”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ ProductCarousel.modeule.css  (28 LOC)\nâ”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ Product.js  (27 LOC)\nâ”‚   â”‚   â”‚   â”‚   â””â”€â”€ ProductCarousel.js  (42 LOC)\nâ”‚   â”‚   â”‚   â””â”€â”€ ui/\nâ”‚   â”‚   â”‚       â”œâ”€â”€ style/\nâ”‚   â”‚   â”‚       â”‚   â”œâ”€â”€ Loader.module.css  (6 LOC)\nâ”‚   â”‚   â”‚       â”‚   â”œâ”€â”€ NotFound.module.css  (11 LOC)\nâ”‚   â”‚   â”‚       â”‚   â””â”€â”€ Rating.module.css  (3 LOC)\nâ”‚   â”‚   â”‚       â”œâ”€â”€ FormContainer.js  (14 LOC)\nâ”‚   â”‚   â”‚       â”œâ”€â”€ LinkButton.js  (14 LOC)\nâ”‚   â”‚   â”‚       â”œâ”€â”€ Loader.js  (15 LOC)\nâ”‚   â”‚   â”‚       â”œâ”€â”€ Message.js  (10 LOC)\nâ”‚   â”‚   â”‚       â”œâ”€â”€ NotFound.js  (28 LOC)\nâ”‚   â”‚   â”‚       â”œâ”€â”€ Paginate.js  (21 LOC)\nâ”‚   â”‚   â”‚       â”œâ”€â”€ Rating.js  (27 LOC)\nâ”‚   â”‚   â”‚       â””â”€â”€ SearchBox.js  (38 LOC)\nâ”‚   â”‚   â”œâ”€â”€ screens/\nâ”‚   â”‚   â”‚   â”œâ”€â”€ style/\nâ”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ CartScreen.module.css  (6 LOC)\nâ”‚   â”‚   â”‚   â”‚   â””â”€â”€ ProductScreen.module.css  (11 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ CartScreen.js  (118 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ HomeScreen.js  (50 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ LoginScreen.js  (63 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ OrderListScreen.js  (84 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ OrderScreen.js  (197 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ PaymentScreen.js  (46 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ PlaceOrderScreen.js  (137 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ ProductEditScreen.js  (236 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ ProductListScreen.js  (128 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ ProductScreen.js  (248 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ ProfileScreen.js  (191 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ RegisterScreen.js  (114 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ ShippingScreen.js  (116 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ UserEditScreen.js  (147 LOC)\nâ”‚   â”‚   â”‚   â””â”€â”€ UserListScreen.js  (101 LOC)\nâ”‚   â”‚   â”œâ”€â”€ store/\nâ”‚   â”‚   â”‚   â”œâ”€â”€ cart/\nâ”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ cartActions.js  (55 LOC)\nâ”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ cartConstants.js  (6 LOC)\nâ”‚   â”‚   â”‚   â”‚   â””â”€â”€ cartReducers.js  (59 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ order/\nâ”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ orderActions.js  (209 LOC)\nâ”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ orderConstants.js  (24 LOC)\nâ”‚   â”‚   â”‚   â”‚   â””â”€â”€ orderReducers.js  (168 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ product/\nâ”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ productActions.js  (185 LOC)\nâ”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ productConstants.js  (22 LOC)\nâ”‚   â”‚   â”‚   â”‚   â””â”€â”€ productReducers.js  (150 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ review/\nâ”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ reviewActions.js  (62 LOC)\nâ”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ reviewConstants.js  (7 LOC)\nâ”‚   â”‚   â”‚   â”‚   â””â”€â”€ reviewReducers.js  (52 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ user/\nâ”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ userActions.js  (255 LOC)\nâ”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ userConstants.js  (26 LOC)\nâ”‚   â”‚   â”‚   â”‚   â””â”€â”€ userReducers.js  (167 LOC)\nâ”‚   â”‚   â”‚   â””â”€â”€ store.js  (72 LOC)\nâ”‚   â”‚   â”œâ”€â”€ utils/\nâ”‚   â”‚   â”‚   â””â”€â”€ helpers.js  (147 LOC)\nâ”‚   â”‚   â”œâ”€â”€ App.js  (19 LOC)\nâ”‚   â”‚   â”œâ”€â”€ bootstrap.min.css  (12 LOC)\nâ”‚   â”‚   â”œâ”€â”€ index.css  (0 LOC)\nâ”‚   â”‚   â”œâ”€â”€ index.js  (20 LOC)\nâ”‚   â”‚   â”œâ”€â”€ logo.svg\nâ”‚   â”‚   â”œâ”€â”€ products.js  (81 LOC)\nâ”‚   â”‚   â”œâ”€â”€ reportWebVitals.js  (12 LOC)\nâ”‚   â”‚   â””â”€â”€ Router.js  (42 LOC)\nâ”‚   â”œâ”€â”€ .gitignore\nâ”‚   â”œâ”€â”€ package-lock.json\nâ”‚   â”œâ”€â”€ package.json\nâ”‚   â””â”€â”€ README.md\nâ”œâ”€â”€ staticfiles/\nâ”‚   â”œâ”€â”€ admin/\nâ”‚   â”‚   â”œâ”€â”€ css/\nâ”‚   â”‚   â”‚   â”œâ”€â”€ autocomplete.css  (213 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ base.css  (798 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ changelists.css  (285 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ dashboard.css  (21 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ fonts.css  (18 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ forms.css  (428 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ login.css  (66 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ responsive.css  (779 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ responsive_rtl.css  (69 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ rtl.css  (209 LOC)\nâ”‚   â”‚   â”‚   â””â”€â”€ widgets.css  (465 LOC)\nâ”‚   â”‚   â”œâ”€â”€ fonts/\nâ”‚   â”‚   â”‚   â”œâ”€â”€ LICENSE.txt\nâ”‚   â”‚   â”‚   â”œâ”€â”€ README.txt\nâ”‚   â”‚   â”‚   â”œâ”€â”€ Roboto-Bold-webfont.woff\nâ”‚   â”‚   â”‚   â”œâ”€â”€ Roboto-Light-webfont.woff\nâ”‚   â”‚   â”‚   â””â”€â”€ Roboto-Regular-webfont.woff\nâ”‚   â”‚   â”œâ”€â”€ img/\nâ”‚   â”‚   â”‚   â”œâ”€â”€ gis/\nâ”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ move_vertex_off.svg\nâ”‚   â”‚   â”‚   â”‚   â””â”€â”€ move_vertex_on.svg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ calendar-icons.svg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ icon-addlink.svg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ icon-alert.svg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ icon-calendar.svg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ icon-changelink.svg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ icon-clock.svg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ icon-deletelink.svg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ icon-no.svg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ icon-unknown-alt.svg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ icon-unknown.svg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ icon-viewlink.svg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ icon-yes.svg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ inline-delete.svg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ LICENSE\nâ”‚   â”‚   â”‚   â”œâ”€â”€ README.txt\nâ”‚   â”‚   â”‚   â”œâ”€â”€ search.svg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ selector-icons.svg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ sorting-icons.svg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ tooltag-add.svg\nâ”‚   â”‚   â”‚   â””â”€â”€ tooltag-arrowright.svg\nâ”‚   â”‚   â””â”€â”€ js/\nâ”‚   â”‚       â”œâ”€â”€ admin/\nâ”‚   â”‚       â”‚   â”œâ”€â”€ DateTimeShortcuts.js  (397 LOC)\nâ”‚   â”‚       â”‚   â””â”€â”€ RelatedObjectLookups.js  (165 LOC)\nâ”‚   â”‚       â”œâ”€â”€ actions.js  (152 LOC)\nâ”‚   â”‚       â”œâ”€â”€ actions.min.js  (7 LOC)\nâ”‚   â”‚       â”œâ”€â”€ autocomplete.js  (34 LOC)\nâ”‚   â”‚       â”œâ”€â”€ calendar.js  (192 LOC)\nâ”‚   â”‚       â”œâ”€â”€ cancel.js  (13 LOC)\nâ”‚   â”‚       â”œâ”€â”€ change_form.js  (18 LOC)\nâ”‚   â”‚       â”œâ”€â”€ collapse.js  (54 LOC)\nâ”‚   â”‚       â”œâ”€â”€ collapse.min.js  (3 LOC)\nâ”‚   â”‚       â”œâ”€â”€ core.js  (157 LOC)\nâ”‚   â”‚       â”œâ”€â”€ inlines.js  (283 LOC)\nâ”‚   â”‚       â”œâ”€â”€ inlines.min.js  (10 LOC)\nâ”‚   â”‚       â”œâ”€â”€ jquery.init.js  (8 LOC)\nâ”‚   â”‚       â”œâ”€â”€ popup_response.js  (16 LOC)\nâ”‚   â”‚       â”œâ”€â”€ prepopulate.js  (38 LOC)\nâ”‚   â”‚       â”œâ”€â”€ prepopulate.min.js  (1 LOC)\nâ”‚   â”‚       â”œâ”€â”€ prepopulate_init.js  (10 LOC)\nâ”‚   â”‚       â”œâ”€â”€ SelectBox.js  (144 LOC)\nâ”‚   â”‚       â”œâ”€â”€ SelectFilter2.js  (226 LOC)\nâ”‚   â”‚       â””â”€â”€ urlify.js  (189 LOC)\nâ”‚   â”œâ”€â”€ css/\nâ”‚   â”‚   â”œâ”€â”€ main.b4255e49.chunk.css  (14 LOC)\nâ”‚   â”‚   â”œâ”€â”€ main.b4255e49.chunk.css.map\nâ”‚   â”‚   â””â”€â”€ project.css  (11 LOC)\nâ”‚   â”œâ”€â”€ images/\nâ”‚   â”‚   â””â”€â”€ favicons/\nâ”‚   â”‚       â””â”€â”€ favicon.ico\nâ”‚   â”œâ”€â”€ js/\nâ”‚   â”‚   â”œâ”€â”€ 1.60e457aa.chunk.js  (2 LOC)\nâ”‚   â”‚   â”œâ”€â”€ 1.60e457aa.chunk.js.map\nâ”‚   â”‚   â”œâ”€â”€ 2.d300e514.chunk.js  (2 LOC)\nâ”‚   â”‚   â”œâ”€â”€ 2.d300e514.chunk.js.map\nâ”‚   â”‚   â”œâ”€â”€ main.d1999ce5.chunk.js  (2 LOC)\nâ”‚   â”‚   â”œâ”€â”€ main.d1999ce5.chunk.js.map\nâ”‚   â”‚   â”œâ”€â”€ project.js  (1 LOC)\nâ”‚   â”‚   â”œâ”€â”€ runtime~main.30712100.js  (2 LOC)\nâ”‚   â”‚   â””â”€â”€ runtime~main.30712100.js.map\nâ”‚   â”œâ”€â”€ rest_framework/\nâ”‚   â”‚   â”œâ”€â”€ css/\nâ”‚   â”‚   â”‚   â”œâ”€â”€ bootstrap-theme.min.css  (6 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ bootstrap-tweaks.css  (187 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ bootstrap.min.css  (6 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ default.css  (65 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ font-awesome-4.0.3.css  (1338 LOC)\nâ”‚   â”‚   â”‚   â””â”€â”€ prettify.css  (28 LOC)\nâ”‚   â”‚   â”œâ”€â”€ docs/\nâ”‚   â”‚   â”‚   â”œâ”€â”€ css/\nâ”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ base.css  (295 LOC)\nâ”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ highlight.css  (105 LOC)\nâ”‚   â”‚   â”‚   â”‚   â””â”€â”€ jquery.json-view.min.css  (11 LOC)\nâ”‚   â”‚   â”‚   â”œâ”€â”€ img/\nâ”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ favicon.ico\nâ”‚   â”‚   â”‚   â”‚   â””â”€â”€ grid.png\nâ”‚   â”‚   â”‚   â””â”€â”€ js/\nâ”‚   â”‚   â”‚       â”œâ”€â”€ api.js  (285 LOC)\nâ”‚   â”‚   â”‚       â”œâ”€â”€ highlight.pack.js  (2 LOC)\nâ”‚   â”‚   â”‚       â””â”€â”€ jquery.json-view.min.js  (7 LOC)\nâ”‚   â”‚   â”œâ”€â”€ fonts/\nâ”‚   â”‚   â”‚   â”œâ”€â”€ fontawesome-webfont.eot\nâ”‚   â”‚   â”‚   â”œâ”€â”€ fontawesome-webfont.svg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ fontawesome-webfont.ttf\nâ”‚   â”‚   â”‚   â”œâ”€â”€ fontawesome-webfont.woff\nâ”‚   â”‚   â”‚   â”œâ”€â”€ glyphicons-halflings-regular.eot\nâ”‚   â”‚   â”‚   â”œâ”€â”€ glyphicons-halflings-regular.svg\nâ”‚   â”‚   â”‚   â”œâ”€â”€ glyphicons-halflings-regular.ttf\nâ”‚   â”‚   â”‚   â”œâ”€â”€ glyphicons-halflings-regular.woff\nâ”‚   â”‚   â”‚   â””â”€â”€ glyphicons-halflings-regular.woff2\nâ”‚   â”‚   â”œâ”€â”€ img/\nâ”‚   â”‚   â”‚   â”œâ”€â”€ glyphicons-halflings-white.png\nâ”‚   â”‚   â”‚   â”œâ”€â”€ glyphicons-halflings.png\nâ”‚   â”‚   â”‚   â””â”€â”€ grid.png\nâ”‚   â”‚   â””â”€â”€ js/\nâ”‚   â”‚       â”œâ”€â”€ ajax-form.js  (106 LOC)\nâ”‚   â”‚       â”œâ”€â”€ bootstrap.min.js  (6 LOC)\nâ”‚   â”‚       â”œâ”€â”€ coreapi-0.1.1.js  (1694 LOC)\nâ”‚   â”‚       â”œâ”€â”€ csrf.js  (43 LOC)\nâ”‚   â”‚       â”œâ”€â”€ default.js  (38 LOC)\nâ”‚   â”‚       â”œâ”€â”€ jquery-3.5.1.min.js  (2 LOC)\nâ”‚   â”‚       â””â”€â”€ prettify-min.js  (28 LOC)\nâ”‚   â””â”€â”€ sass/\nâ”‚       â”œâ”€â”€ custom_bootstrap_vars.scss  (0 LOC)\nâ”‚       â””â”€â”€ project.scss  (26 LOC)\nâ”œâ”€â”€ design.md\nâ”œâ”€â”€ manage.py  (17 LOC)\nâ””â”€â”€ README.md",
+      "repo_map": "ecommerce/core/behaviours.py:\n    class StatusMixin:\n    class PhoneMixin:\n    class AddressMixin:\n    class ProfileMixin:\n\necommerce/user/serializers.py:\n    class UserSerializer:\n    class UserProfileSerializer:\n    class UserTokenizedSerializer:\n        def get_access(self, user)\n    class UserDetailSerializer:\n        def get_profile(self, user)\n        def update(self, user, validated_data)\n    class UserDetailTokenizedSerializer:\n        def get_access(self, user)\n    class UserCreateSerializer:\n        def create(self, validated_data)\n    class UserAuthSerializer:\n        def validate(self)\n\necommerce/product/models.py:\n    class Product:\n        def save(self)\n        def __str__(self)\n    class ProductItem:\n        def __str__(self)\n\necommerce/review/models.py:\n    class Review:\n        def save(self)\n        def __str__(self)\n\necommerce/user/models.py:\n    class User:\n        def __str__(self)\n    class UserProfile:\n        def __str__(self)\n\necommerce/product/serializers.py:\n    class ProductSerializer:\n        def find_by_slug(self, slug)\n    class ProductReviewSerializer:\n    class ProductDetailSerializer:\n        def find_by_slug(self, slug)\n    class ProductImageSerializer:\n    class ProductItemSerializer:\n        def create(self, validated_data)\n    class ProductItemDetailSerializer:\n        def get_name(self, instance)\n        def get_slug(self, instance)\n\necommerce/order/models.py:\n    class OrderStatus:\n    class Order:\n        def __str__(self)\n\necommerce/core/models.py:\n    class Country:\n        def __str__(self)\n    class State:\n        def __str__(self)\n    class City:\n        def __str__(self)\n\necommerce/payment/models.py:\n    class PaymentStatus:\n    class Payment:\n        def __str__(self)\n\necommerce/address/models.py:\n    class ShippingAddress:\n        def __str__(self)\n\necommerce/product/views.py:\n    class ProductCreateView:\n        def post(self, request)\n        def patch(self, request, id)\n        def delete(self, request, id)\n    class ProductDetailView:\n        def get(self, request, id)\n    class ProductListView:\n        def get(self, request)\n    class ProductListTopView:\n        def get(self, request)\n    class ProductImageView:\n        def post(self, request, id)\n\necommerce/user/views.py:\n    class UserCreateView:\n        def post(self, request)\n    class UserDetailView:\n        def get(self, request)\n        def patch(self, request)\n    class UserListView:\n        def get(self, request)\n    class UserAdminView:\n        def get(self, request, id)\n        def patch(self, request, id)\n        def delete(self, request, id)\n    class UserAuthView:\n\necommerce/order/serializers.py:\n    class OrderSerializer:\n        def get_by_id(self, id)\n        def update(self, instance, validated_data)\n    class OrderCreateSerializer:\n        def create(self, validated_data)\n\necommerce/order/views.py:\n    class OrderCreateView:\n        def post(self, request)\n    class OrderDetailView:\n        def get(self, request, id)\n        def patch(self, request, id)\n    class OrderListView:\n        def get(self, request)\n    class OrderAdminView:\n        def get(self, request)\n        def patch(self, request, id)\n\necommerce/review/views.py:\n    class ReviewCreateView:\n        def post(self, request)\n    class ReviewListView:\n        def get(self, request)\n\necommerce/user/forms.py:\n    class UserChangeForm:\n    class UserCreationForm:\n        def clean_username(self)\n\necommerce/core/serializers.py:\n    class CountrySerializer:\n    class StateSerializer:\n    class CitySerializer:\n\necommerce/address/serializers.py:\n    class ShippingAddressSerializer:\n    class ShippingAddressDetailSerializer:\n        def get_name(self, instance)\n\necommerce/review/serializers.py:\n    class ReviewSerializer:\n    class ReviewDetailSerializer:\n\necommerce/user/signals.py:\n    def update_user(sender, instance)\n\necommerce/payment/serializers.py:\n    class PaymentSerializer:\n\necommerce/user/migrations/0001_initial.py:\n    class Migration:\n\necommerce/order/migrations/0001_initial.py:\n    class Migration:\n\necommerce/address/migrations/0001_initial.py:\n    class Migration:\n\necommerce/product/migrations/0001_initial.py:\n    class Migration:\n\necommerce/core/migrations/0001_initial.py:\n    class Migration:\n\necommerce/product/migrations/0006_productitem.py:\n    class Migration:\n\necommerce/review/migrations/0001_initial.py:\n    class Migration:\n\necommerce/product/migrations/0005_auto_20220406_1753.py:\n    class Migration:\n\necommerce/payment/migrations/0001_initial.py:\n    class Migration:\n\necommerce/address/migrations/0003_auto_20220420_1734.py:\n    class Migration:\n\necommerce/product/migrations/0008_auto_20220419_1918.py:\n    class Migration:\n\necommerce/product/migrations/0010_auto_20220420_2151.py:\n    class Migration:\n\necommerce/product/migrations/0002_auto_20220406_1742.py:\n    class Migration:\n\necommerce/product/migrations/0011_auto_20220424_1928.py:\n    class Migration:\n\necommerce/user/migrations/0002_auto_20220405_2037.py:\n    class Migration:\n\necommerce/product/migrations/0009_auto_20220420_2139.py:\n    class Migration:\n\necommerce/product/migrations/0012_auto_20220424_2058.py:\n    class Migration:\n\necommerce/address/migrations/0002_auto_20220406_1930.py:\n    class Migration:\n\necommerce/user/admin.py:\n    class UserAdmin:\n    class UserProfile:\n\nmanage.py:\n    def main()\n\necommerce/payment/migrations/0002_auto_20220419_1942.py:\n    class Migration:\n\necommerce/payment/migrations/0003_auto_20220420_2139.py:\n    class Migration:\n\necommerce/product/migrations/0003_auto_20220406_1742.py:\n    class Migration:\n\necommerce/user/migrations/0003_auto_20220405_2040.py:\n    class Migration:\n\necommerce/address/migrations/0004_shippingaddress_pincode.py:\n    class Migration:\n\necommerce/order/migrations/0002_auto_20220424_1928.py:\n    class Migration:\n\necommerce/product/migrations/0004_auto_20220406_1749.py:\n    class Migration:\n\necommerce/product/migrations/0007_product_image.py:\n    class Migration:\n\necommerce/user/migrations/0004_user_name.py:\n    class Migration:\n\necommerce/core/admin.py:\n    class CountryAdmin:\n    class CityAdmin:\n    class StateAdmin:\n\necommerce/product/admin.py:\n    class ProductAdmin:\n    class ProductItemAdmin:\n\necommerce/address/admin.py:\n    class ShippingAddressAdmin:\n\necommerce/order/admin.py:\n    class OrderAdmin:\n\necommerce/payment/admin.py:\n    class PaymentAdmin:\n\necommerce/review/admin.py:\n    class ReviewAdmin:\n\necommerce/user/apps.py:\n    class UserConfig:\n        def ready(self)\n\necommerce/address/apps.py:\n    class AddressConfig:\n\necommerce/core/apps.py:\n    class CoreConfig:\n\necommerce/order/apps.py:\n    class OrderConfig:\n\necommerce/payment/apps.py:\n    class PaymentConfig:\n\necommerce/product/apps.py:\n    class ProductConfig:\n\necommerce/review/apps.py:\n    class ReviewConfig:",
+      "dependency_edges": [
+        {
+          "source": "config/settings/local.py",
+          "target": "config/settings/base.py"
+        },
+        {
+          "source": "ecommerce/address/admin.py",
+          "target": "ecommerce/address/models.py"
+        },
+        {
+          "source": "ecommerce/address/models.py",
+          "target": "ecommerce/core/behaviours.py"
+        },
+        {
+          "source": "ecommerce/address/serializers.py",
+          "target": "ecommerce/address/models.py"
+        },
+        {
+          "source": "ecommerce/address/serializers.py",
+          "target": "ecommerce/core/models.py"
+        },
+        {
+          "source": "ecommerce/address/serializers.py",
+          "target": "ecommerce/core/serializers.py"
+        },
+        {
+          "source": "ecommerce/core/admin.py",
+          "target": "ecommerce/core/models.py"
+        },
+        {
+          "source": "ecommerce/core/behaviours.py",
+          "target": "ecommerce/__init__.py"
+        },
+        {
+          "source": "ecommerce/core/behaviours.py",
+          "target": "ecommerce/core/__init__.py"
+        },
+        {
+          "source": "ecommerce/core/serializers.py",
+          "target": "ecommerce/core/models.py"
+        },
+        {
+          "source": "ecommerce/order/admin.py",
+          "target": "ecommerce/order/models.py"
+        },
+        {
+          "source": "ecommerce/order/models.py",
+          "target": "ecommerce/core/behaviours.py"
+        },
+        {
+          "source": "ecommerce/order/serializers.py",
+          "target": "ecommerce/address/serializers.py"
+        },
+        {
+          "source": "ecommerce/order/serializers.py",
+          "target": "ecommerce/order/models.py"
+        },
+        {
+          "source": "ecommerce/order/serializers.py",
+          "target": "ecommerce/payment/serializers.py"
+        },
+        {
+          "source": "ecommerce/order/serializers.py",
+          "target": "ecommerce/product/serializers.py"
+        },
+        {
+          "source": "ecommerce/order/serializers.py",
+          "target": "ecommerce/user/serializers.py"
+        },
+        {
+          "source": "ecommerce/order/urls.py",
+          "target": "ecommerce/order/views.py"
+        },
+        {
+          "source": "ecommerce/order/views.py",
+          "target": "ecommerce/order/models.py"
+        },
+        {
+          "source": "ecommerce/order/views.py",
+          "target": "ecommerce/order/serializers.py"
+        },
+        {
+          "source": "ecommerce/payment/admin.py",
+          "target": "ecommerce/payment/models.py"
+        },
+        {
+          "source": "ecommerce/payment/models.py",
+          "target": "ecommerce/core/behaviours.py"
+        },
+        {
+          "source": "ecommerce/payment/serializers.py",
+          "target": "ecommerce/payment/models.py"
+        },
+        {
+          "source": "ecommerce/product/admin.py",
+          "target": "ecommerce/product/models.py"
+        },
+        {
+          "source": "ecommerce/product/models.py",
+          "target": "ecommerce/core/behaviours.py"
+        },
+        {
+          "source": "ecommerce/product/serializers.py",
+          "target": "ecommerce/product/models.py"
+        },
+        {
+          "source": "ecommerce/product/serializers.py",
+          "target": "ecommerce/review/models.py"
+        },
+        {
+          "source": "ecommerce/product/serializers.py",
+          "target": "ecommerce/user/serializers.py"
+        },
+        {
+          "source": "ecommerce/product/urls.py",
+          "target": "ecommerce/product/views.py"
+        },
+        {
+          "source": "ecommerce/product/views.py",
+          "target": "ecommerce/product/models.py"
+        },
+        {
+          "source": "ecommerce/product/views.py",
+          "target": "ecommerce/product/serializers.py"
+        },
+        {
+          "source": "ecommerce/review/admin.py",
+          "target": "ecommerce/review/models.py"
+        },
+        {
+          "source": "ecommerce/review/models.py",
+          "target": "ecommerce/core/behaviours.py"
+        },
+        {
+          "source": "ecommerce/review/serializers.py",
+          "target": "ecommerce/product/serializers.py"
+        },
+        {
+          "source": "ecommerce/review/serializers.py",
+          "target": "ecommerce/review/models.py"
+        },
+        {
+          "source": "ecommerce/review/serializers.py",
+          "target": "ecommerce/user/serializers.py"
+        },
+        {
+          "source": "ecommerce/review/urls.py",
+          "target": "ecommerce/review/views.py"
+        },
+        {
+          "source": "ecommerce/review/views.py",
+          "target": "ecommerce/product/models.py"
+        },
+        {
+          "source": "ecommerce/review/views.py",
+          "target": "ecommerce/review/models.py"
+        },
+        {
+          "source": "ecommerce/review/views.py",
+          "target": "ecommerce/review/serializers.py"
+        },
+        {
+          "source": "ecommerce/user/admin.py",
+          "target": "ecommerce/user/forms.py"
+        },
+        {
+          "source": "ecommerce/user/admin.py",
+          "target": "ecommerce/user/models.py"
+        },
+        {
+          "source": "ecommerce/user/apps.py",
+          "target": "ecommerce/user/signals.py"
+        },
+        {
+          "source": "ecommerce/user/models.py",
+          "target": "ecommerce/core/behaviours.py"
+        },
+        {
+          "source": "ecommerce/user/serializers.py",
+          "target": "ecommerce/user/models.py"
+        },
+        {
+          "source": "ecommerce/user/signals.py",
+          "target": "ecommerce/user/models.py"
+        },
+        {
+          "source": "ecommerce/user/urls.py",
+          "target": "ecommerce/user/views.py"
+        },
+        {
+          "source": "ecommerce/user/views.py",
+          "target": "ecommerce/user/models.py"
+        },
+        {
+          "source": "ecommerce/user/views.py",
+          "target": "ecommerce/user/serializers.py"
+        }
+      ],
+      "architecture_diagram": "",
+      "tech_stack": {
+        "languages": {
+          "Python": 1707,
+          "HTML": 41,
+          "JavaScript": 8746,
+          "CSS": 5523
+        },
+        "frameworks": [
+          "React"
+        ],
+        "dependencies": [
+          "@paypal/paypal-js",
+          "@testing-library/jest-dom",
+          "@testing-library/react",
+          "@testing-library/user-event",
+          "axios",
+          "lodash",
+          "react",
+          "react-bootstrap",
+          "react-dom",
+          "react-paypal-button-v2",
+          "react-redux",
+          "react-router-bootstrap",
+          "react-router-dom",
+          "react-scripts",
+          "redux",
+          "redux-devtools-extension",
+          "redux-thunk",
+          "web-vitals"
+        ],
+        "external_services": []
+      },
+      "integration_interface": ""
+    },
+    "behavior": {
+      "overview": "This repository is a full-stack e-commerce application consisting of a Django-based backend API and a React frontend. It provides standard e-commerce functionality including user authentication, product catalog management, review systems, order processing, and payment handling.",
+      "partitions": [
+        {
+          "name": "Backend API (Django)",
+          "paths": [
+            "config/",
+            "ecommerce/address/",
+            "ecommerce/core/",
+            "ecommerce/order/",
+            "ecommerce/payment/",
+            "ecommerce/product/",
+            "ecommerce/review/",
+            "ecommerce/user/"
+          ],
+          "role": "The backend provides RESTful APIs for data management and business logic.",
+          "functionality": "Handles data models and API endpoints for user accounts, product inventory, customer reviews, shipping addresses, order management, and payment processing."
+        },
+        {
+          "name": "Frontend (React)",
+          "paths": [
+            "frontend/"
+          ],
+          "role": "The frontend provides the user interface and interacts with the backend API.",
+          "functionality": "Includes React screens and components for user navigation, product browsing, cart management, checkout flows, and user profile management, coordinated by Redux for state management."
+        },
+        {
+          "name": "Static Assets",
+          "paths": [
+            "ecommerce/media/",
+            "frontend/public/",
+            "staticfiles/"
+          ],
+          "role": "Storage for application assets.",
+          "functionality": "Contains user-uploaded product images, frontend icons, and compiled CSS/JS files required for rendering the UI and serving administrative views."
+        },
+        {
+          "name": "Infrastructure",
+          "paths": [
+            ".envs/",
+            "compose/",
+            "manage.py"
+          ],
+          "role": "Deployment and configuration management.",
+          "functionality": "Defines the environment configuration, Docker container setup, and general project management for running the application."
+        }
+      ]
+    }
+  },
+  "context_record": {
+    "project_name": "",
+    "business_goal": "Modernize the existing e-commerce monolith to improve scalability, maintainability, and support incremental evolution without downtime.",
+    "problem_statement": "The existing monolith suffers from performance degradation during peak traffic and maintainability challenges.",
+    "users": [
+      "Customers",
+      "Administrators"
+    ],
+    "functional_requirements": [
+      "Customer registration and login",
+      "User account management",
+      "Product catalog and browsing",
+      "Product search",
+      "Shopping cart",
+      "Checkout and payment processing",
+      "Order management and tracking",
+      "Inventory management",
+      "Shipping and fulfilment",
+      "Product reviews"
+    ],
+    "non_functional_requirements": [
+      "Substantially higher peak traffic handling",
+      "High availability during peak periods",
+      "Responsive customer-facing interactions"
+    ],
+    "cloud_provider": "",
+    "budget": "",
+    "compliance_requirements": [],
+    "existing_systems": [
+      "Django backend monolith",
+      "React frontend"
+    ],
+    "assumptions": [],
+    "open_questions": [],
+    "summary": "Goal: Modernize the existing e-commerce monolith to improve scalability, maintainability, and support incremental evolution without downtime. | Problem: The existing monolith suffers from performance degradation during peak traffic and maintainability challenges.",
+    "version": 1,
+    "revision_reason": ""
+  },
+  "context_history": [],
+  "blueprint": {
+    "blueprint_id": "BP-001",
+    "project_name": "E-Commerce Monolith Modernization",
+    "selected_pattern": "Strangler Fig migration from Django monolith to a small set of event-enabled services behind an API gateway",
+    "rationale": "The business goal is incremental modernization without downtime, so the pattern must name the transition rather than only its endpoint. The existing Django monolith (ecommerce/user, product, review, order, payment, address, core) already exposes REST endpoints consumed by a React frontend via frontend/src/apis/*.js, which gives a natural seam: a routing layer in front of the monolith can move one capability at a time to an extracted service while the React frontend stays unchanged. Decomposition is driven by scaling and consistency characteristics, not by Django app count: read-heavy browsing/search scales independently of checkout, cart is high-churn and ephemeral, order/inventory/fulfilment share one transactional boundary, payment needs security isolation around the external provider, and reviews must be able to fail without blocking purchase. This yields the smallest decomposition that satisfies the stated peak-traffic, availability and maintainability drivers while keeping the monolith in production throughout.",
+    "stakeholder_view": "Customers keep using the same storefront throughout the modernization: they register and sign in, browse and search the catalog, manage a cart, check out and pay, track orders and leave reviews. Administrators keep managing catalog, customers, stock, orders, refunds and review moderation. The business value is that peak shopping periods (promotions, seasonal peaks) no longer degrade the whole platform, because the capabilities that carry peak read traffic (catalog, search, cart) can be scaled and released independently of checkout and order processing. Releases become incremental and reversible: each capability is moved behind a routing layer and can be switched back to the monolith if a defect appears, so modernization does not require a big-bang cutover or a customer-visible outage. A non-critical capability failing (for example reviews or search) degrades gracefully instead of taking down browsing and checkout. Measurable responsiveness and availability targets are agreed with the business and reported continuously; exact numeric targets are not yet stated and must be agreed before load testing.",
+    "technical_view": "The React Storefront continues to call a single HTTP origin, now the API Gateway and Strangler Router. The router holds per-capability, per-percentage routing rules that send a request either to the Legacy Django Monolith or to an extracted service, and it terminates authentication by validating tokens issued by the Identity and Account Service. Extracted services are independently deployable Django REST Framework applications, each owning its own PostgreSQL schema/database: Identity and Account Service (accounts, profiles, addresses, admin user management), Catalog and Search Service (products, variants, images, publication state, plus query-side search over the Product Search Index), Cart Service (guest and account carts in the Cart Data Store), Order Management Service (order lifecycle, stock reservation and inventory, shipment/fulfilment records), Payment Service (authorization, capture and refund against the external Payment Provider), and Review Service (review capture, moderation and rating aggregates). Synchronous calls are used only where a request needs an immediate answer (checkout asking Payment Service to authorize, Cart Service asking Catalog and Search Service for price/availability). Everything else is asynchronous over the Event Backbone: order placed/cancelled/dispatched, payment authorized/failed/refunded, product published/updated, review approved. The Notification Service and the Product Search Index projection are event consumers, which keeps catalog indexing and customer notifications off the request path. Observability and Monitoring Platform collects latency percentiles, error rates, health-check state and correlation-id traces from every runtime component so responsiveness and availability can be evidenced. All runtime components are stateless containers behind health checks, allowing rolling deployments and horizontal scaling per capability. The legacy monolith remains deployed and authoritative for any capability not yet extracted, and is retired only when no routing rule points at it.",
+    "components": [
+      "React Storefront",
+      "API Gateway and Strangler Router",
+      "Legacy Django Monolith",
+      "Identity and Account Service",
+      "Catalog and Search Service",
+      "Product Search Index",
+      "Cart Service",
+      "Cart Data Store",
+      "Order Management Service",
+      "Payment Service",
+      "Review Service",
+      "Notification Service",
+      "Event Backbone",
+      "Observability and Monitoring Platform",
+      "Payment Provider"
+    ],
+    "data_flows": [
+      "Customer â†’ React Storefront: browsing, search, cart, checkout, order tracking and review interactions",
+      "React Storefront â†’ API Gateway and Strangler Router: all HTTP API calls to a single origin",
+      "API Gateway and Strangler Router â†’ Legacy Django Monolith: requests for capabilities not yet extracted or routed back during rollback",
+      "API Gateway and Strangler Router â†’ Identity and Account Service: registration, login, password reset, profile and address requests",
+      "API Gateway and Strangler Router â†’ Catalog and Search Service: category listing, product detail, keyword search and admin catalog changes",
+      "API Gateway and Strangler Router â†’ Cart Service: add/update/remove cart line and cart retrieval requests",
+      "API Gateway and Strangler Router â†’ Order Management Service: checkout submission, order history, order detail, cancellation and admin order/stock actions",
+      "API Gateway and Strangler Router â†’ Review Service: review submission, review listing and moderation requests",
+      "API Gateway and Strangler Router â†’ Identity and Account Service: token validation for authenticated requests",
+      "Cart Service â†’ Catalog and Search Service: current price, variant and availability lookup for cart lines",
+      "Cart Service â†’ Cart Data Store: read/write of guest and account cart state",
+      "Order Management Service â†’ Cart Service: read and clear the cart during checkout",
+      "Order Management Service â†’ Payment Service: payment authorization, capture and refund requests",
+      "Payment Service â†’ Payment Provider: authorization, capture and refund calls to the external provider",
+      "Payment Provider â†’ Payment Service: payment result callbacks/webhooks",
+      "Payment Service â†’ Event Backbone: publishes PaymentAuthorized, PaymentFailed and PaymentRefunded events",
+      "Event Backbone â†’ Order Management Service: delivers PaymentAuthorized, PaymentFailed and PaymentRefunded events",
+      "Order Management Service â†’ Event Backbone: publishes OrderPlaced, OrderCancelled, OrderDispatched, OrderDelivered and StockChanged events",
+      "Event Backbone â†’ Notification Service: delivers OrderPlaced, OrderDispatched and OrderDelivered events for customer notifications",
+      "Event Backbone â†’ Catalog and Search Service: delivers StockChanged events to update displayed availability",
+      "Catalog and Search Service â†’ Event Backbone: publishes ProductPublished and ProductUpdated events",
+      "Catalog and Search Service â†’ Product Search Index: writes the search projection and executes keyword/facet queries",
+      "Review Service â†’ Event Backbone: publishes ReviewApproved and ReviewRemoved events with updated rating aggregates",
+      "Event Backbone â†’ Review Service: delivers OrderDelivered events used to verify purchase eligibility for reviews",
+      "Notification Service â†’ Customer: dispatch and delivery notification emails",
+      "Identity and Account Service â†’ Event Backbone: publishes AccountCreated and AccountDeactivated events",
+      "Event Backbone â†’ Legacy Django Monolith: delivers events for capabilities still served by the monolith during coexistence",
+      "Legacy Django Monolith â†’ Event Backbone: publishes domain events for capabilities not yet extracted",
+      "Identity and Account Service â†’ Observability and Monitoring Platform: metrics, health, logs and traces",
+      "Catalog and Search Service â†’ Observability and Monitoring Platform: metrics, health, logs and traces",
+      "Cart Service â†’ Observability and Monitoring Platform: metrics, health, logs and traces",
+      "Order Management Service â†’ Observability and Monitoring Platform: metrics, health, logs and traces",
+      "Payment Service â†’ Observability and Monitoring Platform: metrics, health, logs and traces",
+      "Review Service â†’ Observability and Monitoring Platform: metrics, health, logs and traces",
+      "Notification Service â†’ Observability and Monitoring Platform: metrics, health, logs and traces",
+      "API Gateway and Strangler Router â†’ Observability and Monitoring Platform: request latency, error rate and routing-decision telemetry",
+      "Legacy Django Monolith â†’ Observability and Monitoring Platform: metrics, health, logs and traces",
+      "Product Search Index â†’ Observability and Monitoring Platform: index health and query latency metrics",
+      "Cart Data Store â†’ Observability and Monitoring Platform: store health and latency metrics",
+      "Event Backbone â†’ Observability and Monitoring Platform: topic lag and delivery-failure metrics"
+    ],
+    "addressed_feature_ids": [
+      "FEAT-001",
+      "FEAT-002",
+      "FEAT-003",
+      "FEAT-004",
+      "FEAT-005",
+      "FEAT-006",
+      "FEAT-007",
+      "FEAT-008",
+      "FEAT-009",
+      "FEAT-010",
+      "FEAT-011",
+      "FEAT-012",
+      "FEAT-013",
+      "FEAT-014"
+    ],
+    "constraints_addressed": [
+      "Scalability: read-heavy Catalog and Search Service, Cart Service and the Product Search Index scale horizontally and independently of Order Management Service and Payment Service",
+      "High availability: stateless containers with health checks, rolling deployments, and graceful degradation of Review Service and search",
+      "No-downtime incremental evolution: per-capability routing in the API Gateway and Strangler Router with reversible cutovers, frontend unchanged",
+      "Migration: Legacy Django Monolith stays authoritative until each capability is cut over; ownership of data moves one capability at a time",
+      "Budget: no budget was stated; the design deliberately keeps the smallest viable service count and reuses the existing Django and React stack to limit rebuild and operational cost",
+      "Cloud: no provider was stated; the design is container-based and cloud-agnostic, deployable on any managed container platform",
+      "Compliance: no formal regime was stated, but card data is never stored â€” the Payment Service delegates card handling to the external Payment Provider"
+    ],
+    "assumptions": [
+      "ASSUMPTION: The monolith's current relational database is PostgreSQL or an equivalent RDBMS that can be split per service; the repository shows Django ORM migrations but not the engine.",
+      "ASSUMPTION: The external Payment Provider is PayPal or an equivalent hosted provider, inferred from the frontend dependencies @paypal/paypal-js and react-paypal-button-v2.",
+      "ASSUMPTION: A container orchestration platform is available or can be procured; the repository contains only a local Docker Compose setup (compose/django/local/Dockerfile).",
+      "ASSUMPTION: Numeric latency, error-rate, availability and peak-multiple targets are not yet defined; they must be agreed with stakeholders before load testing and are referenced here only qualitatively.",
+      "ASSUMPTION: The React Storefront can be pointed at a single gateway origin without functional change, since API access is already centralized in frontend/src/apis/*.js.",
+      "ASSUMPTION: Notification channels (email/SMS provider) will be selected during implementation; none exists in the repository."
+    ],
+    "open_risks": [
+      "Data ownership split for order-related reads: the monolith's ecommerce/order/serializers.py joins user, address, product and payment data, so extracted services must replace these joins with API calls or read projections â€” a source of latency and consistency risk.",
+      "Eventual consistency becomes customer-visible (search index freshness, availability display, review aggregates); acceptable windows must be agreed per capability.",
+      "Dual-write or change-data-capture during each cutover can drift; reconciliation checks are required before each capability is declared migrated.",
+      "The repository has near-zero automated tests (all tests.py files are 2 LOC), so the regression safety net required by FEAT-014 must be built before the first extraction.",
+      "Operational complexity and cost increase with six services plus an event backbone and search index; without a defined budget this may need to be trimmed further.",
+      "Distributed checkout across Order Management Service and Payment Service requires idempotency keys and compensations; incorrect implementation risks duplicate orders or orphaned authorizations."
+    ],
+    "migration_steps": [
+      {
+        "title": "Establish regression safety net, observability and the routing seam",
+        "objective": "Create the preconditions for any reversible extraction: a way to route traffic per capability, and the ability to see whether a cutover made things worse. This is first because no extraction is safely reversible without it.",
+        "changes": [
+          "Introduce the API Gateway and Strangler Router in front of the Legacy Django Monolith with all routes initially pointing at the monolith",
+          "Point the React Storefront at the gateway origin instead of the monolith directly",
+          "Deploy the Observability and Monitoring Platform and instrument the Legacy Django Monolith and API Gateway and Strangler Router with correlation ids, latency, error-rate and health endpoints",
+          "Build automated API regression tests covering the functional requirements currently served by the Legacy Django Monolith",
+          "Provision the Event Backbone and containerize the Legacy Django Monolith for the target platform"
+        ],
+        "coexistence_or_data_strategy": "No data moves. The Legacy Django Monolith remains the single source of truth for all data; the gateway is a transparent pass-through whose routing rules are configuration, not code.",
+        "exit_condition": "All storefront traffic flows through the API Gateway and Strangler Router with baseline latency, error-rate and availability dashboards published, and the regression suite passes against the monolith."
+      },
+      {
+        "title": "Extract Catalog and Search Service with the Product Search Index",
+        "objective": "Move the highest-volume, read-dominant, lowest-transactional-risk capability first so peak-traffic relief is achieved early and the extraction pattern is proven on low-risk traffic.",
+        "changes": [
+          "Stand up Catalog and Search Service owning product, variant and image data, extracted from the monolith's product app",
+          "Stand up the Product Search Index and populate it as an event-driven projection from Catalog and Search Service",
+          "Route catalog browsing, product detail and product search paths through the API Gateway and Strangler Router to the new service by increasing percentage",
+          "Publish ProductPublished and ProductUpdated events on the Event Backbone"
+        ],
+        "coexistence_or_data_strategy": "Catalog and Search Service becomes the write owner of catalog data; the Legacy Django Monolith reads catalog data through the new service's API during the overlap and its catalog tables are frozen after cutover. Reversal is a routing-rule change back to the monolith while catalog writes are still replayable.",
+        "exit_condition": "100% of catalog and search traffic is served by Catalog and Search Service, search results reflect catalog edits within the agreed indexing window, and monolith catalog writes are disabled."
+      },
+      {
+        "title": "Extract Identity and Account Service and centralize token validation",
+        "objective": "Identity is a cross-cutting dependency of every remaining capability, so it must be extracted before the transactional capabilities that depend on it. It also carries a distinct security boundary.",
+        "changes": [
+          "Stand up Identity and Account Service owning accounts, profiles, credentials and shipping/billing addresses (monolith user, core and address apps)",
+          "Issue and validate tokens centrally; configure the API Gateway and Strangler Router to validate tokens against Identity and Account Service",
+          "Route registration, login, password reset, profile, address and admin user management endpoints to the new service",
+          "Publish AccountCreated and AccountDeactivated events on the Event Backbone"
+        ],
+        "coexistence_or_data_strategy": "Accounts and addresses are migrated with a one-time backfill followed by change-data capture from the monolith until write traffic is fully cut over; the Legacy Django Monolith continues to accept the new tokens so partially migrated flows keep working. Reversal reverts routing while the monolith tables remain synchronized.",
+        "exit_condition": "All authentication and account traffic is served by Identity and Account Service, tokens are honoured by both the monolith and extracted services, and the account backfill reconciles with zero unexplained differences."
+      },
+      {
+        "title": "Extract Cart Service with the Cart Data Store",
+        "objective": "Cart is high-churn, short-lived state whose scaling profile matches browsing rather than order processing; moving it before checkout removes cart write load from the monolith database and prepares the checkout extraction.",
+        "changes": [
+          "Stand up Cart Service backed by the Cart Data Store for guest and account carts, including guest-to-account cart merge on login",
+          "Cart Service calls Catalog and Search Service for current price and availability",
+          "Route cart endpoints through the API Gateway and Strangler Router to Cart Service"
+        ],
+        "coexistence_or_data_strategy": "Carts are transient, so no historical backfill is required: new carts are created in the Cart Data Store while carts already open in the Legacy Django Monolith are drained until expiry. The monolith checkout reads the cart through Cart Service during the overlap.",
+        "exit_condition": "All cart operations are served by Cart Service, guest carts merge correctly on login, and no new carts are created in the monolith."
+      },
+      {
+        "title": "Extract Payment Service around the external Payment Provider",
+        "objective": "Isolate provider integration and payment records behind a narrow interface before order and checkout logic moves, so the transactional extraction that follows only has to integrate with one stable payment API.",
+        "changes": [
+          "Stand up Payment Service owning payment records, authorization/capture/refund flows and Payment Provider webhooks",
+          "Publish PaymentAuthorized, PaymentFailed and PaymentRefunded events on the Event Backbone",
+          "Legacy Django Monolith checkout calls Payment Service instead of the provider directly"
+        ],
+        "coexistence_or_data_strategy": "Historical payment records are backfilled read-only into Payment Service; the Legacy Django Monolith stops writing payment rows once it calls Payment Service. Reversal restores the monolith's direct provider call path.",
+        "exit_condition": "All authorizations, captures and refunds flow through Payment Service, provider webhooks are processed idempotently, and no card data is persisted anywhere in the platform."
+      },
+      {
+        "title": "Extract Order Management Service covering orders, inventory and fulfilment",
+        "objective": "Move the transactional core last, as a single consistency boundary, because order lifecycle, stock reservation and shipment records must not be split across services without distributed transactions. All of its dependencies are already extracted at this point.",
+        "changes": [
+          "Stand up Order Management Service owning order lifecycle, per-variant stock and reservations, and shipment/fulfilment records",
+          "Implement idempotent checkout submission coordinating Cart Service, Payment Service and stock reservation",
+          "Route checkout, order history, order detail, cancellation and admin order/stock endpoints to Order Management Service",
+          "Publish OrderPlaced, OrderCancelled, OrderDispatched, OrderDelivered and StockChanged events on the Event Backbone"
+        ],
+        "coexistence_or_data_strategy": "Historical orders are backfilled and the monolith order tables are frozen at cutover; in-flight orders created before cutover are completed by the Legacy Django Monolith while new orders go to Order Management Service, with the gateway routing by order creation date. Reversal is possible until the monolith order tables are frozen.",
+        "exit_condition": "All new orders are created and progressed by Order Management Service, stock never goes negative under concurrent checkout load tests, and no in-flight monolith orders remain open."
+      },
+      {
+        "title": "Extract Review Service and add Notification Service",
+        "objective": "Complete the remaining customer-facing capabilities. Reviews are non-critical and are moved after the revenue path is stable; notifications become possible only once order events exist on the Event Backbone.",
+        "changes": [
+          "Stand up Review Service owning reviews, moderation state and rating aggregates, consuming OrderDelivered events for purchase verification",
+          "Stand up Notification Service consuming OrderPlaced, OrderDispatched and OrderDelivered events to send customer notifications",
+          "Route review submission, listing and moderation endpoints to Review Service",
+          "Configure the API Gateway and Strangler Router to degrade review and search sections gracefully when those services are unavailable"
+        ],
+        "coexistence_or_data_strategy": "Existing reviews are backfilled from the monolith review tables; product pages read aggregates from Review Service while Catalog and Search Service keeps only a denormalized rating value updated by ReviewApproved events.",
+        "exit_condition": "All review traffic is served by Review Service, dispatch and delivery notifications are sent by Notification Service, and a forced Review Service outage leaves browsing, cart and checkout functional."
+      },
+      {
+        "title": "Retire the Legacy Django Monolith and validate the target state",
+        "objective": "Complete the migration by removing the strangled monolith once no routing rule points to it, and prove the peak-traffic and availability objectives against the target architecture.",
+        "changes": [
+          "Remove remaining monolith routes from the API Gateway and Strangler Router and decommission the Legacy Django Monolith deployment",
+          "Migrate residual admin functions still served by Django admin into the owning services' admin interfaces",
+          "Run the documented peak-load test across browsing, search, cart and checkout and publish results against the agreed targets",
+          "Confirm rolling deployment and automated rollback for every service"
+        ],
+        "coexistence_or_data_strategy": "No coexistence remains: each extracted service is the sole owner of its data. The monolith database is retained read-only for an agreed archival period before deletion.",
+        "exit_condition": "No traffic reaches the Legacy Django Monolith, the agreed peak-load and availability targets are demonstrated and reported by the Observability and Monitoring Platform, and a production deployment completes with no customer-visible downtime."
+      }
+    ],
+    "version": "1.0",
+    "revision_note": ""
+  },
+  "adrs": [
+    {
+      "id": "ADR-001",
+      "title": "ADR-001: Modernize via a Strangler Fig migration behind an API gateway rather than a big-bang rewrite",
+      "status": "accepted",
+      "context": "The business requires improved scalability and maintainability with incremental evolution and no downtime. The existing system is a Django monolith with a React frontend whose API calls are already centralized in frontend/src/apis/*.js, and the repository contains effectively no automated tests (every tests.py is 2 LOC).",
+      "decision": "Introduce an API Gateway and Strangler Router in front of the Legacy Django Monolith and migrate capabilities one at a time, with per-capability, percentage-based routing and reversible cutovers, until the monolith carries no traffic and is retired.",
+      "rationale": "A big-bang rewrite cannot satisfy 'without downtime' and is unacceptably risky with no regression suite. Routing at a single origin lets the React Storefront stay unchanged while each capability moves, and lets a defective cutover be reverted by configuration. It also allows scaling relief to be delivered early (catalog and search) instead of at the end of a multi-quarter rewrite.",
+      "alternatives_considered": [
+        "Big-bang rewrite to microservices",
+        "Keep the monolith and scale it vertically / add caching only",
+        "Frontend-side routing between old and new APIs"
+      ],
+      "positive_consequences": [
+        "Every cutover is reversible by a routing rule change",
+        "The React Storefront requires no change per migration step",
+        "Scaling benefit is realized incrementally"
+      ],
+      "negative_consequences": [
+        "Two systems must be operated and kept consistent during the transition",
+        "The gateway becomes a critical path component requiring its own redundancy"
+      ],
+      "related_feature_ids": [
+        "FEAT-014",
+        "FEAT-012",
+        "FEAT-011"
+      ],
+      "related_component_names": [
+        "API Gateway and Strangler Router",
+        "Legacy Django Monolith",
+        "React Storefront"
+      ],
+      "source_references": [
+        "Rag Database\\microservices-on-aws.pdf",
+        "ecommerce_microservices_challenges_ibrahim_luong.md"
+      ]
+    },
+    {
+      "id": "ADR-002",
+      "title": "ADR-002: Retain Python/Django REST Framework and React as the default implementation stack for extracted services",
+      "status": "accepted",
+      "context": "The detected stack is Python/Django on the backend (ecommerce/*/views.py, serializers.py, Django migrations) and React with Redux on the frontend. No requirement names a different language or framework.",
+      "decision": "Implement every extracted service as a Django REST Framework application in Python, reusing the existing models, serializers and view logic where possible, and keep the React Storefront as the customer-facing UI. Only two specialized stores deviate: the Product Search Index and the Cart Data Store (see ADR-005 and ADR-006).",
+      "rationale": "The existing code is the fastest and lowest-risk path to a working extracted service: models, serializers and admin already encode the domain rules. No stated requirement â€” peak traffic, availability, responsiveness â€” is unreachable with horizontally scaled Django processes behind a gateway. Changing language or framework would discard working domain logic and add rewrite risk with no requirement-linked benefit.",
+      "alternatives_considered": [
+        "Rewrite services in Go or Node.js for microservice fashion",
+        "Replace React with a server-rendered framework"
+      ],
+      "positive_consequences": [
+        "Domain logic and migrations are reused rather than reimplemented",
+        "Existing team skills apply unchanged",
+        "Lower cost, relevant given no stated budget"
+      ],
+      "negative_consequences": [
+        "Python process-per-request concurrency requires more instances than an async runtime for the same throughput",
+        "Shared behaviour in ecommerce/core/behaviours.py must be duplicated or packaged as a shared library, risking coupling"
+      ],
+      "related_feature_ids": [
+        "FEAT-001",
+        "FEAT-002",
+        "FEAT-003",
+        "FEAT-007",
+        "FEAT-010",
+        "FEAT-014"
+      ],
+      "related_component_names": [
+        "Identity and Account Service",
+        "Catalog and Search Service",
+        "Order Management Service",
+        "Review Service",
+        "Payment Service",
+        "Cart Service",
+        "React Storefront"
+      ],
+      "source_references": [
+        "ecommerce/product/views.py",
+        "ecommerce/order/serializers.py",
+        "ecommerce/core/behaviours.py"
+      ]
+    },
+    {
+      "id": "ADR-003",
+      "title": "ADR-003: Decompose by scaling and transactional boundaries into six services, not one service per Django app",
+      "status": "accepted",
+      "context": "The monolith has seven Django apps (user, core, address, product, review, order, payment). A naive mapping would produce seven services, splitting the order/payment/inventory transaction across process boundaries and creating services with no independent scaling or ownership driver.",
+      "decision": "Extract six services: Identity and Account Service (user, core, address â€” one identity/security boundary), Catalog and Search Service (product plus search â€” read-heavy, independently scaled), Cart Service (high-churn ephemeral state), Order Management Service (orders, inventory and fulfilment â€” one transactional consistency boundary), Payment Service (security isolation around the external provider), and Review Service (non-critical, must degrade independently). Address data stays with Identity and Account Service rather than becoming its own service.",
+      "rationale": "Each boundary is justified by a concrete driver. Catalog and search carry the peak read traffic and must scale separately from checkout (FEAT-011). Cart writes are frequent, short-lived and session-scoped, a different data-access pattern from durable order data. Orders, stock reservation and fulfilment mutate together at checkout and cancellation; splitting them would require distributed transactions to keep stock non-negative (FEAT-008). Payment isolates the provider integration and avoids card data spreading. Reviews are 'should' priority and must fail without blocking purchase (FEAT-012). The address and core (country/state/city) apps are tiny and only referenced by user and order serializers â€” they get no separate service.",
+      "alternatives_considered": [
+        "One microservice per Django app (seven services)",
+        "A single modular monolith with no extraction",
+        "Two services only: read side and write side"
+      ],
+      "positive_consequences": [
+        "Read-heavy and transactional traffic scale independently",
+        "Checkout stays within a single transactional boundary",
+        "Operational surface is kept as small as the requirements allow"
+      ],
+      "negative_consequences": [
+        "Order Management Service is comparatively large and may need further splitting if fulfilment volume grows",
+        "Cross-service reads that were SQL joins in ecommerce/order/serializers.py become API calls or projections"
+      ],
+      "related_feature_ids": [
+        "FEAT-002",
+        "FEAT-003",
+        "FEAT-005",
+        "FEAT-006",
+        "FEAT-007",
+        "FEAT-008",
+        "FEAT-009",
+        "FEAT-010",
+        "FEAT-011"
+      ],
+      "related_component_names": [
+        "Identity and Account Service",
+        "Catalog and Search Service",
+        "Cart Service",
+        "Order Management Service",
+        "Payment Service",
+        "Review Service"
+      ],
+      "source_references": [
+        "ecommerce_microservices_challenges_ibrahim_luong.md",
+        "ecommerce/order/serializers.py",
+        "ecommerce/address/models.py"
+      ]
+    },
+    {
+      "id": "ADR-004",
+      "title": "ADR-004: Adopt an event backbone for asynchronous integration between services",
+      "status": "accepted",
+      "context": "Order, payment, stock, notification and review-aggregate updates cross service boundaries. Doing all of this synchronously would couple availability: a slow Notification Service or search reindex would slow or fail checkout.",
+      "decision": "Introduce an Event Backbone carrying domain events (OrderPlaced, OrderCancelled, OrderDispatched, OrderDelivered, StockChanged, PaymentAuthorized, PaymentFailed, PaymentRefunded, ProductPublished, ProductUpdated, ReviewApproved, AccountCreated). Synchronous calls are reserved for interactions that need an immediate answer, principally checkout to Payment Service and cart pricing to Catalog and Search Service.",
+      "rationale": "E-commerce business processes are inherently event-oriented, and asynchronous propagation decouples availability and lets non-critical consumers (Notification Service, Product Search Index projection) fail or lag without blocking the revenue path â€” directly serving the graceful-degradation criterion in FEAT-012.",
+      "alternatives_considered": [
+        "Purely synchronous REST between services",
+        "Database-level replication between services",
+        "Scheduled batch synchronization"
+      ],
+      "positive_consequences": [
+        "Non-critical capabilities cannot block checkout",
+        "New consumers can be added without changing producers",
+        "The monolith can consume and produce events during coexistence"
+      ],
+      "negative_consequences": [
+        "Eventual consistency becomes visible (search freshness, availability display, rating aggregates)",
+        "Requires idempotent consumers, retry and dead-letter handling",
+        "Adds a critical piece of infrastructure to operate"
+      ],
+      "related_feature_ids": [
+        "FEAT-006",
+        "FEAT-007",
+        "FEAT-008",
+        "FEAT-009",
+        "FEAT-010",
+        "FEAT-012",
+        "FEAT-014"
+      ],
+      "related_component_names": [
+        "Event Backbone",
+        "Order Management Service",
+        "Payment Service",
+        "Notification Service",
+        "Catalog and Search Service",
+        "Review Service",
+        "Identity and Account Service",
+        "Legacy Django Monolith"
+      ],
+      "source_references": [
+        "ecommerce_migration_event_driven_bulus.md"
+      ]
+    },
+    {
+      "id": "ADR-005",
+      "title": "ADR-005: Serve product search from a dedicated search index maintained as an event-driven projection",
+      "status": "accepted",
+      "context": "FEAT-004 requires relevance ranking, typo tolerance, combinable filters and accurate facet counts. The monolith serves listings from Django ORM queries in ecommerce/product/views.py against the relational store, which cannot provide fuzzy matching or facet counts efficiently at peak read load.",
+      "decision": "Introduce a Product Search Index (search engine such as OpenSearch/Elasticsearch) owned by Catalog and Search Service, populated as a projection from catalog events, and serve keyword search and faceted filtering from it while the relational catalog store remains the system of record.",
+      "rationale": "This is a data-access pattern the current store cannot meet cleanly, which is the justification required to add a technology beyond the detected stack. Keeping the relational store authoritative preserves the existing Django models and migrations; only the query path changes.",
+      "alternatives_considered": [
+        "PostgreSQL full-text search with trigram similarity",
+        "Keeping ORM LIKE queries and adding caching",
+        "A third-party hosted search SaaS"
+      ],
+      "positive_consequences": [
+        "Typo-tolerant, ranked, faceted search becomes feasible",
+        "Search read load is isolated from the transactional catalog store"
+      ],
+      "negative_consequences": [
+        "Index freshness lag must be agreed and monitored",
+        "An additional stateful system to operate and secure",
+        "Reindexing procedures must be built and tested"
+      ],
+      "related_feature_ids": [
+        "FEAT-004",
+        "FEAT-003",
+        "FEAT-011"
+      ],
+      "related_component_names": [
+        "Product Search Index",
+        "Catalog and Search Service",
+        "Event Backbone"
+      ],
+      "source_references": [
+        "ecommerce/product/views.py",
+        "ecommerce/product/serializers.py"
+      ]
+    },
+    {
+      "id": "ADR-006",
+      "title": "ADR-006: Hold cart state in a dedicated low-latency key-value store owned by Cart Service",
+      "status": "accepted",
+      "context": "The current implementation keeps cart state in the React Redux store (frontend/src/store/cart) with no server-side cart, so guest carts do not survive device changes and cannot be merged reliably. FEAT-005 requires server-side persistence, session-scoped guest carts and merge on login at peak load.",
+      "decision": "Cart Service owns cart state in a Cart Data Store (in-memory key-value store with persistence, e.g. Redis), keyed by session id or account id, with TTL-based expiry for guest carts.",
+      "rationale": "Cart writes are frequent, short-lived and never queried analytically; a key-value store with TTL matches this access pattern and avoids loading the transactional database with churn during peak browsing. This is a new capability rather than a replacement of an existing backend store, since the repository has no server-side cart persistence at all.",
+      "alternatives_considered": [
+        "Relational cart tables in the order database",
+        "Keeping the cart client-side only",
+        "Cookie-based cart storage"
+      ],
+      "positive_consequences": [
+        "Cart survives reloads and merges deterministically on login",
+        "Peak cart churn does not touch the order database"
+      ],
+      "negative_consequences": [
+        "Cart durability depends on the store's persistence configuration",
+        "Another stateful component to size and monitor"
+      ],
+      "related_feature_ids": [
+        "FEAT-005",
+        "FEAT-006",
+        "FEAT-011"
+      ],
+      "related_component_names": [
+        "Cart Service",
+        "Cart Data Store",
+        "Catalog and Search Service",
+        "Order Management Service"
+      ],
+      "source_references": []
+    },
+    {
+      "id": "ADR-007",
+      "title": "ADR-007: Isolate payment provider integration in a Payment Service that stores no card data",
+      "status": "accepted",
+      "context": "The monolith holds payment records in ecommerce/payment and the frontend integrates a hosted provider directly (@paypal/paypal-js, react-paypal-button-v2). FEAT-006 requires that no raw card data is stored and that checkout is idempotent under duplicate submission.",
+      "decision": "All provider interaction, webhook handling and payment record keeping is confined to Payment Service. Card data is captured by the provider's hosted flow and never traverses or persists in platform components; Payment Service stores only provider references, status and amounts, and exposes idempotent authorize/capture/refund operations keyed by a checkout idempotency key.",
+      "rationale": "Confining the provider integration to one service is a security-isolation boundary: it minimizes the components in scope for payment-related review and keeps a single, testable place for idempotency and reconciliation logic. No formal compliance regime was stated, so the design avoids card data entirely rather than assuming a certification scope.",
+      "alternatives_considered": [
+        "Keep payment logic inside Order Management Service",
+        "Continue calling the provider directly from the React Storefront"
+      ],
+      "positive_consequences": [
+        "Narrow security scope around payments",
+        "Single owner of provider webhooks and idempotency",
+        "Provider can be replaced behind a stable internal interface"
+      ],
+      "negative_consequences": [
+        "Checkout spans two services, requiring compensation on partial failure",
+        "Payment Service is on the critical revenue path and needs its own redundancy"
+      ],
+      "related_feature_ids": [
+        "FEAT-006",
+        "FEAT-007",
+        "FEAT-012"
+      ],
+      "related_component_names": [
+        "Payment Service",
+        "Order Management Service",
+        "Payment Provider"
+      ],
+      "source_references": [
+        "ecommerce/payment/models.py"
+      ]
+    },
+    {
+      "id": "ADR-008",
+      "title": "ADR-008: Give each extracted service exclusive ownership of its data, migrated by backfill plus change-data capture",
+      "status": "accepted",
+      "context": "All data currently lives in one relational schema, and serializers join across apps (ecommerce/order/serializers.py imports address, payment, product and user serializers). Independent deployment and scaling are impossible while services share tables, but the migration must not lose data or require downtime.",
+      "decision": "Each extracted service owns a private database or schema that no other service reads directly. Data is moved per capability with a one-time backfill followed by change-data capture from the monolith until the capability's write traffic is cut over, after which the monolith tables are frozen. Cross-service reads are replaced by API calls or event-fed read projections.",
+      "rationale": "Exclusive data ownership is what makes independent deployment and per-capability scaling real; without it the services are a distributed monolith. Backfill plus change-data capture keeps the old and new stores consistent during the reversible window required by FEAT-014, avoiding a downtime cutover.",
+      "alternatives_considered": [
+        "Shared database across all services",
+        "Dual writes from application code",
+        "Offline cutover during a maintenance window"
+      ],
+      "positive_consequences": [
+        "Services deploy and scale independently",
+        "Cutovers stay reversible while capture is running",
+        "Blast radius of a schema change is one service"
+      ],
+      "negative_consequences": [
+        "Cross-service joins become API calls or projections, adding latency",
+        "Capture pipelines can drift and need reconciliation checks",
+        "Referential integrity across boundaries becomes an application concern"
+      ],
+      "related_feature_ids": [
+        "FEAT-014",
+        "FEAT-007",
+        "FEAT-008",
+        "FEAT-002",
+        "FEAT-011"
+      ],
+      "related_component_names": [
+        "Identity and Account Service",
+        "Catalog and Search Service",
+        "Order Management Service",
+        "Payment Service",
+        "Review Service",
+        "Legacy Django Monolith"
+      ],
+      "source_references": [
+        "ecommerce/order/serializers.py",
+        "ecommerce/review/serializers.py",
+        "ecommerce_microservices_challenges_ibrahim_luong.md"
+      ]
+    },
+    {
+      "id": "ADR-009",
+      "title": "ADR-009: Run all runtime components as stateless containers with health checks, rolling deployment and centralized observability",
+      "status": "accepted",
+      "context": "FEAT-011, FEAT-012 and FEAT-013 require horizontal capacity increase without code change, deployments with no customer-visible downtime, automatic replacement of unhealthy instances, and continuous measurement of latency, error rate and availability. The repository only contains a local Docker Compose setup and no monitoring. No cloud provider or budget was specified.",
+      "decision": "Deploy every service, the API Gateway and Strangler Router and the Legacy Django Monolith as stateless containers on a managed container platform, each exposing liveness/readiness endpoints, deployed with a rolling strategy and automated rollback, and emitting metrics, structured logs and correlation-id traces to the Observability and Monitoring Platform. Numeric latency, error-rate, availability and peak-multiple targets are to be agreed with stakeholders and then encoded as alert thresholds and load-test criteria.",
+      "rationale": "Statelessness plus health checks is what makes 'add instances to add capacity' and 'replace an unhealthy instance' true rather than aspirational, and a cloud-agnostic container platform avoids committing to a provider that has not been chosen. Targets are left qualitative here because the Context Record states the magnitude as unknown.",
+      "alternatives_considered": [
+        "Virtual machines with manual scaling",
+        "Serverless functions per capability",
+        "Committing now to one specific cloud provider's managed services"
+      ],
+      "positive_consequences": [
+        "Per-capability horizontal scaling and rolling releases",
+        "Responsiveness and availability can be evidenced per period",
+        "Deployment approach remains portable across providers"
+      ],
+      "negative_consequences": [
+        "Platform operations skills and tooling are required",
+        "Observability infrastructure carries ongoing cost, unbudgeted so far",
+        "Without agreed numeric targets, alert thresholds are provisional"
+      ],
+      "related_feature_ids": [
+        "FEAT-011",
+        "FEAT-012",
+        "FEAT-013",
+        "FEAT-014"
+      ],
+      "related_component_names": [
+        "Observability and Monitoring Platform",
+        "API Gateway and Strangler Router",
+        "Identity and Account Service",
+        "Catalog and Search Service",
+        "Cart Service",
+        "Order Management Service",
+        "Payment Service",
+        "Review Service",
+        "Notification Service",
+        "Legacy Django Monolith"
+      ],
+      "source_references": [
+        "Rag Database\\microservices-on-aws.pdf"
+      ]
+    }
+  ],
+  "components": [
+    {
+      "id": "COMP-001",
+      "name": "React Storefront",
+      "component_type": "UI",
+      "purpose": "Customer- and administrator-facing web application; unchanged in function throughout the migration.",
+      "description": "The existing React/Redux single-page application in frontend/ providing browsing, search, cart, checkout, order tracking, profile and admin screens. Migration disposition: retained and reused; the only change is repointing its API base URL (frontend/src/apis/*.js) to the API Gateway and Strangler Router in migration step 1, so no per-capability migration requires a frontend release.",
+      "inputs": [
+        "Customer and administrator interactions",
+        "JSON API responses from the API Gateway and Strangler Router"
+      ],
+      "outputs": [
+        "Authenticated HTTP API requests to the API Gateway and Strangler Router",
+        "Rendered storefront and admin views"
+      ],
+      "dependencies": [
+        "API Gateway and Strangler Router"
+      ],
+      "related_feature_ids": [
+        "FEAT-001",
+        "FEAT-002",
+        "FEAT-003",
+        "FEAT-004",
+        "FEAT-005",
+        "FEAT-006",
+        "FEAT-007",
+        "FEAT-010",
+        "FEAT-014"
+      ],
+      "related_adr_ids": [
+        "ADR-001",
+        "ADR-002"
+      ],
+      "technology_choices": [
+        "React",
+        "Redux with redux-thunk",
+        "axios",
+        "react-bootstrap"
+      ],
+      "security_considerations": [
+        "Tokens stored with XSS-aware handling",
+        "No card data handled in-app; provider-hosted payment flow only"
+      ],
+      "scalability_considerations": [
+        "Static bundle served from a CDN or static host, independent of backend scaling",
+        "Client-side caching and pagination for catalog listings"
+      ]
+    },
+    {
+      "id": "COMP-002",
+      "name": "API Gateway and Strangler Router",
+      "component_type": "gateway",
+      "purpose": "Single ingress that authenticates requests and routes each capability to either the legacy monolith or its extracted service.",
+      "description": "Edge component holding per-path, per-percentage routing rules that make each capability cutover a configuration change rather than a frontend or backend release. It validates tokens with the Identity and Account Service, applies rate limiting and overload protection, injects correlation ids, and returns degraded responses when a non-critical downstream (Review Service, search) is unavailable. Migration disposition: new component introduced in migration step 1 as the seam that enables everything after it.",
+      "inputs": [
+        "HTTP requests from the React Storefront",
+        "Routing and rate-limit configuration",
+        "Token validation results from the Identity and Account Service"
+      ],
+      "outputs": [
+        "Routed requests to the Legacy Django Monolith or an extracted service",
+        "Request telemetry and routing decisions to the Observability and Monitoring Platform"
+      ],
+      "dependencies": [
+        "Legacy Django Monolith",
+        "Identity and Account Service",
+        "Catalog and Search Service",
+        "Cart Service",
+        "Order Management Service",
+        "Review Service",
+        "Observability and Monitoring Platform"
+      ],
+      "related_feature_ids": [
+        "FEAT-014",
+        "FEAT-011",
+        "FEAT-012",
+        "FEAT-001",
+        "FEAT-013"
+      ],
+      "related_adr_ids": [
+        "ADR-001",
+        "ADR-009"
+      ],
+      "technology_choices": [
+        "Managed or self-hosted API gateway (e.g. Kong, NGINX Ingress, Envoy)",
+        "Declarative routing configuration held in version control"
+      ],
+      "security_considerations": [
+        "TLS termination and centralized token validation",
+        "Rate limiting and bot/abuse protection at the edge",
+        "Rejects unauthenticated access to profile, order and admin routes"
+      ],
+      "scalability_considerations": [
+        "Stateless, horizontally scaled behind a load balancer with health checks",
+        "Must be provisioned redundantly since it is on every request path"
+      ]
+    },
+    {
+      "id": "COMP-003",
+      "name": "Legacy Django Monolith",
+      "component_type": "service",
+      "purpose": "Continues to serve every capability not yet extracted, keeping the platform whole during the migration.",
+      "description": "The existing Django/DRF application (config/, ecommerce/*) serving user, catalog, cart-adjacent, order, payment, address and review endpoints. It shrinks step by step as capabilities move, produces and consumes events on the Event Backbone during coexistence, and is decommissioned in the final migration step once no routing rule points at it. Migration disposition: existing system, progressively strangled and retired.",
+      "inputs": [
+        "Requests routed from the API Gateway and Strangler Router",
+        "Events from the Event Backbone for capabilities it still serves"
+      ],
+      "outputs": [
+        "JSON API responses",
+        "Domain events published to the Event Backbone",
+        "Metrics, logs and traces to the Observability and Monitoring Platform"
+      ],
+      "dependencies": [
+        "API Gateway and Strangler Router",
+        "Event Backbone",
+        "Observability and Monitoring Platform"
+      ],
+      "related_feature_ids": [
+        "FEAT-014",
+        "FEAT-001",
+        "FEAT-002",
+        "FEAT-003",
+        "FEAT-006",
+        "FEAT-007",
+        "FEAT-010",
+        "FEAT-012"
+      ],
+      "related_adr_ids": [
+        "ADR-001",
+        "ADR-008",
+        "ADR-009"
+      ],
+      "technology_choices": [
+        "Django",
+        "Django REST Framework",
+        "Existing relational database",
+        "Containerized for the target platform"
+      ],
+      "security_considerations": [
+        "Must accept tokens issued by the Identity and Account Service after step 3",
+        "Legacy admin access restricted during the transition"
+      ],
+      "scalability_considerations": [
+        "Horizontally scaled as an interim measure; peak relief comes from removing capabilities rather than tuning it",
+        "Its database becomes the bottleneck until catalog and cart traffic is extracted"
+      ]
+    },
+    {
+      "id": "COMP-004",
+      "name": "Identity and Account Service",
+      "component_type": "service",
+      "purpose": "Owns authentication, customer accounts, profiles, addresses and administrative account management.",
+      "description": "Extracted from the monolith's user, core and address apps, this service registers customers, verifies email, issues and validates session tokens, handles password change and reset, stores multiple shipping and billing addresses with defaults, and exposes administrator account search and deactivation. It is a single service rather than three because identity, profile and address form one security and ownership boundary and are never scaled or released separately. Migration disposition: extracted in migration step 3.",
+      "inputs": [
+        "Registration, login, reset, profile and address requests routed by the API Gateway and Strangler Router",
+        "Token validation requests from the API Gateway and Strangler Router"
+      ],
+      "outputs": [
+        "Session tokens and account/address representations",
+        "AccountCreated and AccountDeactivated events to the Event Backbone",
+        "Metrics, logs and traces to the Observability and Monitoring Platform"
+      ],
+      "dependencies": [
+        "Event Backbone",
+        "Observability and Monitoring Platform"
+      ],
+      "related_feature_ids": [
+        "FEAT-001",
+        "FEAT-002",
+        "FEAT-014",
+        "FEAT-011"
+      ],
+      "related_adr_ids": [
+        "ADR-002",
+        "ADR-003",
+        "ADR-008"
+      ],
+      "technology_choices": [
+        "Django REST Framework reusing ecommerce/user and ecommerce/address models",
+        "Private PostgreSQL database",
+        "Signed bearer tokens with short expiry and rotation"
+      ],
+      "security_considerations": [
+        "Password hashing with a modern KDF; credentials never logged",
+        "Single-use, time-limited password reset links",
+        "Password change invalidates other active sessions",
+        "Cross-account access rejected with an authorization error",
+        "Personal data access restricted to the owning customer and authorized administrators"
+      ],
+      "scalability_considerations": [
+        "Stateless instances scaled horizontally; token validation cacheable at the gateway",
+        "Login bursts at peak must be load-tested against the agreed responsiveness target"
+      ]
+    },
+    {
+      "id": "COMP-005",
+      "name": "Catalog and Search Service",
+      "component_type": "service",
+      "purpose": "Owns product, variant and image data and serves all customer browsing and search queries.",
+      "description": "Extracted from the monolith's product app, it serves paginated category listings with sorting, product detail with variants and availability, and administrator create/update/publish/unpublish operations. Its query side reads from the Product Search Index for keyword search and faceted filtering. It carries the largest share of peak read traffic, which is the driver for separating it first and scaling it independently of checkout. It consumes StockChanged events to reflect availability and publishes ProductPublished and ProductUpdated events. Migration disposition: extracted in migration step 2.",
+      "inputs": [
+        "Listing, detail, search and admin catalog requests from the API Gateway and Strangler Router",
+        "Price and availability lookups from Cart Service",
+        "StockChanged events from the Event Backbone"
+      ],
+      "outputs": [
+        "Catalog and search responses",
+        "Index updates to the Product Search Index",
+        "ProductPublished and ProductUpdated events to the Event Backbone",
+        "Metrics, logs and traces to the Observability and Monitoring Platform"
+      ],
+      "dependencies": [
+        "Product Search Index",
+        "Event Backbone",
+        "Observability and Monitoring Platform"
+      ],
+      "related_feature_ids": [
+        "FEAT-003",
+        "FEAT-004",
+        "FEAT-010",
+        "FEAT-011",
+        "FEAT-014"
+      ],
+      "related_adr_ids": [
+        "ADR-002",
+        "ADR-003",
+        "ADR-005",
+        "ADR-008"
+      ],
+      "technology_choices": [
+        "Django REST Framework reusing ecommerce/product models and serializers",
+        "Private PostgreSQL database as system of record",
+        "Object storage or CDN for product images currently in ecommerce/media"
+      ],
+      "security_considerations": [
+        "Admin catalog mutations require an administrator role",
+        "Unpublished and deleted products return not-found on customer paths",
+        "Uploaded image validation to prevent malicious file upload"
+      ],
+      "scalability_considerations": [
+        "Read replicas and HTTP/CDN caching for listing and detail responses",
+        "Scales independently of checkout traffic; the dominant target of the peak-load test",
+        "Search queries offloaded to the Product Search Index"
+      ]
+    },
+    {
+      "id": "COMP-006",
+      "name": "Product Search Index",
+      "component_type": "database",
+      "purpose": "Provides relevance-ranked, typo-tolerant, faceted product search.",
+      "description": "A search engine index maintained as a projection of catalog data by Catalog and Search Service. It supports combinable category, price-range, availability and rating filters with facet counts, and fuzzy matching for minor spelling errors. It is not a system of record and can be fully rebuilt from the catalog database. Migration disposition: new component introduced in migration step 2 alongside Catalog and Search Service.",
+      "inputs": [
+        "Index write operations from Catalog and Search Service"
+      ],
+      "outputs": [
+        "Ranked search results and facet counts to Catalog and Search Service",
+        "Index health and query latency metrics to the Observability and Monitoring Platform"
+      ],
+      "dependencies": [
+        "Catalog and Search Service"
+      ],
+      "related_feature_ids": [
+        "FEAT-004",
+        "FEAT-003",
+        "FEAT-011"
+      ],
+      "related_adr_ids": [
+        "ADR-005"
+      ],
+      "technology_choices": [
+        "OpenSearch or Elasticsearch",
+        "Alias-based reindexing for zero-interruption rebuilds"
+      ],
+      "security_considerations": [
+        "Not exposed publicly; reachable only from Catalog and Search Service",
+        "Contains no personal data, only catalog attributes"
+      ],
+      "scalability_considerations": [
+        "Sharded and replicated for peak read volume",
+        "Indexing lag monitored against the agreed freshness window"
+      ]
+    },
+    {
+      "id": "COMP-007",
+      "name": "Cart Service",
+      "component_type": "service",
+      "purpose": "Owns guest and account cart state, line management and merge-on-login.",
+      "description": "New server-side capability replacing the client-only Redux cart. It adds, updates and removes lines, recalculates line totals and subtotal, flags lines whose price changed or which became unavailable using data from Catalog and Search Service, persists guest carts by session with TTL, and merges a guest cart into the account cart on login by combining quantities of identical lines. Separated because its write churn and session-scoped lifetime differ fundamentally from durable order data. Migration disposition: extracted/introduced in migration step 4.",
+      "inputs": [
+        "Cart requests from the API Gateway and Strangler Router",
+        "Price, variant and availability data from Catalog and Search Service",
+        "Cart read and clear requests from Order Management Service"
+      ],
+      "outputs": [
+        "Cart representations with totals and warning flags",
+        "Cart state writes to the Cart Data Store",
+        "Metrics, logs and traces to the Observability and Monitoring Platform"
+      ],
+      "dependencies": [
+        "Cart Data Store",
+        "Catalog and Search Service",
+        "Observability and Monitoring Platform"
+      ],
+      "related_feature_ids": [
+        "FEAT-005",
+        "FEAT-006",
+        "FEAT-011",
+        "FEAT-014"
+      ],
+      "related_adr_ids": [
+        "ADR-003",
+        "ADR-006",
+        "ADR-002"
+      ],
+      "technology_choices": [
+        "Django REST Framework service",
+        "Cart Data Store client with TTL-based expiry"
+      ],
+      "security_considerations": [
+        "Guest session identifiers must be unguessable",
+        "Account carts readable only by the owning authenticated customer",
+        "Prices always re-derived from Catalog and Search Service, never trusted from the client"
+      ],
+      "scalability_considerations": [
+        "Stateless instances; all state in the Cart Data Store",
+        "Scales with browsing traffic, independently of Order Management Service"
+      ]
+    },
+    {
+      "id": "COMP-008",
+      "name": "Cart Data Store",
+      "component_type": "database",
+      "purpose": "Low-latency persistence for short-lived cart state.",
+      "description": "Key-value store holding cart documents keyed by guest session id or account id, with TTL expiry for guest carts and persistence enabled so carts survive a restart. Owned exclusively by Cart Service. Migration disposition: new component introduced in migration step 4.",
+      "inputs": [
+        "Cart reads and writes from Cart Service"
+      ],
+      "outputs": [
+        "Cart documents to Cart Service",
+        "Store health and latency metrics to the Observability and Monitoring Platform"
+      ],
+      "dependencies": [
+        "Cart Service"
+      ],
+      "related_feature_ids": [
+        "FEAT-005",
+        "FEAT-011"
+      ],
+      "related_adr_ids": [
+        "ADR-006"
+      ],
+      "technology_choices": [
+        "Redis with AOF/RDB persistence and replica failover"
+      ],
+      "security_considerations": [
+        "Network-isolated, authenticated access from Cart Service only",
+        "Encryption in transit; no payment data stored"
+      ],
+      "scalability_considerations": [
+        "Replicated with automatic failover for peak availability",
+        "Memory sizing driven by concurrent active carts at peak; TTL bounds growth"
+      ]
+    },
+    {
+      "id": "COMP-009",
+      "name": "Order Management Service",
+      "component_type": "service",
+      "purpose": "Owns the order lifecycle, inventory reservation and fulfilment/shipment records as one transactional boundary.",
+      "description": "Extracted from the monolith's order app and the stock semantics of the product app. It validates stock for every line, creates time-bounded reservations, calculates totals including shipping and tax, coordinates authorization with Payment Service using an idempotency key so duplicate submissions yield one order, enforces the allowed order state machine, supports customer cancellation before fulfilment with refund and stock release, offers shipping methods with cost and delivery estimate, records carrier and tracking numbers including partial shipments, and provides administrator filtering, status updates, refunds, manual stock adjustment with auditable reason and actor, and low-stock reporting. Orders, inventory and fulfilment are kept in one service because they mutate together and splitting them would require distributed transactions to keep stock non-negative. Migration disposition: extracted in migration step 6.",
+      "inputs": [
+        "Checkout, order history, order detail, cancellation and admin requests from the API Gateway and Strangler Router",
+        "Cart contents from Cart Service",
+        "PaymentAuthorized, PaymentFailed and PaymentRefunded events from the Event Backbone"
+      ],
+      "outputs": [
+        "Order confirmations, order history and tracking responses",
+        "Authorization, capture and refund requests to Payment Service",
+        "OrderPlaced, OrderCancelled, OrderDispatched, OrderDelivered and StockChanged events to the Event Backbone",
+        "Metrics, logs and traces to the Observability and Monitoring Platform"
+      ],
+      "dependencies": [
+        "Cart Service",
+        "Payment Service",
+        "Event Backbone",
+        "Observability and Monitoring Platform"
+      ],
+      "related_feature_ids": [
+        "FEAT-006",
+        "FEAT-007",
+        "FEAT-008",
+        "FEAT-009",
+        "FEAT-011",
+        "FEAT-014"
+      ],
+      "related_adr_ids": [
+        "ADR-003",
+        "ADR-004",
+        "ADR-007",
+        "ADR-008",
+        "ADR-002"
+      ],
+      "technology_choices": [
+        "Django REST Framework reusing ecommerce/order models and serializers",
+        "Private PostgreSQL database with row-level locking for stock reservation",
+        "Transactional outbox for reliable event publication"
+      ],
+      "security_considerations": [
+        "Customers can read only their own orders",
+        "Admin status changes, refunds and stock adjustments require an administrator role and are audit-logged with actor and timestamp",
+        "No card data stored; only Payment Service references"
+      ],
+      "scalability_considerations": [
+        "Scales independently of browsing traffic; checkout throughput bounded by reservation contention",
+        "Reservation contention on hot items mitigated by short-lived row locks and retry",
+        "Write-heavy workload isolated from catalog read load"
+      ]
+    },
+    {
+      "id": "COMP-010",
+      "name": "Payment Service",
+      "component_type": "service",
+      "purpose": "Sole integration point with the external payment provider; owns payment records, idempotency and reconciliation.",
+      "description": "Extracted from the monolith's payment app. It exposes idempotent authorize, capture and refund operations keyed by the checkout idempotency key, processes provider webhooks, and stores only provider references, status and amounts â€” never card data, which is captured by the provider-hosted flow. It publishes PaymentAuthorized, PaymentFailed and PaymentRefunded events so Order Management Service can progress or fail an order asynchronously. Migration disposition: extracted in migration step 5, before the order extraction, so checkout only ever integrates with a stable payment interface.",
+      "inputs": [
+        "Authorization, capture and refund requests from Order Management Service",
+        "Payment result callbacks/webhooks from the Payment Provider"
+      ],
+      "outputs": [
+        "Payment results to Order Management Service",
+        "Authorization, capture and refund calls to the Payment Provider",
+        "PaymentAuthorized, PaymentFailed and PaymentRefunded events to the Event Backbone",
+        "Metrics, logs and traces to the Observability and Monitoring Platform"
+      ],
+      "dependencies": [
+        "Payment Provider",
+        "Event Backbone",
+        "Observability and Monitoring Platform"
+      ],
+      "related_feature_ids": [
+        "FEAT-006",
+        "FEAT-007",
+        "FEAT-012"
+      ],
+      "related_adr_ids": [
+        "ADR-007",
+        "ADR-004",
+        "ADR-008"
+      ],
+      "technology_choices": [
+        "Django REST Framework reusing ecommerce/payment models",
+        "Private PostgreSQL database",
+        "Provider SDK matching the hosted checkout used by the React Storefront"
+      ],
+      "security_considerations": [
+        "No raw card data stored or logged anywhere in the platform",
+        "Webhook signature verification and replay protection",
+        "Provider credentials held in a secret manager, rotated regularly",
+        "Payment records access restricted to the owning customer and authorized administrators"
+      ],
+      "scalability_considerations": [
+        "Stateless instances; throughput bounded by provider rate limits",
+        "Redundant deployment since it is on the revenue path",
+        "Retries with backoff and dead-lettering for provider outages"
+      ]
+    },
+    {
+      "id": "COMP-011",
+      "name": "Review Service",
+      "component_type": "service",
+      "purpose": "Owns review capture, moderation workflow and rating aggregates.",
+      "description": "Extracted from the monolith's review app. It accepts one 1-5 rating plus optional text per purchased product per authenticated customer, verifies purchase eligibility from OrderDelivered events, supports administrator approve/reject/delete with timestamps, serves paginated approved reviews with author and date, and recomputes average rating and review count on approval, edit or removal, publishing ReviewApproved and ReviewRemoved events so product pages can show aggregates. Separated because it is 'should' priority and must be able to fail without blocking browsing, cart or checkout. Migration disposition: extracted in migration step 7.",
+      "inputs": [
+        "Review submission, listing and moderation requests from the API Gateway and Strangler Router",
+        "OrderDelivered events from the Event Backbone"
+      ],
+      "outputs": [
+        "Review lists and aggregate ratings",
+        "ReviewApproved and ReviewRemoved events to the Event Backbone",
+        "Metrics, logs and traces to the Observability and Monitoring Platform"
+      ],
+      "dependencies": [
+        "Event Backbone",
+        "Observability and Monitoring Platform"
+      ],
+      "related_feature_ids": [
+        "FEAT-010",
+        "FEAT-003",
+        "FEAT-012"
+      ],
+      "related_adr_ids": [
+        "ADR-003",
+        "ADR-004",
+        "ADR-008",
+        "ADR-002"
+      ],
+      "technology_choices": [
+        "Django REST Framework reusing ecommerce/review models",
+        "Private PostgreSQL database"
+      ],
+      "security_considerations": [
+        "Only authenticated purchasers may submit a review",
+        "Rejected reviews never publicly retrievable",
+        "Moderation actions recorded with actor and timestamp"
+      ],
+      "scalability_considerations": [
+        "Read-heavy; aggregates cached on the product page path",
+        "Failure isolated: product detail renders without the reviews section"
+      ]
+    },
+    {
+      "id": "COMP-012",
+      "name": "Notification Service",
+      "component_type": "service",
+      "purpose": "Sends customer notifications for order dispatch, delivery and confirmation, driven by events.",
+      "description": "New event-consuming service that turns OrderPlaced, OrderDispatched and OrderDelivered events into customer notifications, keeping notification delivery off the checkout request path so a notification provider outage cannot fail an order. Migration disposition: new component introduced in migration step 7, once order events exist on the Event Backbone; before that, any monolith notifications remain in the Legacy Django Monolith.",
+      "inputs": [
+        "OrderPlaced, OrderDispatched and OrderDelivered events from the Event Backbone"
+      ],
+      "outputs": [
+        "Dispatch and delivery notifications to the Customer",
+        "Metrics, logs and traces to the Observability and Monitoring Platform"
+      ],
+      "dependencies": [
+        "Event Backbone",
+        "Observability and Monitoring Platform"
+      ],
+      "related_feature_ids": [
+        "FEAT-009",
+        "FEAT-007",
+        "FEAT-012"
+      ],
+      "related_adr_ids": [
+        "ADR-004",
+        "ADR-009"
+      ],
+      "technology_choices": [
+        "Django-based event consumer",
+        "Third-party transactional email provider (to be selected)",
+        "Template store with per-channel rendering"
+      ],
+      "security_considerations": [
+        "Notifications contain no payment details",
+        "Recipient addresses obtained from event payloads, not by querying customer data directly",
+        "Opt-out and suppression list handling"
+      ],
+      "scalability_considerations": [
+        "Consumer group scaled by partition; retries and dead-letter queue on provider failure",
+        "Non-critical: lag does not affect the revenue path"
+      ]
+    },
+    {
+      "id": "COMP-013",
+      "name": "Event Backbone",
+      "component_type": "queue",
+      "purpose": "Durable asynchronous transport for domain events between services and the monolith.",
+      "description": "Publish/subscribe messaging platform carrying order, payment, stock, catalog, review and account events with durable, ordered per-key delivery, consumer groups, retries and dead-letter topics. It also allows the Legacy Django Monolith to participate during coexistence so partially migrated flows stay consistent. Migration disposition: new infrastructure provisioned in migration step 1.",
+      "inputs": [
+        "Events published by Order Management Service, Payment Service, Catalog and Search Service, Review Service, Identity and Account Service and the Legacy Django Monolith"
+      ],
+      "outputs": [
+        "Event delivery to Order Management Service, Catalog and Search Service, Review Service, Notification Service and the Legacy Django Monolith",
+        "Topic lag and delivery-failure metrics to the Observability and Monitoring Platform"
+      ],
+      "dependencies": [
+        "Observability and Monitoring Platform"
+      ],
+      "related_feature_ids": [
+        "FEAT-006",
+        "FEAT-007",
+        "FEAT-008",
+        "FEAT-009",
+        "FEAT-010",
+        "FEAT-012",
+        "FEAT-014"
+      ],
+      "related_adr_ids": [
+        "ADR-004",
+        "ADR-008"
+      ],
+      "technology_choices": [
+        "Apache Kafka or an equivalent managed streaming/messaging service",
+        "Versioned event schemas in a shared registry"
+      ],
+      "security_considerations": [
+        "Per-service authentication and topic-level authorization",
+        "Encryption in transit; event payloads carry identifiers rather than sensitive personal data where possible"
+      ],
+      "scalability_considerations": [
+        "Partitioned per aggregate key to preserve ordering while scaling consumers",
+        "Replicated brokers so a broker loss does not stop event flow",
+        "Consumer lag monitored as an early warning of peak overload"
+      ]
+    },
+    {
+      "id": "COMP-014",
+      "name": "Observability and Monitoring Platform",
+      "component_type": "platform",
+      "purpose": "Measures and reports latency, error rate, availability and traces so responsiveness objectives can be verified and alerted on.",
+      "description": "Central metrics, logging, tracing and alerting stack. It records latency percentiles (p50/p95/p99), throughput and error rate per customer-facing capability, exposes dashboards comparing them to the agreed targets, correlates requests end to end via a correlation identifier propagated by the API Gateway and Strangler Router, drives health-check-based instance replacement, and produces per-period reports evidencing whether responsiveness and availability targets were met. Numeric thresholds are configured once stakeholders agree them. Migration disposition: new component introduced in migration step 1, before any extraction, so cutovers can be judged against a baseline.",
+      "inputs": [
+        "Metrics, structured logs, traces and health-check results from every runtime component"
+      ],
+      "outputs": [
+        "Dashboards, alerts and periodic responsiveness/availability reports"
+      ],
+      "dependencies": [
+        "API Gateway and Strangler Router",
+        "Legacy Django Monolith",
+        "Identity and Account Service",
+        "Catalog and Search Service",
+        "Cart Service",
+        "Order Management Service",
+        "Payment Service",
+        "Review Service",
+        "Notification Service",
+        "Event Backbone",
+        "Product Search Index",
+        "Cart Data Store"
+      ],
+      "related_feature_ids": [
+        "FEAT-013",
+        "FEAT-011",
+        "FEAT-012",
+        "FEAT-014"
+      ],
+      "related_adr_ids": [
+        "ADR-009",
+        "ADR-001"
+      ],
+      "technology_choices": [
+        "OpenTelemetry instrumentation",
+        "Prometheus-compatible metrics with Grafana dashboards",
+        "Centralized log aggregation and distributed tracing backend"
+      ],
+      "security_considerations": [
+        "Logs scrubbed of credentials, tokens and personal data",
+        "Dashboard and alert access restricted to authorized operators",
+        "Retention policy aligned with data-protection expectations"
+      ],
+      "scalability_considerations": [
+        "Sampling for traces at peak load to bound ingestion cost",
+        "Retention tiering to control storage growth, relevant given no stated budget"
+      ]
+    },
+    {
+      "id": "COMP-015",
+      "name": "Payment Provider",
+      "component_type": "external system",
+      "purpose": "External hosted payment provider that captures card details and performs authorization, capture and refund.",
+      "description": "Third-party provider (assumed PayPal or equivalent, inferred from the frontend dependencies @paypal/paypal-js and react-paypal-button-v2) whose hosted flow captures payment credentials so the platform never handles card data. Migration disposition: external/already existing; only the integration point moves, from the Legacy Django Monolith and React Storefront to Payment Service in migration step 5.",
+      "inputs": [
+        "Authorization, capture and refund calls from Payment Service",
+        "Card details entered by the Customer in the provider-hosted flow"
+      ],
+      "outputs": [
+        "Payment results and webhook callbacks to Payment Service"
+      ],
+      "dependencies": [
+        "Payment Service"
+      ],
+      "related_feature_ids": [
+        "FEAT-006",
+        "FEAT-007"
+      ],
+      "related_adr_ids": [
+        "ADR-007"
+      ],
+      "technology_choices": [
+        "Existing hosted provider integration retained"
+      ],
+      "security_considerations": [
+        "Card data remains within the provider's scope",
+        "Webhook authenticity verified by signature"
+      ],
+      "scalability_considerations": [
+        "Provider rate limits and availability are outside platform control; failures must degrade to a clear, actionable checkout error"
+      ]
+    }
+  ],
+  "review": {
+    "rubric_version": "3.0",
+    "overall_status": "pass",
+    "rubric_scores": {
+      "all_artifacts_present": 2,
+      "constraint_coverage": 2,
+      "traceability": 2,
+      "adr_presence": 2,
+      "source_integrity": 2,
+      "repo_grounding": true,
+      "flaw_detection": true,
+      "adr_soundness": true,
+      "best_practice_grounding": true,
+      "refinement_readiness": true
+    },
+    "judgment_reasons": {
+      "repo_grounding": "The design repeatedly cites concrete repository facts: seven Django apps (user, core, address, product, review, order, payment), frontend/src/apis/*.js as the centralized API seam, ecommerce/order/serializers.py cross-app joins, the client-only Redux cart in frontend/src/store/cart, near-zero tests (all tests.py 2 LOC), @paypal/paypal-js and react-paypal-button-v2 dependencies, compose/django/local/Dockerfile as only local container setup, and ecommerce/media for product images. ADR-003 explicitly rejects a naive app-per-service mapping using observed app sizes and dependency edges.",
+      "flaw_detection": "The design targets the stated goal (peak-traffic scalability, maintainability, incremental no-downtime evolution) at its structural cause: a single Django process/database where read-heavy catalog/search, high-churn cart, and transactional checkout share capacity and a schema (evidenced by shared behaviours.py and cross-app serializer joins). Decomposition is boundary-justified rather than module-mirroring â€” address and core are folded into Identity rather than becoming tiny services, and orders/inventory/fulfilment are deliberately kept together to avoid distributed transactions on stock. Migration_steps are coherent: routing seam + observability + regression tests first, catalog/search (low risk, high peak relief) next, identity before dependent capabilities, cart, payment before order so checkout integrates a stable interface, order last, reviews/notifications, then monolith retirement. Each step states coexistence/data strategy (backfill + CDC, frozen tables, TTL drain for carts, routing-by-creation-date for in-flight orders) and reversibility, with no big-bang cutover.",
+      "adr_soundness": "ADRs carry real alternatives and honest negative consequences (gateway as critical path, Python concurrency cost, eventual consistency, CDC drift, two systems in flight). Technology changes from the detected stack are requirement-linked: ADR-002 explicitly retains Django/DRF and React and rejects rewriting in Go/Node as unjustified; the only new stores are the search index (ADR-005, justified by FEAT-004 typo tolerance/facets/peak read load that ORM LIKE queries cannot serve) and Redis cart store (ADR-006, justified by absence of any server-side cart plus FEAT-005 merge/persistence and write-churn isolation). Event backbone (ADR-004) is tied to the graceful-degradation criterion of FEAT-012, and per-service data ownership (ADR-008) is tied to the reversibility window of FEAT-014.",
+      "best_practice_grounding": "Source references point to actual repository files (ecommerce/product/views.py, ecommerce/order/serializers.py, ecommerce/payment/models.py) and to the three supplied research documents, whose content (event-oriented e-commerce processes, per-service scaling under promotional peaks, monolith scalability/maintenance limits) matches the claims made. Uncertainty is labelled rather than asserted: six explicit ASSUMPTION entries (DB engine, PayPal inference, orchestration platform, undefined numeric targets, gateway origin repointing, notification provider) and six open risks including CDC drift, missing regression suite, and operational cost of six services.",
+      "refinement_readiness": "All four preceding judgments pass; remaining items are already surfaced as explicit assumptions and open risks with named owners of the gap (e.g. numeric latency/availability targets to be agreed before load testing, reconciliation checks required before declaring a capability migrated)."
+    },
+    "issues": [],
+    "requires_refinement": false,
+    "refinement_instruction": "",
+    "not_applicable": []
+  },
+  "clarifying_questions": [],
+  "clarification_answers": {
+    "What are the core capabilities the system must provide?": "Customer registration and login; User account management; Product catalog and browsing; Product search; Shopping cart; Checkout and payment processing; Order management and tracking; Inventory management; Shipping and fulfilment; Product reviews.",
+    "What scale, availability, or performance targets does this need to meet?": "Handle substantially higher peak traffic without degradation, maintain high availability during peak periods, and keep customer-facing interactions responsive. No specific numeric SLA, latency, or throughput targets are defined."
+  },
+  "vetoed_assumptions": [],
+  "advisory_turns": [],
+  "user_feedback": [],
+  "accepted_at": "",
+  "waiver": null,
+  "retrieved_knowledge": [
+    {
+      "content": "Microservices architecture has emerged as a compelling alternative, offering the promise of enhanced scalability, improved fault tolerance, and greater development agility [1]. By decomposing monolithic applications into smaller, independently deployable services, organizations can achieve better resource utilization, faster deployment cycles, and improved system resilience.\n\nEvent-driven architecture (EDA) patterns have gained particular attention in the context of microservices migration, especially for e-commerce systems where business processes are inherently event-oriented. Customer actions such as placing orders, updating profiles, or processing payments naturally translate to domain events that can drive system behavior [5]. The asynchronous nature of event-driven communication provides better decoupling between services, enhanced fault tolerance, and improved scalability compared to synchronous request-response patterns [4].",
+      "source": "ecommerce_migration_event_driven_bulus.md",
+      "page": 0,
+      "box": 2,
+      "distance": 0.42249250411987305
+    },
+    {
+      "content": "ModernizingÂ to microservices\nMicroservices are essentially small, independent units that make up an application. Transitioning \nfrom traditional monolithic structures to microservices can follow various strategies.\nAre you Well-Architected? 2",
+      "source": "Rag Database\\microservices-on-aws.pdf",
+      "page": 5,
+      "box": 1,
+      "distance": 0.48098960518836975
+    },
+    {
+      "content": "## 2.2 Monolithic and Microservices Architectures Comparison *(printed p. 478)*\n\nIn the e-commerce landscape, choosing between microservices and traditional monolithic architectures requires careful consideration of various factors. Monolithic architectures, characterized by their single, tightly coupled codebase. However, when e-commerce systems increase in size, they frequently face scalability and maintenance issues. Microservices provide an alternative approach by decomposing monolithic applications into smaller, self-contained services [6]. This decomposition results in fine-grained services, each focusing on a specific business capability. Scalability is one of the most major advantages of microservices. E-commerce platforms often experience fluctuating traffic patterns, especially during promotions or seasonal events. Microservices enable organisations to scale individual services, ensuring that resources are deployed efficiently to manage workload properly.",
+      "source": "ecommerce_microservices_challenges_ibrahim_luong.md",
+      "page": 0,
+      "box": 2,
+      "distance": 0.4816793203353882
+    }
+  ],
+  "features": [
+    {
+      "id": "FEAT-001",
+      "name": "Customer Registration and Authentication",
+      "description": "Customers can create an account with email and password, verify their email, log in, log out, and reset a forgotten password. Sessions are issued as tokens usable across customer-facing services.",
+      "scenario": "A new visitor registers with a unique email and password, receives a verification email, activates the account, then logs in successfully and receives a valid session token; a second registration attempt with the same email is rejected.",
+      "related_requirement_ids": [
+        "FR-001",
+        "NFR-003"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "Registration with a unique, well-formed email and policy-compliant password creates an account in pending-verification state",
+        "Duplicate email registration returns a clear validation error and creates no account",
+        "Login with correct credentials returns an authenticated session/token; incorrect credentials are rejected without revealing which field failed",
+        "Password reset link is single-use and expires after a defined period",
+        "Login and registration requests complete within the agreed responsive latency budget under normal load"
+      ]
+    },
+    {
+      "id": "FEAT-002",
+      "name": "User Account and Profile Management",
+      "description": "Authenticated users can view and update profile details, manage multiple shipping and billing addresses, change password, and view their order history entry points. Administrators can view and manage customer accounts.",
+      "scenario": "A logged-in customer updates their display name, adds a second shipping address, sets it as default, and changes their password; the next checkout pre-selects the new default address.",
+      "related_requirement_ids": [
+        "FR-002",
+        "FR-001"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "Profile changes persist and are immediately reflected on reload",
+        "A customer can store multiple addresses and designate exactly one default shipping and one default billing address",
+        "Password change requires the current password and invalidates other active sessions",
+        "Unauthenticated or cross-account access to a profile returns an authorization error",
+        "Administrators can search for and view customer accounts and deactivate an account"
+      ]
+    },
+    {
+      "id": "FEAT-003",
+      "name": "Product Catalog and Browsing",
+      "description": "Customers can browse products by category, view paginated product listings, and open a product detail page showing description, images, price, variants, and availability. Administrators can create, update, publish, and unpublish catalog entries.",
+      "scenario": "A customer opens the 'Footwear' category, pages through results, sorts by price, and opens a product detail page showing the current price, images, variants, and in-stock status.",
+      "related_requirement_ids": [
+        "FR-003",
+        "NFR-003"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "Category listings return paginated results with stable ordering and support sorting by price and newest",
+        "Product detail page shows description, images, price, variants and current availability",
+        "Unpublished or deleted products are not reachable from customer-facing browsing and return a not-found response",
+        "Administrator catalog changes become visible to customers within the agreed propagation window",
+        "Catalog listing and detail responses meet the responsive latency budget at target peak load"
+      ]
+    },
+    {
+      "id": "FEAT-004",
+      "name": "Product Search and Filtering",
+      "description": "Customers can perform keyword search across product titles, descriptions and attributes, with filters (category, price range, availability, rating) and facet counts, tolerant of minor typos.",
+      "scenario": "A customer types 'runing shoes', receives relevant running-shoe results despite the typo, filters to price 50-100 and in-stock only, and the result count updates accordingly.",
+      "related_requirement_ids": [
+        "FR-004",
+        "FR-003",
+        "NFR-003"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "Keyword search returns relevance-ranked results including matches with minor spelling errors",
+        "Filters for category, price range, availability and rating can be combined and reflect accurate facet counts",
+        "Search returns an empty-state message with suggestions when there are no matches",
+        "Newly published or edited products appear in search results within the agreed indexing window",
+        "Search responses meet the responsive latency budget at target peak load"
+      ]
+    },
+    {
+      "id": "FEAT-005",
+      "name": "Shopping Cart",
+      "description": "Customers can add, update quantity of, and remove items in a cart. Guest carts persist by session and merge into the account cart on login. Cart totals reflect current prices and availability.",
+      "scenario": "A guest adds two items to the cart, logs in, and finds both items merged with the three items previously saved in their account cart, with a single correct subtotal.",
+      "related_requirement_ids": [
+        "FR-005",
+        "FR-003",
+        "NFR-003"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "Adding, updating and removing items recalculates line totals and subtotal correctly",
+        "Guest cart contents survive page reloads within the session lifetime",
+        "On login, guest cart items merge into the account cart without duplicating identical lines (quantities combined)",
+        "Cart flags items whose price changed or which became unavailable before checkout",
+        "Cart operations meet the responsive latency budget at target peak load"
+      ]
+    },
+    {
+      "id": "FEAT-006",
+      "name": "Checkout and Payment Processing",
+      "description": "Customers complete checkout by selecting shipping address and shipping method, reviewing totals including shipping and tax, and paying via a payment provider. Payment authorization, failure handling and idempotent order creation are included.",
+      "scenario": "A customer with three cart items proceeds to checkout, chooses a saved address and standard shipping, pays successfully, and is shown an order confirmation with an order number; a duplicate submit of the same checkout does not create a second order.",
+      "related_requirement_ids": [
+        "FR-006",
+        "FR-005",
+        "FR-008",
+        "NFR-003"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "Checkout validates stock availability for every line before authorizing payment",
+        "Order total equals item subtotal plus shipping plus tax minus discounts and is shown before payment",
+        "Successful payment authorization creates exactly one order and empties the cart",
+        "Failed or declined payment leaves the cart intact, creates no confirmed order, and shows an actionable error",
+        "Repeated submission of the same checkout request is idempotent and yields a single order",
+        "No raw payment card data is stored by the system"
+      ]
+    },
+    {
+      "id": "FEAT-007",
+      "name": "Order Management and Tracking",
+      "description": "Customers can view order history, order detail, current status and tracking information, and request cancellation while allowed. Administrators can list, filter, and update order status and issue refunds.",
+      "scenario": "A customer opens 'My Orders', selects a recent order, sees status 'Shipped' with a carrier tracking number; an administrator later marks it 'Delivered' and the customer view reflects the change.",
+      "related_requirement_ids": [
+        "FR-007",
+        "FR-006",
+        "FR-009"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "Order history lists a customer's own orders only, paginated and newest-first",
+        "Order detail shows line items, totals, payment status, shipping address and status history with timestamps",
+        "Status transitions follow a defined allowed state machine and invalid transitions are rejected",
+        "Customers can cancel an order only before fulfilment starts; cancellation triggers refund and stock release",
+        "Administrators can filter orders by status, date range and customer, and record refunds"
+      ]
+    },
+    {
+      "id": "FEAT-008",
+      "name": "Inventory Management",
+      "description": "Stock levels are tracked per product variant, reserved at checkout, decremented on fulfilment and released on cancellation or reservation expiry. Administrators can adjust stock and see low-stock alerts.",
+      "scenario": "Two customers concurrently check out the last unit of an item; one order is confirmed and the other receives an out-of-stock error, and the stock level ends at zero with no negative value.",
+      "related_requirement_ids": [
+        "FR-008",
+        "FR-003",
+        "FR-007"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "Stock is tracked per variant and never becomes negative under concurrent checkouts",
+        "Checkout creates a time-bounded reservation that is released automatically if the order is not completed",
+        "Cancellations and refunds release reserved or deducted stock back to available",
+        "Administrators can perform manual stock adjustments with an auditable reason and actor",
+        "Products at or below the configured low-stock threshold appear in an administrator low-stock report"
+      ]
+    },
+    {
+      "id": "FEAT-009",
+      "name": "Shipping and Fulfilment",
+      "description": "The system offers shipping options with cost and estimated delivery at checkout, generates fulfilment records and shipments, captures carrier tracking numbers, and notifies customers of dispatch and delivery.",
+      "scenario": "An administrator marks a paid order as dispatched, enters the carrier and tracking number; the customer receives a dispatch notification and the tracking number appears on the order detail page.",
+      "related_requirement_ids": [
+        "FR-009",
+        "FR-007",
+        "FR-006"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "Checkout presents at least one shipping method with a calculated cost and delivery estimate for the destination address",
+        "Marking an order dispatched records carrier, tracking number and dispatch timestamp",
+        "Customers receive dispatch and delivery notifications for their orders",
+        "Partial shipments are supported: each shipment records its own line items and tracking data",
+        "Shipping status updates are reflected in the customer order tracking view"
+      ]
+    },
+    {
+      "id": "FEAT-010",
+      "name": "Product Reviews and Ratings",
+      "description": "Customers can submit a star rating and written review for a product, view reviews with aggregate rating on the product page, and administrators can moderate (approve, reject, remove) reviews.",
+      "scenario": "A customer who purchased a product submits a 4-star review; after administrator approval it appears on the product page and the product's average rating and review count update.",
+      "related_requirement_ids": [
+        "FR-010",
+        "FR-003",
+        "FR-007"
+      ],
+      "priority": "should",
+      "acceptance_criteria": [
+        "An authenticated customer can submit exactly one rating (1-5) plus optional text per purchased product",
+        "Approved reviews are displayed on the product detail page with author name and date, paginated",
+        "Product average rating and review count recompute correctly when reviews are approved, edited or removed",
+        "Administrators can approve, reject or delete a review and rejected reviews are never publicly visible",
+        "Review submission and moderation actions are recorded with timestamps"
+      ]
+    },
+    {
+      "id": "FEAT-011",
+      "name": "Peak Traffic Scalability and Load Handling",
+      "description": "Customer-facing capabilities scale horizontally to handle substantially higher peak traffic than the current monolith, with graceful degradation and protection against overload.",
+      "scenario": "A load test drives traffic to the agreed peak-multiple target across browsing, search, cart and checkout; the system sustains the load with error rates and latency inside the agreed thresholds.",
+      "related_requirement_ids": [
+        "NFR-001",
+        "NFR-003",
+        "FR-003",
+        "FR-004",
+        "FR-005",
+        "FR-006"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "A documented load test reproduces the target peak throughput and is part of the release process",
+        "At target peak load the error rate stays below the agreed threshold and latency stays within the agreed budget",
+        "Capacity can be increased by adding instances without code changes or downtime",
+        "Overload protection (rate limiting/throttling/queueing) prevents cascading failure and returns clear responses",
+        "Read-heavy browsing and search traffic can be scaled independently of checkout traffic"
+      ]
+    },
+    {
+      "id": "FEAT-012",
+      "name": "High Availability and Zero-Downtime Evolution",
+      "description": "The platform remains available during peak periods and during deployments, with health checks, redundancy, failover, and incremental release of modernized capabilities without downtime.",
+      "scenario": "A new version of the catalog capability is released during business hours; monitored availability shows no failed customer requests attributable to the deployment, and a failed instance is automatically replaced.",
+      "related_requirement_ids": [
+        "NFR-002",
+        "NFR-001"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "Deployments are performed with a rolling or equivalent strategy producing no customer-visible downtime",
+        "An automated rollback path restores the previous version within the agreed recovery time",
+        "Every runtime component exposes health checks and unhealthy instances are automatically replaced or removed from traffic",
+        "Failure of a non-critical capability (e.g. reviews or search) degrades gracefully without blocking browsing, cart or checkout",
+        "Availability during defined peak periods is measured against the agreed target and reported"
+      ]
+    },
+    {
+      "id": "FEAT-013",
+      "name": "Responsiveness Monitoring and Observability",
+      "description": "The system measures and reports latency, error rates, and availability for customer-facing interactions, with alerting on threshold breaches, so responsiveness objectives can be verified continuously.",
+      "scenario": "Checkout p95 latency exceeds the agreed threshold for five consecutive minutes; an alert fires and a dashboard shows the affected capability and error rates.",
+      "related_requirement_ids": [
+        "NFR-003",
+        "NFR-002",
+        "NFR-001"
+      ],
+      "priority": "should",
+      "acceptance_criteria": [
+        "Latency percentiles (p50/p95/p99), throughput and error rate are recorded per customer-facing capability",
+        "Dashboards display current and historical values against the agreed targets",
+        "Alerts fire when latency, error-rate or availability thresholds are breached for a sustained window",
+        "Requests can be traced end to end across capabilities using a correlation identifier",
+        "Reports evidence whether responsiveness and availability targets were met per period"
+      ]
+    },
+    {
+      "id": "FEAT-014",
+      "name": "Incremental Migration from the Existing Monolith",
+      "description": "Existing Django monolith capabilities are migrated incrementally behind the current React frontend, with traffic routing per capability, data consistency during transition, and reversible cutovers.",
+      "scenario": "Product search traffic is routed from the monolith to the modernized search capability for 10% of users, validated, then ramped to 100%; a defect triggers an instant switch back to the monolith with no data loss.",
+      "related_requirement_ids": [
+        "NFR-002",
+        "FR-003",
+        "FR-004",
+        "FR-001",
+        "FR-002"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "Traffic for a migrated capability can be routed to the old or new implementation without redeploying the frontend",
+        "Cutover of a capability can be reversed within the agreed time window with no loss of customer data",
+        "The React frontend continues to work unchanged during and after each capability migration",
+        "Data written during a transition period remains consistent between old and new implementations",
+        "Each migration step is validated by automated regression tests covering the affected functional requirements"
+      ]
+    }
+  ],
+  "repo_deep_dives": [],
+  "run_id": "20260823T192225Z-5e6ac35c",
+  "stage": "done",
+  "pending_decision": null,
+  "user_rounds": 0,
+  "require_context_approval": true,
+  "optional_context_resolved_version": 1,
+  "history": [
+    {
+      "agent": "repo_ingestor",
+      "stage_in": "created",
+      "stage_out": "ingesting",
+      "note": "ingested https://github.com/harsh020/ecommerce-monolith@23f7ab8: 49 import edge(s), 4 partition(s)",
+      "timestamp": "2026-08-23T19:22:28.812229+00:00",
+      "model": "gemini-3.1-flash-lite",
+      "input_tokens": 8512,
+      "output_tokens": 450,
+      "cost_usd": 0.002803
+    },
+    {
+      "agent": "clarifier",
+      "stage_in": "ingesting",
+      "stage_out": "awaiting_input",
+      "note": "missing 2 critical fact(s); asked 2",
+      "timestamp": "2026-08-23T19:22:30.703823+00:00",
+      "model": "gemini-3.1-flash-lite",
+      "input_tokens": 1199,
+      "output_tokens": 315,
+      "cost_usd": 0.00077225
+    },
+    {
+      "agent": "clarifier",
+      "stage_in": "awaiting_input",
+      "stage_out": "awaiting_input",
+      "note": "context locked; 3 optional question(s) pending before approval",
+      "timestamp": "2026-08-23T19:23:10.900402+00:00",
+      "model": "gemini-3.1-flash-lite",
+      "input_tokens": 1322,
+      "output_tokens": 456,
+      "cost_usd": 0.0010145
+    },
+    {
+      "agent": "researcher",
+      "stage_in": "clarifying",
+      "stage_out": "researching",
+      "note": "retrieved 3 chunk(s) via kb",
+      "timestamp": "2026-08-23T19:26:19.211680+00:00",
+      "model": "",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "agent": "architect",
+      "stage_in": "researching",
+      "stage_out": "designing",
+      "note": "derived 14 feature(s); generated blueprint, 9 ADR(s), and 15 component(s); removed 4 unresolvable ADR source reference(s): frontend/src/store/cart/cartReducers.js; frontend/src/screens/CartScreen.js; frontend/src/screens/PlaceOrderScreen.js; compose/django/local/Dockerfile",
+      "timestamp": "2026-08-23T19:32:35.185658+00:00",
+      "model": "claude-opus-5",
+      "input_tokens": 31159,
+      "output_tokens": 33011,
+      "cost_usd": 0.98107
+    },
+    {
+      "agent": "reviewer",
+      "stage_in": "designing",
+      "stage_out": "done",
+      "note": "pass; 0 issue(s)",
+      "timestamp": "2026-08-23T19:32:55.724869+00:00",
+      "model": "claude-opus-5",
+      "input_tokens": 49746,
+      "output_tokens": 1329,
+      "cost_usd": 0.281955
+    }
+  ],
+  "retry_counts": {},
+  "refine_iterations": 0,
+  "ask_rounds": 1,
+  "stopped_on_cap": false,
+  "best_design": null,
+  "selected_round": 0,
+  "input_tokens": 91938,
+  "output_tokens": 35561,
+  "errors": []
+}

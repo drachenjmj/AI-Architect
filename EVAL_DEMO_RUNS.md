@@ -12,56 +12,95 @@ Blueprint, ADRs, Component Descriptions, Reviewer report, RAG evidence, run
 trace, and token/cost accounting — **without spending API quota or
 re-running the pipeline**.
 
-**They are NOT the quantitative evaluation sample.** Formal evaluation
-(the Gemini/Claude comparison, refinement metrics, the agreed 2×2 design)
-must use pre-specified fresh runs generated for that purpose, not these
-bundled convenience artifacts. Nothing here is scored or editorialized —
-each run is shown exactly as the pipeline produced it.
+> These bundled runs are curated qualitative examples. They are not the final quantitative 2×2 evaluation sample because they were not all generated on the identical final code version.
 
-## Bundled full-pipeline runs
+Nothing bundled is scored or editorialized — each run is shown exactly as
+the pipeline produced it, under the code version that existed when it ran.
+Historical runs are NOT "upgraded" to current-schema behavior: their
+artifacts stay byte-faithful to what the model actually produced at the
+time (only machine-local clone paths are sanitized for portability — see
+`demo_runs.sanitize_checkpoint`).
 
-| Run ID | Model / provider | Repository | Scenario | Final verdict | Refinement count | Purpose |
-|---|---|---|---|---|---|---|
-| `20260824T141045Z-e1cdb3ee` | Google / `gemini-3.1-flash-lite` | `harsh020/ecommerce-monolith` | Modernize an e-commerce monolith: scalability/maintainability under peak traffic, incremental evolution without disrupting the running business. | PASS | 1 | Gemini side of the Gemini/Claude side-by-side inspection demo. |
+## Final clean Gemini demo
 
-Code freshness: this run started at `2026-08-24T14:10:45Z`, after every
-material-grounding / numeric-target hardening commit on
-`experiment/claude-opus5` (`60966c3`, `6211ed7`, `afe6162`, `033e2e4` —
-all landed before `2026-08-24T14:03:10Z`). The pipeline does not stamp a
-run with the exact source commit it ran under, so this is inferred from
-timestamp ordering rather than read directly off the artifact — stated
-here so the inference is auditable rather than assumed silently.
+- `20260824T141045Z-e1cdb3ee`
+- Google / `gemini-3.1-flash-lite`
+- `harsh020/ecommerce-monolith`
+- PASS, 1 refinement round
+- generated AFTER the final material-grounding / invented-numeric-target /
+  DecisionTopic-ADR-evidence hardening (started `2026-08-24T14:10:45Z`,
+- after `60966c3`, `6211ed7`, `afe6162`, `033e2e4` — inferred from
+  timestamp ordering, since the pipeline does not stamp the source commit
+  into a run)
+- suitable as the current final Gemini qualitative example
 
-### PENDING — final Claude run
+## Historical Claude demo runs
 
-**No fresh Claude full-pipeline run exists yet and none is bundled.**
+All three are real successful Opus runs, kept for qualitative inspection of
+strong-model behavior. All were generated BEFORE the final
+material-grounding / numeric-target safeguards landed, so their artifacts
+may exhibit behavior the current code would constrain — that is exactly why
+they are labeled historical and must not be read as final-code output.
 
-The most recent locally available Claude run
-(`20260824T084650Z-4447a662`, PASS, 2 refinements) predates the
-material-grounding hardening (`afe6162` @ `13:41:26Z`, `033e2e4` @
-`14:03:10Z` — the run started at `08:46:50Z`, hours earlier) **and** used a
-different repository (`ttulka/ddd-example-ecommerce`, not the canonical
-`harsh020/ecommerce-monolith` scenario the Gemini run above uses). Per
-this task's own instruction, a stale or off-scenario run must not be
-substituted for the missing final one.
+### `20260823T171738Z-935663e4`
+- Anthropic / `claude-opus-5` (Architect + Reviewer; Clarifier/ingestor on
+  Gemini flash-lite per the A/B routing)
+- `harsh020/ecommerce-monolith`
+- successful: DONE, PASS, 0 refinement rounds
+- generated before final material-grounding/numeric-target safeguards
+- retained because it is a useful strong-model qualitative example
 
-**To fill this slot:** run the pipeline once, live, against
-`harsh020/ecommerce-monolith` with the same prompt as the Gemini run
-above, routed to the strongest chosen Claude/Opus configuration, on the
-current `experiment/claude-opus5` HEAD or later. Once it reaches `DONE`
-with a passing verdict, sanitize it with `demo_runs.sanitize_checkpoint`
-(inspect the result for anything the sanitizer doesn't already cover — see
-its docstring), commit the sanitized checkpoint under
-`demo_runs/<run_id>/`, add its id to `demo_runs.BUNDLED_RUN_IDS`, and add
-its row to the table above.
+### `20260823T192225Z-5e6ac35c`
+- Anthropic / `claude-opus-5`
+- `harsh020/ecommerce-monolith`
+- successful robustness run: DONE, PASS, 0 refinement rounds
+- same historical caveat
+
+### `20260824T084650Z-4447a662`
+- Anthropic / `claude-opus-5`
+- `ttulka/ddd-example-ecommerce` — the HOLDOUT repository, not the
+  canonical monolith scenario
+- successful: DONE, PASS, 2 refinement rounds (full refine-loop trace with
+  best-design selection preserved in the bundled history)
+- demonstrates behavior on a different modular-monolith/DDD repository
+- same historical caveat where applicable
+
+## Bundled-run summary table
+
+| Run ID | Provider/model | Repository | Verdict | Refinements | Classification |
+|---|---|---|---|---|---|
+| `20260824T141045Z-e1cdb3ee` | Google / `gemini-3.1-flash-lite` | `harsh020/ecommerce-monolith` | PASS | 1 | Final clean Gemini demo |
+| `20260823T171738Z-935663e4` | Anthropic / `claude-opus-5` | `harsh020/ecommerce-monolith` | PASS | 0 | Historical Claude monolith |
+| `20260823T192225Z-5e6ac35c` | Anthropic / `claude-opus-5` | `harsh020/ecommerce-monolith` | PASS | 0 | Historical Claude robustness |
+| `20260824T084650Z-4447a662` | Anthropic / `claude-opus-5` | `ttulka/ddd-example-ecommerce` | PASS | 2 | Historical Claude holdout |
+
+### Deliberately NOT bundled
+
+- `20260824T130359Z-b1ba2568` (Gemini) — pre-final-hardening run with the
+  unsupported-numeric-target issue; historically useful, not a final demo.
+- `20260823T155114Z-d1bc5c19` (Gemini) — pre-final-safeguards system
+  behavior; same reason.
+
+Both remain untouched in the local cache; they are simply not curated into
+`demo_runs/`.
+
+## PENDING — formal evaluation runs
+
+Kept strictly separate from the curated demos above:
+
+- **Fresh final Claude full-pipeline run** (current code, canonical
+  scenario): **PENDING** — the historical Claude runs above must not be
+  substituted for it.
+- **Gemini one-shot baseline**: **PENDING** — see
+  `eval/one_shots/MANIFEST.md`.
+- **Claude one-shot baseline**: **PENDING** — same.
 
 ## One-shot baselines
 
 Separate from pipeline runs entirely — see `eval/one_shots/MANIFEST.md`.
-Both the Gemini and Claude one-shot baselines are **PENDING**; none exist
-yet, so none are bundled or fabricated. They are not pipeline runs and
-must never appear in History / Switch run / Resume — see that file's own
-note on why.
+Both one-shot baselines are **PENDING**; none exist yet, so none are
+bundled or fabricated. They are not pipeline runs and must never appear in
+History / Switch run / Resume — see that file's own note on why.
 
 ## How seeding works, briefly
 
@@ -71,11 +110,12 @@ into `persistence.runs_dir()` **only if that run id is not already
 there** — so it costs nothing on the second and subsequent starts, and it
 never overwrites a run you produced yourself (including, in the
 astronomically unlikely case, one that happened to land on the same run
-id). From that point on, the bundled run is an ordinary entry in
-`.cache/runs/` and every existing code path (`persistence.list_runs`,
-`persistence.load_state`, `run_history.py`, the sidebar run switcher, the
-resume picker) already knows how to show it — nothing about History,
-Switch run, or Resume needed to change.
+id). Seeding is disabled under the `AI_ARCHITECT_RUNS_DIR` test override,
+exactly as designed. From that point on, the bundled run is an ordinary
+entry in `.cache/runs/` and every existing code path
+(`persistence.list_runs`, `persistence.load_state`, `run_history.py`, the
+sidebar run switcher, the resume picker) already knows how to show it —
+nothing about History, Switch run, or Resume needed to change.
 
 Opening a bundled run only reads it (`load_state`/`load_history_run`);
 nothing in the normal browsing flow writes a new checkpoint, so it stays
