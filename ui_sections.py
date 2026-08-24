@@ -77,7 +77,7 @@ from pipeline.refine_gate import (
     MAX_REFINE_ITERATIONS,
     MAX_USER_ROUNDS,
 )
-from pipeline.flow_syntax import split_directional_flow
+from pipeline.flow_syntax import classify_flow, split_directional_flow
 from pipeline.sign_off import (
     feedback_is_closed,
     open_findings,
@@ -2381,18 +2381,107 @@ def architecture_flow_dot(
     return "\n".join(lines)
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# Integration note (Kush): Overview graph + Detailed flow filters.
+#
+# A real holdout run's diagram carried ~15 components and ~44 data flows —
+# every edge was real information, but one undifferentiated graph that size
+# is not something a reader can take in. Overview answers "what are the
+# major boundaries" in seconds; Detailed keeps every flow reachable, with a
+# filter so a reader can ask one question (events? data? observability?) at
+# a time. Nothing is deleted: `All` is exactly `parse_data_flows`'s full
+# output, unchanged — see `test_all_filter_preserves_every_detailed_flow`.
+# ══════════════════════════════════════════════════════════════════════════
+
+FLOW_FILTERS: tuple[str, ...] = ("All", "Business", "Events", "Data", "Observability")
+
+
+def build_overview_edges(
+    components: Sequence[ComponentDescription],
+) -> list[tuple[str, str]]:
+    """The Overview's structural edges: one per declared component
+    dependency, deduplicated. Pure.
+
+    Component Descriptions are the DECLARED relationships in the schema —
+    `component.dependencies` names what that component depends on, which is
+    a coarser, more deliberate signal than re-deriving structure from
+    dozens of granular data-flow labels. A dependency naming something
+    outside `components` (a queue, a database, an external system) is kept
+    as an edge to an external node — `architecture_flow_dot` already draws
+    any non-component endpoint as external, so nothing extra is needed here.
+    Self-edges are dropped as noise, not information.
+    """
+    seen: set[tuple[str, str]] = set()
+    edges: list[tuple[str, str]] = []
+    for component in components:
+        source = component.name.strip()
+        if not source:
+            continue
+        for dependency in component.dependencies:
+            target = dependency.strip()
+            if not target or target == source:
+                continue
+            pair = (source, target)
+            if pair in seen:
+                continue
+            seen.add(pair)
+            edges.append(pair)
+    return edges
+
+
+def build_overview_edges_from_flows(
+    edges: list[tuple[str, str, str]],
+) -> list[tuple[str, str]]:
+    """Fallback Overview edges when no component declares a dependency:
+    the same detailed edges, collapsed to unique (source, target) pairs
+    regardless of label. Pure. Still strictly a dedup of real data — never
+    an invented relationship.
+    """
+    seen: set[tuple[str, str]] = set()
+    collapsed: list[tuple[str, str]] = []
+    for source, target, _label in edges:
+        pair = (source, target)
+        if pair in seen:
+            continue
+        seen.add(pair)
+        collapsed.append(pair)
+    return collapsed
+
+
+def filter_edges_by_category(
+    edges: list[tuple[str, str, str]], category: str
+) -> list[tuple[str, str, str]]:
+    """The Detailed-view subset for one filter. Pure.
+
+    `category` is one of `FLOW_FILTERS`; "All" returns `edges` unchanged —
+    the exact set `parse_data_flows` produced, nothing added or removed.
+    """
+    if category == "All":
+        return edges
+    wanted = category.lower()
+    return [edge for edge in edges if classify_flow(*edge) == wanted]
+
+
 def render_target_architecture(state: ArchitectState) -> None:
     """B. The structural result, DIRECTLY visible — as a diagram.
 
-    The Blueprint's data flows ARE the target topology; this draws them as a
-    top-to-bottom flow chart (built deterministically by
-    `architecture_flow_dot` from nothing but the saved flows and component
-    names — no LLM, no new inference, no new schema). The diagram is the
-    primary visual result, so its accordion opens EXPANDED; collapsing it
-    only hides pixels — no data or state moves. Flows that carry no arrow
-    cannot be drawn safely and stay as visible text under the diagram
-    rather than disappearing; the verbatim list and the technical view stay
-    one click away, collapsed.
+    Two views, chosen with a radio (Overview is the default so a reader
+    lands on the calm picture first):
+
+    * Overview — declared components as nodes, deduplicated dependency
+      edges (`build_overview_edges`, falling back to collapsed data-flow
+      pairs when no dependency is declared). No labels; the point is
+      boundaries, not detail.
+    * Detailed — the full `parse_data_flows` edge set, exactly as before,
+      with an additional display-only filter (`FLOW_FILTERS`) that never
+      removes a flow from the underlying data — switching back to "All"
+      always shows everything again.
+
+    Built deterministically from nothing but the saved flows, dependencies,
+    and component names — no LLM, no new inference, no new schema. Flows
+    that carry no arrow cannot be drawn safely and stay as visible text
+    below the diagram, in EITHER view, unaffected by the filter — a filter
+    narrows what is DRAWN, never what is RECORDED.
     """
     blueprint = state.blueprint
     if blueprint is None:
@@ -2404,12 +2493,45 @@ def render_target_architecture(state: ArchitectState) -> None:
 
     st.markdown("#### Target architecture")
     edges, unparsed = parse_data_flows(blueprint.data_flows)
-    if edges:
-        with st.expander("Architecture diagram", expanded=True):
-            st.graphviz_chart(
-                architecture_flow_dot(edges, [c.name for c in state.components]),
-                use_container_width=True,
+    component_names = [c.name for c in state.components]
+
+    view = st.radio(
+        "Diagram view",
+        ("Overview", "Detailed"),
+        horizontal=True,
+        key=f"diagram_view_{state.run_id}",
+    )
+
+    if view == "Overview":
+        overview_edges = build_overview_edges(state.components)
+        if not overview_edges:
+            overview_edges = build_overview_edges_from_flows(edges)
+        st.caption(f"Overview: {len(overview_edges)} relationship(s) · All: {len(edges)} flow(s)")
+        if overview_edges:
+            dot = architecture_flow_dot(
+                [(source, target, "") for source, target in overview_edges],
+                component_names,
             )
+            with st.expander("Architecture overview", expanded=True):
+                st.graphviz_chart(dot, use_container_width=True)
+        else:
+            st.caption("No component relationships are recorded for this design yet.")
+    else:
+        selected = st.radio(
+            "Flow filter", FLOW_FILTERS, horizontal=True,
+            key=f"flow_filter_{state.run_id}",
+        )
+        shown = filter_edges_by_category(edges, selected)
+        st.caption(f"{selected}: {len(shown)} of {len(edges)} flow(s)")
+        if shown:
+            with st.expander("Architecture diagram", expanded=True):
+                st.graphviz_chart(
+                    architecture_flow_dot(shown, component_names),
+                    use_container_width=True,
+                )
+        else:
+            st.caption(f"No '{selected}' flows are recorded for this design.")
+
     if unparsed:
         _bullets("Also recorded, without a direction to draw", unparsed)
     if blueprint.data_flows:

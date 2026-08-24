@@ -22,7 +22,7 @@ Status values: `Keep` · `Simplified` · `Experiment layer` · `No action`
 | `pipeline/run.py` | CLI driver | `resolve_optional_gate`, context workflow commands | same | Keep |
 | `pipeline/refine_gate.py` | caps, best-so-far, user rounds | `MAX_REFINE_ITERATIONS` 2→3 | Claude A/B evaluation headroom | Experiment layer |
 | `pipeline/llm.py` | single-door Gemini wrapper | Anthropic adapter: routing seam, structured output, streaming, prompted-JSON fallback, failure diagnostics, Claude pricing | Claude/Gemini A/B comparison | Experiment layer |
-| `ui.py`, `ui_sections.py` | UI surface | run switcher, new-run reset, context-record versioning, optional-context UI, shared flow renderer, architecture overview sections | state-isolation bugs found in E2E; new read-only surfaces | Keep |
+| `ui.py`, `ui_sections.py` | UI surface | run switcher, new-run reset, context-record versioning, optional-context UI, shared flow renderer, architecture overview sections; Architecture-diagram Overview/Detailed view split with a Business/Events/Data/Observability flow filter (`build_overview_edges`, `filter_edges_by_category`) | state-isolation bugs found in E2E; new read-only surfaces; a ~15-component/~44-flow holdout diagram was real information but visually unreadable as one undifferentiated graph | Keep |
 | `ui_workspace.py`, `run_history.py`, `architecture_chat.py` (new) | — | run history, read-only architecture chat with grounding, workspace layout | product features added during integration | Keep |
 
 ## Maheen — Architect / Schemas
@@ -38,7 +38,7 @@ Status values: `Keep` · `Simplified` · `Experiment layer` · `No action`
 |---|---|---|---|---|
 | `pipeline/review_checks.py` | two-layer deterministic checks | new invariants: target-service ownership, flow participants/directionality, migration disposition/targets, technology drift, requirement-feature coverage; actionable constraint failures; shared `resolve_source_reference`; decision-level KB literature-grounding gate (`qualifying_kb_evidence_ids`, `_check_kb_evidence_grounding`, `kb_evidence_grounding` rubric score) | cross-artifact violations observed in E2E; judge and renderer must share one grammar; an ADR must not be able to claim literature support that was never actually retrieved this run | Keep |
 | `pipeline/agents/reviewer.py` | LLM verdict layer | brownfield verdict adjustments; `model=None` + role override hook; wired `kb_evidence_grounding` into `RubricScores` | verdict consistency; A/B routing; literature-grounding verdict | Keep |
-| `pipeline/flow_syntax.py` (new) | — | single directional-flow grammar shared by renderer + Reviewer | deduplicated the two drifting parsers | Keep |
+| `pipeline/flow_syntax.py` (new) | — | single directional-flow grammar shared by renderer + Reviewer; `classify_flow` — one centralized, display-only Business/Events/Data/Observability classifier reused by the diagram's Detailed-view filter | deduplicated the two drifting parsers; the diagram filter must classify the exact same edges the renderer draws, never a second grammar | Keep |
 | `eval/scenarios.py` | eval scenarios | scenario sync with the new invariants | keep each scenario's labeled flaw valid | Keep |
 | `docs/prompt_quality/06_reviewer_report_schema.json` | frozen report schema | added `kb_evidence_grounding` to `rubric_scores` | schema must track the new rubric field | Keep |
 

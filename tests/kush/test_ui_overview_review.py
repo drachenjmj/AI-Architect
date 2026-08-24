@@ -127,12 +127,14 @@ def test_overview_target_architecture_sits_at_the_bottom_expanded():
     at = _finished_app()
 
     assert "Target architecture" in _md(at)
-    # The diagram is the primary visual result: its accordion exists and is
-    # EXPANDED the moment Overview opens.
-    diagram = _expander(at, "Architecture diagram")
+    # Integration note (Kush): the diagram view defaults to "Overview" (the
+    # calm, deduplicated graph); its accordion exists and is EXPANDED the
+    # moment the page opens — see `render_target_architecture`.
+    diagram = _expander(at, "Architecture overview")
     assert diagram.proto.expanded is True
     # The Blueprint's own data flows — the target topology — remain on the
-    # page verbatim (inside the accessible secondary expander).
+    # page verbatim (inside the accessible secondary expander), in EITHER
+    # diagram view.
     assert "Checkout Service → SQS: order placement message (EU region)" in _md(at)
     # Both detail accordions stay collapsed by default.
     assert _expander(at, "All data flows").proto.expanded is False
