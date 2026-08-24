@@ -91,6 +91,7 @@ from pipeline.state import (
     ContextEdits,
     ContextRecord,
     Feature,
+    KBChunk,
     NOT_APPLICABLE_REASONS,
     Stage,
     StepLog,
@@ -1991,12 +1992,19 @@ def render_adrs(state: ArchitectState) -> None:
         )
         return
 
+    # Integration note (Kush): evidence lookup for `_render_adr`'s "Literature
+    # evidence" block, built once here rather than per-ADR.
+    evidence_by_id = {
+        chunk.evidence_id: chunk
+        for chunk in state.retrieved_knowledge
+        if chunk.evidence_id
+    }
     with st.expander(f"📑  Architecture Decision Records — {len(adrs)}"):
         for adr in adrs:
-            _render_adr(adr)
+            _render_adr(adr, evidence_by_id)
 
 
-def _render_adr(adr: ADR) -> None:
+def _render_adr(adr: ADR, evidence_by_id: dict[str, KBChunk] | None = None) -> None:
     status_color = BCG_GREEN if adr.status == "accepted" else GREY
     st.markdown(
         f"{_tag(adr.id, BCG_DARK)} &nbsp; **{html.escape(adr.title)}** &nbsp; "
@@ -2011,8 +2019,31 @@ def _render_adr(adr: ADR) -> None:
     _bullets("Negative consequences", adr.negative_consequences)
     _chips("Related features", adr.related_feature_ids)
     _chips("Related components", adr.related_component_names)
+    _render_literature_evidence(adr, evidence_by_id or {})
     _bullets("Sources", adr.source_references)
     st.divider()
+
+
+def _render_literature_evidence(adr: ADR, evidence_by_id: dict[str, KBChunk]) -> None:
+    """Compact, honest evidence trail: only curated-KB items this ADR cites
+    by exact evidence_id — never raw chunk text, never a web-fallback item
+    mislabelled as curated literature. Silent when the ADR cites nothing.
+    """
+    ids = [value.strip() for value in adr.evidence_ids if value.strip()]
+    if not ids:
+        return
+    st.markdown("**Literature evidence**")
+    for evidence_id in ids:
+        chunk = evidence_by_id.get(evidence_id)
+        if chunk is None:
+            # Should not happen post-sanitization, but never invent a
+            # location for an ID this render pass cannot resolve.
+            st.markdown(f"- `{html.escape(evidence_id)}`")
+            continue
+        location = f"p. {chunk.page}" if chunk.page else ""
+        detail = " — ".join(part for part in (chunk.source, location) if part)
+        with st.expander(f"{evidence_id} — {detail}" if detail else evidence_id):
+            st.markdown(html.escape(chunk.content))
 
 
 def render_components(state: ArchitectState) -> None:

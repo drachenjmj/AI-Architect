@@ -448,6 +448,8 @@ def _assemble_report(
         traceability=checks.score_traceability,
         adr_presence=checks.score_adr_presence,
         source_integrity=checks.score_source_integrity,
+        # Integration note (Kush): decision-level literature grounding.
+        kb_evidence_grounding=checks.score_kb_evidence_grounding,
         repo_grounding=(
             True
             if "repo_grounding" in not_applicable

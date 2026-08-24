@@ -29,17 +29,18 @@ Status values: `Keep` · `Simplified` · `Experiment layer` · `No action`
 
 | File / Area | Original contribution | Kush integration change | Why | Status |
 |---|---|---|---|---|
-| `pipeline/agents/architect.py` | two-phase structured Architect | output-boundary canonicalization (`sanitize_adr_sources`, `canonicalize_data_flow_endpoints`), requirement-catalog prompt + coverage validation, brownfield/migration prompt discipline, detected-stack block, component identity rule | fabricated sources, phantom flow endpoints, dropped requirements, SLO invention observed in E2E runs | Keep (manifest Simplified) |
-| `pipeline/state.py` schema section | Feature/Blueprint/ADR/Component | `MigrationStep` schema | migration-sequence contract for the checks below | Keep |
+| `pipeline/agents/architect.py` | two-phase structured Architect | output-boundary canonicalization (`sanitize_adr_sources`, `canonicalize_data_flow_endpoints`), requirement-catalog prompt + coverage validation, brownfield/migration prompt discipline, detected-stack block, component identity rule; `<decision_evidence>` prompt block + `sanitize_adr_evidence_ids` boundary + DECISION EVIDENCE GROUNDING prompt rule | fabricated sources, phantom flow endpoints, dropped requirements, SLO invention observed in E2E runs; ADRs need to be traceable to literature actually retrieved this run, not just the model's own training knowledge | Keep (manifest Simplified) |
+| `pipeline/state.py` schema section | Feature/Blueprint/ADR/Component | `MigrationStep` schema; `ADR.evidence_ids`, `KBChunk.evidence_id`, `DecisionTopic` model, `ArchitectState.decision_topics` | migration-sequence contract for the checks below; stable per-run evidence identity for decision-level literature grounding | Keep |
 
 ## Waqar — Reviewer / Evaluation
 
 | File / Area | Original contribution | Kush integration change | Why | Status |
 |---|---|---|---|---|
-| `pipeline/review_checks.py` | two-layer deterministic checks | new invariants: target-service ownership, flow participants/directionality, migration disposition/targets, technology drift, requirement-feature coverage; actionable constraint failures; shared `resolve_source_reference` | cross-artifact violations observed in E2E; judge and renderer must share one grammar | Keep |
-| `pipeline/agents/reviewer.py` | LLM verdict layer | brownfield verdict adjustments; `model=None` + role override hook | verdict consistency; A/B routing | Keep |
+| `pipeline/review_checks.py` | two-layer deterministic checks | new invariants: target-service ownership, flow participants/directionality, migration disposition/targets, technology drift, requirement-feature coverage; actionable constraint failures; shared `resolve_source_reference`; decision-level KB literature-grounding gate (`qualifying_kb_evidence_ids`, `_check_kb_evidence_grounding`, `kb_evidence_grounding` rubric score) | cross-artifact violations observed in E2E; judge and renderer must share one grammar; an ADR must not be able to claim literature support that was never actually retrieved this run | Keep |
+| `pipeline/agents/reviewer.py` | LLM verdict layer | brownfield verdict adjustments; `model=None` + role override hook; wired `kb_evidence_grounding` into `RubricScores` | verdict consistency; A/B routing; literature-grounding verdict | Keep |
 | `pipeline/flow_syntax.py` (new) | — | single directional-flow grammar shared by renderer + Reviewer | deduplicated the two drifting parsers | Keep |
 | `eval/scenarios.py` | eval scenarios | scenario sync with the new invariants | keep each scenario's labeled flaw valid | Keep |
+| `docs/prompt_quality/06_reviewer_report_schema.json` | frozen report schema | added `kb_evidence_grounding` to `rubric_scores` | schema must track the new rubric field | Keep |
 
 ## Malte — Repo Tooling
 
@@ -53,5 +54,6 @@ Status values: `Keep` · `Simplified` · `Experiment layer` · `No action`
 |---|---|---|---|---|
 | `Rag Database/`, `chroma_db/`, `chunk_schema.json` | curated KB + indexed corpus | final curation, index versioning, gap report | KB quality for retrieval | Keep |
 | `kb_gap_report.py`, `pdf_to_md.py`, `probe_retrieval.py`, `rag_logger.py` | KB maintenance tooling | hardening + tests | reproducible KB upkeep | Keep |
-| `pipeline/agents/researcher.py` | RAG retrieval agent | retrieval validation | grounding guarantees | Keep |
+| `pipeline/agents/researcher.py` | RAG retrieval agent | replaced one global Top-3 query with bounded, case-derived decision-topic planning (`plan_decision_topics`, 4–8 topics) and per-topic retrieval (still Top-3 per topic, same threshold/logging/web-fallback path via the existing `retrieve_chunks`), cross-topic dedup, a deterministic total cap (`MAX_TOTAL_EVIDENCE = 15`), and stable per-run evidence IDs assigned only to curated-KB chunks | a strong model can write plausible ADRs from three chunks and its own training knowledge; the project claim requires every ADR to be traceable to literature THIS run actually retrieved from OUR curated KB, and the existing per-topic gap machinery (RagLogger → `kb_gap_report.py`) already surfaces coverage gaps with no changes needed once retrieval is topic-scoped | Keep |
+| `ui_sections.py` (ADR rendering) | full ADR/component detail views | `_render_literature_evidence`: compact, expandable "Literature evidence" block per ADR, resolving `evidence_ids` to source/page — never raw chunk text by default, never a web-fallback item shown as curated literature | evidence traceability needs to be visible to a human, not just enforced in the pipeline | Keep |
 | root `architect.py`, `app.py`, notebooks | week-1 single-agent prototype | — | still documented in README/SETUP as reference | No action |

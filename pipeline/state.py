@@ -156,6 +156,34 @@ class KBChunk(BaseModel):
     page: int = 0
     box: int = 1          # 1=patterns, 2=domain, 3=web fallback
     distance: float | None = None   # Chroma distance, lower = better; None for web results
+    # Integration note (Kush): stable per-run identifier ("KB-E001", ...),
+    # assigned deterministically by the researcher AFTER retrieval/dedup —
+    # see pipeline/agents/researcher.py. Assigned ONLY to curated-KB chunks
+    # (box != 3); a web-fallback chunk (box == 3) keeps this empty, which is
+    # what stops it from ever satisfying the deterministic ADR literature
+    # gate in review_checks.py (a fabricated/absent ID can never resolve).
+    # Default "" so every existing fixture/checkpoint built before this field
+    # existed loads unchanged.
+    evidence_id: str = ""
+
+
+class DecisionTopic(BaseModel):
+    """One bounded decision/topic query the researcher planned this run, and
+    which KB evidence it actually surfaced. Integration note (Kush): this is
+    the per-run record of decision-level retrieval — see
+    pipeline/agents/researcher.py `plan_decision_topics`. `evidence_ids` lists
+    only QUALIFYING (curated-KB) evidence; an empty list is an explicit
+    evidence gap for that topic, not a hidden one — never backfilled with web
+    results.
+    """
+
+    id: str = Field(..., description="Stable per-run topic identifier, e.g. TOPIC-1.")
+    topic: str = Field(..., description="The decision topic/question, case-derived.")
+    query: str = Field("", description="The retrieval query actually issued for this topic.")
+    evidence_ids: list[str] = Field(
+        default_factory=list,
+        description="Qualifying (curated-KB) KBChunk.evidence_id values surfaced for this topic.",
+    )
 
 
 class ContextRecord(BaseModel):
@@ -433,6 +461,17 @@ class ADR(BaseModel):
         default_factory=list,
         description="Knowledge-base or repository sources supporting the decision.",
     )
+    # Integration note (Kush): EXACT stable evidence identity, distinct from
+    # `source_references` (fuzzy source-title text, may be repo OR KB
+    # provenance). `evidence_ids` names ONLY curated-KB evidence this run
+    # actually retrieved (see KBChunk.evidence_id / ArchitectState.decision_topics)
+    # and is what the deterministic literature-grounding gate in
+    # review_checks.py validates. Default empty so existing ADRs/fixtures
+    # built before this field existed load unchanged.
+    evidence_ids: list[str] = Field(
+        default_factory=list,
+        description="Stable KB-Exxx evidence identifiers actually retrieved this run that support this decision.",
+    )
 
 
 class ComponentDescription(BaseModel):
@@ -499,6 +538,10 @@ REVIEW_CODE_SCORE_FIELDS = (
     "traceability",
     "adr_presence",
     "source_integrity",
+    # Integration note (Kush): decision-level literature grounding — does
+    # every ADR cite retrieved-this-run curated-KB evidence? See
+    # review_checks._check_kb_evidence_grounding.
+    "kb_evidence_grounding",
 )
 REVIEW_JUDGMENT_FIELDS = (
     "repo_grounding",
@@ -528,6 +571,11 @@ class RubricScores(BaseModel):
     # Defaults to full only for checkpoints written before this check existed.
     # The production Reviewer always overwrites it with the current run's check.
     source_integrity: int = Field(2, ge=0, le=2)
+    # Same backward-compat default as source_integrity, and same reason: a
+    # checkpoint written before this check existed carries no opinion about
+    # it. The production Reviewer always overwrites it with the current run's
+    # check (see review_checks._check_kb_evidence_grounding).
+    kb_evidence_grounding: int = Field(2, ge=0, le=2)
     repo_grounding: bool = False
     flaw_detection: bool = False
     adr_soundness: bool = False
@@ -1088,6 +1136,11 @@ class ArchitectState(BaseModel):
     accepted_at: str = ""
     waiver: Optional[Waiver] = None
     retrieved_knowledge: list[KBChunk] = Field(default_factory=list)
+    # Integration note (Kush): this run's bounded decision-topic retrieval
+    # plan and what each topic actually surfaced — see
+    # pipeline/agents/researcher.py `plan_decision_topics`. A plain
+    # (LastValue) field: the researcher is the only writer, once per run.
+    decision_topics: list[DecisionTopic] = Field(default_factory=list)
     features: list[Feature] = Field(default_factory=list)
     # Drill-down cache (Malte): the Architect appends one DeepDive whenever it
     # takes a deeper look at part of the repo, so an insight is derived at most

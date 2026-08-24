@@ -86,6 +86,18 @@ class DeterministicChecks(BaseModel):
     repository_available: bool = False
     invalid_source_references: dict[str, list[str]] = Field(default_factory=dict)
 
+    # Integration note (Kush): decision-level literature grounding (see
+    # `_check_kb_evidence_grounding`). ADR ids with no `evidence_ids` at all,
+    # despite qualifying evidence existing this run to cite.
+    adrs_without_kb_evidence: list[str] = Field(default_factory=list)
+    # ADR id -> evidence_ids that do not resolve to any curated-KB chunk
+    # actually retrieved this run (fabricated, or a stripped/expired ID).
+    invalid_evidence_ids: dict[str, list[str]] = Field(default_factory=dict)
+    # True when NO curated-KB evidence was retrieved for any decision topic
+    # this run — an honest evidence gap, not a design defect; see
+    # `_check_kb_evidence_grounding` for why this does not block the verdict.
+    kb_evidence_gap: bool = False
+
     # Target-architecture service references (name -> referencing locations)
     # that resolve to no Component Description and carry no explicit legacy,
     # external, or ownership disposition anywhere in the design.
@@ -134,6 +146,7 @@ class DeterministicChecks(BaseModel):
     score_traceability: int = Field(0, ge=0, le=2)
     score_adr_presence: int = Field(0, ge=0, le=2)
     score_source_integrity: int = Field(0, ge=0, le=2)
+    score_kb_evidence_grounding: int = Field(0, ge=0, le=2)
 
     issues: list[ReviewIssue] = Field(default_factory=list)
 
@@ -1109,6 +1122,105 @@ def _check_source_integrity(
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# Rubric item: decision-level KB literature grounding (Integration, Kush)
+#
+# The project claim is that every ADR is traceable to literature actually
+# retrieved from OUR curated knowledge base for THIS run — not to a model's
+# own training knowledge, and not to the web-search fallback. `ADR.evidence_ids`
+# is the exact, non-fuzzy channel for that claim (see its docstring in
+# state.py); this check is the deterministic gate that validates it.
+#
+# `qualifying_kb_evidence_ids` is the ONE resolution rule, shared exactly
+# like `resolve_source_reference` above: the Architect's output-boundary
+# sanitizer (`sanitize_adr_evidence_ids` in agents/architect.py) and this
+# Reviewer check both call it, so "what counts as real evidence" cannot
+# drift between the writer and the judge.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def qualifying_kb_evidence_ids(state: ArchitectState) -> set[str]:
+    """Evidence IDs an ADR may legitimately cite this run. Pure.
+
+    Only curated-KB chunks qualify — `KBChunk.evidence_id` is assigned by the
+    researcher exclusively to non-web (`box != 3`) chunks (see
+    pipeline/agents/researcher.py), so filtering on a non-empty ID here is
+    already sufficient to exclude the web fallback; the check is repeated
+    explicitly so this function's contract does not silently depend on that
+    upstream invariant holding.
+    """
+    return {
+        chunk.evidence_id
+        for chunk in state.retrieved_knowledge
+        if chunk.evidence_id and chunk.box != 3
+    }
+
+
+def _check_kb_evidence_grounding(
+    state: ArchitectState,
+) -> tuple[list[str], dict[str, list[str]], bool, int]:
+    """Decision-level literature-grounding check. Pure.
+
+    Returns (adrs_without_evidence, invalid_evidence_ids, kb_evidence_gap,
+    score).
+
+    SCORING, deliberately asymmetric to "no evidence exists" vs. "evidence
+    existed and was not cited":
+
+    * No qualifying KB evidence was retrieved for ANY topic this run
+      (`kb_evidence_gap=True`) → score 2. There is nothing for an ADR to
+      cite; faulting the design for a KB coverage gap it did not create
+      would fail every run over the SAME KB gap forever, since neither the
+      Architect nor a refine pass can manufacture evidence that was never
+      retrieved. The gap itself is still reported — see `kb_evidence_gap`
+      and the informational issue in `run_deterministic_checks` — so it is
+      visible, never silently accepted as "grounded".
+    * Qualifying evidence exists and EVERY ADR cites at least one valid ID →
+      score 2.
+    * Qualifying evidence exists and SOME ADRs cite it (and no fabricated
+      IDs remain) → score 1.
+    * Qualifying evidence exists and NO ADR cites any of it, OR any ADR
+      cites a fabricated/unresolvable ID → score 0.
+    """
+    qualifying = qualifying_kb_evidence_ids(state)
+    kb_evidence_gap = not qualifying
+
+    if not state.adrs:
+        # Handled as a completeness failure elsewhere; nothing to score here.
+        return [], {}, kb_evidence_gap, 2 if kb_evidence_gap else 0
+
+    invalid: dict[str, list[str]] = {}
+    without_evidence: list[str] = []
+    for adr in state.adrs:
+        cited = {value.strip() for value in adr.evidence_ids if value.strip()}
+        bad = sorted(cited - qualifying)
+        if bad:
+            # A cited ID that does not resolve is fabrication — reported and
+            # scored as a failure regardless of whether qualifying evidence
+            # exists at all; an empty gap is never an excuse to invent an ID.
+            invalid[adr.id or adr.title] = bad
+        if not cited:
+            without_evidence.append(adr.id or adr.title)
+
+    if invalid:
+        return without_evidence, invalid, kb_evidence_gap, 0
+
+    if kb_evidence_gap:
+        # No fabrication, and nothing genuine existed to cite either — an
+        # honest KB coverage gap, not a design defect. See the scoring note
+        # in the docstring above.
+        return [], {}, True, 2
+
+    if len(without_evidence) == len(state.adrs):
+        score = 0
+    elif without_evidence:
+        score = 1
+    else:
+        score = 2
+
+    return without_evidence, invalid, False, score
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # Rubric item 2: constraints
 # ─────────────────────────────────────────────────────────────────────────
 
@@ -1875,6 +1987,12 @@ def run_deterministic_checks(
     # carrying a blocking traceability finding.
     traceability["requirements_without_feature"] = requirements_without_feature
     invalid_sources, score_source_integrity = _check_source_integrity(state)
+    (
+        adrs_without_kb_evidence,
+        invalid_evidence_ids,
+        kb_evidence_gap,
+        score_kb_evidence_grounding,
+    ) = _check_kb_evidence_grounding(state)
     repository_expected = bool(state.initial_request.repo_url.strip())
     repository_available = state.repo_representation is not None
 
@@ -2357,6 +2475,45 @@ def run_deterministic_checks(
             "Use only source names present in retrieved KB chunks or repository evidence.",
         )
 
+    if invalid_evidence_ids:
+        add_issue(
+            "high",
+            "evidence",
+            "One or more ADRs cite a KB evidence ID that was not actually "
+            "retrieved from the curated knowledge base this run.",
+            str(invalid_evidence_ids),
+            "Cite only evidence_ids that appear in <decision_evidence>; "
+            "remove any ID that does not, or drop the claim of literature "
+            "support entirely.",
+        )
+    elif adrs_without_kb_evidence and not kb_evidence_gap:
+        # Only raised when qualifying evidence genuinely existed to cite —
+        # see `_check_kb_evidence_grounding`. A total KB coverage gap is
+        # reported below instead, as an explicit non-blocking gap.
+        add_issue(
+            "high",
+            "evidence",
+            (
+                "ADR(s) claim no traceable curated-KB literature support: "
+                f"{', '.join(adrs_without_kb_evidence)}."
+            ),
+            f"adrs_without_kb_evidence={adrs_without_kb_evidence}",
+            (
+                "Cite at least one retrieved evidence_id (from "
+                "<decision_evidence>) per ADR, or state plainly in its "
+                "rationale that the decision rests on requirement/context "
+                "reasoning rather than literature."
+            ),
+        )
+
+    # `kb_evidence_gap` is deliberately NOT turned into a ReviewIssue: it is
+    # visible on `DeterministicChecks.kb_evidence_gap` (surfaced in the
+    # researcher's own trace note and, when relevant, in the UI) without
+    # inflating `issues` — a state with zero curated-KB evidence configured
+    # is the DEFAULT for every fixture/state built before this feature, and
+    # is not itself a design defect worth an issue entry (see
+    # `_check_kb_evidence_grounding`'s scoring note: it scores 2, not < 2).
+
     return DeterministicChecks(
         artifacts_present=present,
         missing_fields=missing,
@@ -2377,6 +2534,9 @@ def run_deterministic_checks(
         repository_expected=repository_expected,
         repository_available=repository_available,
         invalid_source_references=invalid_sources,
+        adrs_without_kb_evidence=adrs_without_kb_evidence,
+        invalid_evidence_ids=invalid_evidence_ids,
+        kb_evidence_gap=kb_evidence_gap,
         unowned_target_services=unowned_target_services,
         unjustified_language_drift=unjustified_language_drift,
         unresolved_flow_participants=unresolved_flow_participants,
@@ -2392,5 +2552,6 @@ def run_deterministic_checks(
         score_traceability=score_traceability,
         score_adr_presence=score_adr,
         score_source_integrity=score_source_integrity,
+        score_kb_evidence_grounding=score_kb_evidence_grounding,
         issues=issues,
     )

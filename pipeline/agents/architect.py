@@ -203,6 +203,24 @@ SOURCE PROVENANCE (strict):
 - Invalid source references are removed deterministically after you return;
   a removed reference never becomes evidence.
 
+DECISION EVIDENCE GROUNDING (strict):
+- <decision_evidence> groups the KB evidence actually retrieved this run by
+  the decision topic it was retrieved for. Use REPOSITORY/CONTEXT facts for
+  case-specific reasoning; use <decision_evidence> for external architectural
+  principles.
+- Every ADR's `evidence_ids` must list ONLY evidence IDs ("KB-Exxx") copied
+  EXACTLY from <decision_evidence> that genuinely support that specific
+  decision — never every ID, never a decorative one. An ADR may cite zero,
+  one, or several.
+- NEVER invent an evidence ID. If no supplied evidence in <decision_evidence>
+  actually supports an ADR, leave its `evidence_ids` EMPTY and say so in the
+  ADR's rationale (e.g. that the decision rests on requirements/context
+  reasoning) rather than dressing unsupported reasoning up as cited
+  literature. A topic marked with no evidence in <decision_evidence> is a
+  known KB gap, not something to fabricate around.
+- Fabricated or unresolvable evidence IDs are removed deterministically
+  after you return; a removed ID never becomes evidence.
+
 QUANTITATIVE TARGETS (strict):
 - Do not invent numeric SLOs, throughput figures, latency budgets (e.g.
   "500ms", "sub-second"), availability percentages, or absolute guarantees
@@ -457,6 +475,51 @@ def _normalize_and_validate_requirement_coverage(
     return normalized
 
 
+def _decision_evidence_block(state: ArchitectState) -> str:
+    """`<decision_evidence>`: retrieved KB evidence grouped by decision
+    topic — the decision-level replacement for a flat, undifferentiated
+    dump of `retrieved_knowledge`. Pure.
+
+    Grouped by `state.decision_topics` (see pipeline/agents/researcher.py)
+    when present. Falls back to listing `retrieved_knowledge` ungrouped —
+    never silently empty — for states built without topic planning (older
+    checkpoints, or a caller/test that populates `retrieved_knowledge`
+    directly). Web-fallback chunks (`evidence_id == ""`) are shown with no
+    ID and are never eligible for `evidence_ids`, which the system prompt
+    states explicitly; they are still shown so the Architect can use them
+    for context the way any other supporting text is used.
+    """
+    chunks_by_id = {
+        chunk.evidence_id: chunk
+        for chunk in state.retrieved_knowledge
+        if chunk.evidence_id
+    }
+
+    def render_chunk(chunk) -> str:
+        label = chunk.evidence_id or "(web, not citable)"
+        return (
+            f"- {label} | source={chunk.source} | page={chunk.page} "
+            f"| distance={chunk.distance}\n  \"{chunk.content}\""
+        )
+
+    if not state.decision_topics:
+        if not state.retrieved_knowledge:
+            return "<decision_evidence>\n(none retrieved)\n</decision_evidence>"
+        lines = "\n".join(render_chunk(chunk) for chunk in state.retrieved_knowledge)
+        return f"<decision_evidence>\nTopic: (ungrouped)\n{lines}\n</decision_evidence>"
+
+    sections: list[str] = []
+    for topic in state.decision_topics:
+        topic_lines = [
+            render_chunk(chunks_by_id[evidence_id])
+            for evidence_id in topic.evidence_ids
+            if evidence_id in chunks_by_id
+        ]
+        body = "\n".join(topic_lines) if topic_lines else "(no qualifying KB evidence retrieved for this topic)"
+        sections.append(f"Topic: {topic.topic}\n{body}")
+    return "<decision_evidence>\n" + "\n\n".join(sections) + "\n</decision_evidence>"
+
+
 def _build_architecture_prompt(
     state: ArchitectState,
     features: list[Feature],
@@ -473,16 +536,7 @@ def _build_architecture_prompt(
         else "null"
     )
 
-    knowledge_json = (
-        "[\n"
-        + ",\n".join(
-            chunk.model_dump_json(indent=2)
-            for chunk in state.retrieved_knowledge
-        )
-        + "\n]"
-        if state.retrieved_knowledge
-        else "[]"
-    )
+    decision_evidence = _decision_evidence_block(state)
 
     features_json = (
         "[\n"
@@ -530,9 +584,7 @@ def _build_architecture_prompt(
 {repository_json}
 </repository_representation>
 {detected_stack}
-<retrieved_knowledge>
-{knowledge_json}
-</retrieved_knowledge>
+{decision_evidence}
 
 <derived_features>
 {features_json}
@@ -727,6 +779,52 @@ def sanitize_adr_sources(
     return sanitized, removed
 
 
+def sanitize_adr_evidence_ids(
+    adrs: list[ADR], state: ArchitectState
+) -> tuple[list[ADR], list[str]]:
+    """Drop ADR `evidence_ids` that do not resolve to KB evidence this run
+    actually retrieved. Pure with respect to `state`; ADRs are copied, never
+    mutated.
+
+    THE OUTPUT BOUNDARY OF DECISION-LEVEL PROVENANCE — the same contract
+    `sanitize_adr_sources` gives `source_references`, for the exact-ID
+    channel instead of the fuzzy-source-name one. Resolution uses
+    `review_checks.qualifying_kb_evidence_ids`, the SAME set the
+    deterministic Reviewer check validates against, so a fabricated or
+    stripped ID can never (re-)enter the artifacts on any pass — initial or
+    refine.
+
+    Also deduplicates, preserving first-seen order: the spec asks that
+    duplicate evidence references be normalized rather than silently
+    inflating an ADR's apparent evidence count.
+    """
+    from pipeline.review_checks import qualifying_kb_evidence_ids
+
+    qualifying = qualifying_kb_evidence_ids(state)
+
+    sanitized: list[ADR] = []
+    removed: list[str] = []
+    for adr in adrs:
+        kept: list[str] = []
+        seen: set[str] = set()
+        for reference in adr.evidence_ids:
+            value = reference.strip()
+            if not value:
+                continue
+            if value not in qualifying:
+                removed.append(value)
+                continue
+            if value in seen:
+                continue
+            seen.add(value)
+            kept.append(value)
+        sanitized.append(
+            adr if kept == adr.evidence_ids
+            else adr.model_copy(update={"evidence_ids": kept})
+        )
+    return sanitized, removed
+
+
 def canonicalize_data_flow_endpoints(
     flows: list[str], component_names: list[str]
 ) -> tuple[list[str], int]:
@@ -916,6 +1014,14 @@ def architect_node(state: ArchitectState) -> dict:
             design_result.adrs, state
         )
 
+        # DECISION-EVIDENCE PROVENANCE AT THE BOUNDARY: same discipline as
+        # sanitize_adr_sources above, for the exact evidence_id channel — see
+        # `sanitize_adr_evidence_ids`. Runs on every pass so a fabricated or
+        # stale ID can never enter the artifacts.
+        design_result.adrs, dropped_evidence_ids = sanitize_adr_evidence_ids(
+            design_result.adrs, state
+        )
+
         # DIAGRAM FIDELITY AT THE BOUNDARY: resolve decorated flow endpoints
         # ("Order Service (New order flow)") back to exact Blueprint
         # component names, so the deterministic diagram draws one node per
@@ -953,6 +1059,12 @@ def architect_node(state: ArchitectState) -> dict:
                 f"; removed {len(dropped_sources)} unresolvable ADR "
                 f"source reference(s): " + "; ".join(dropped_sources[:4])
                 + ("; …" if len(dropped_sources) > 4 else "")
+            )
+        if dropped_evidence_ids:
+            note += (
+                f"; removed {len(dropped_evidence_ids)} unresolvable ADR "
+                f"evidence ID(s): " + "; ".join(dropped_evidence_ids[:4])
+                + ("; …" if len(dropped_evidence_ids) > 4 else "")
             )
         if resolved_endpoints:
             note += f"; canonicalized {resolved_endpoints} data-flow endpoint(s)"
