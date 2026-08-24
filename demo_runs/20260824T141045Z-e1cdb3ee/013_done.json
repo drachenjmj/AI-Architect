@@ -1,0 +1,1729 @@
+{
+  "initial_request": {
+    "raw_prompt": "We want to modernize an existing e-commerce monolith. The current system has scalability and maintainability problems, especially during peak traffic, and we want an architecture that can evolve incrementally without disrupting the running business.",
+    "repo_url": "https://github.com/harsh020/ecommerce-monolith"
+  },
+  "repo_representation": {
+    "meta": {
+      "url": "https://github.com/harsh020/ecommerce-monolith",
+      "commit_sha": "23f7ab8b4e7b671587bec68e1a15977e355b57f2",
+      "clone_path": ".cache/repos/ecommerce-monolith-cbbdd00c55",
+      "ingested_at": "2026-08-24T14:10:48.863286+00:00"
+    },
+    "structure": {
+      "file_tree": "ecommerce-monolith-cbbdd00c55/\n\u251c\u2500\u2500 .envs/\n\u2502   \u2514\u2500\u2500 .local\n\u251c\u2500\u2500 compose/\n\u2502   \u2514\u2500\u2500 django/\n\u2502       \u2514\u2500\u2500 local/\n\u2502           \u2514\u2500\u2500 Dockerfile\n\u251c\u2500\u2500 config/\n\u2502   \u251c\u2500\u2500 settings/\n\u2502   \u2502   \u251c\u2500\u2500 __init__.py  (0 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 base.py  (183 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 local.py  (5 LOC)\n\u2502   \u2502   \u2514\u2500\u2500 production.py  (0 LOC)\n\u2502   \u251c\u2500\u2500 __init__.py  (0 LOC)\n\u2502   \u251c\u2500\u2500 asgi.py  (10 LOC)\n\u2502   \u251c\u2500\u2500 urls.py  (28 LOC)\n\u2502   \u2514\u2500\u2500 wsgi.py  (10 LOC)\n\u251c\u2500\u2500 ecommerce/\n\u2502   \u251c\u2500\u2500 address/\n\u2502   \u2502   \u251c\u2500\u2500 migrations/\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0001_initial.py  (33 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0002_auto_20220406_1930.py  (17 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0003_auto_20220420_1734.py  (27 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0004_shippingaddress_pincode.py  (13 LOC)\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 __init__.py  (0 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 __init__.py  (0 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 admin.py  (5 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 apps.py  (3 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 models.py  (17 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 serializers.py  (15 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 tests.py  (2 LOC)\n\u2502   \u2502   \u2514\u2500\u2500 views.py  (2 LOC)\n\u2502   \u251c\u2500\u2500 core/\n\u2502   \u2502   \u251c\u2500\u2500 migrations/\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0001_initial.py  (32 LOC)\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 __init__.py  (0 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 __init__.py  (0 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 admin.py  (12 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 apps.py  (3 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 behaviours.py  (28 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 models.py  (16 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 serializers.py  (16 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 tests.py  (2 LOC)\n\u2502   \u2502   \u2514\u2500\u2500 views.py  (2 LOC)\n\u2502   \u251c\u2500\u2500 media/\n\u2502   \u2502   \u251c\u2500\u2500 5842f616a6515b1e0ad75b21.png\n\u2502   \u2502   \u251c\u2500\u2500 5842f616a6515b1e0ad75b21_05cNisq.png\n\u2502   \u2502   \u251c\u2500\u2500 airpods.jpg\n\u2502   \u2502   \u251c\u2500\u2500 alexa.jpg\n\u2502   \u2502   \u251c\u2500\u2500 camera.jpg\n\u2502   \u2502   \u251c\u2500\u2500 mouse.jpg\n\u2502   \u2502   \u251c\u2500\u2500 mouse_6K7XIFF.jpg\n\u2502   \u2502   \u251c\u2500\u2500 mouse_xCm1i4H.jpg\n\u2502   \u2502   \u251c\u2500\u2500 phone.jpg\n\u2502   \u2502   \u251c\u2500\u2500 phone_h5XnVFk.jpg\n\u2502   \u2502   \u251c\u2500\u2500 placeholder.png\n\u2502   \u2502   \u2514\u2500\u2500 playstation.jpg\n\u2502   \u251c\u2500\u2500 order/\n\u2502   \u2502   \u251c\u2500\u2500 migrations/\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0001_initial.py  (34 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0002_auto_20220424_1928.py  (13 LOC)\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 __init__.py  (0 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 __init__.py  (0 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 admin.py  (5 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 apps.py  (3 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 models.py  (28 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 serializers.py  (60 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 tests.py  (2 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 urls.py  (9 LOC)\n\u2502   \u2502   \u2514\u2500\u2500 views.py  (55 LOC)\n\u2502   \u251c\u2500\u2500 payment/\n\u2502   \u2502   \u251c\u2500\u2500 migrations/\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0001_initial.py  (29 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0002_auto_20220419_1942.py  (15 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0003_auto_20220420_2139.py  (15 LOC)\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 __init__.py  (0 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 __init__.py  (0 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 admin.py  (5 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 apps.py  (3 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 models.py  (19 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 serializers.py  (6 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 tests.py  (2 LOC)\n\u2502   \u2502   \u2514\u2500\u2500 views.py  (2 LOC)\n\u2502   \u251c\u2500\u2500 product/\n\u2502   \u2502   \u251c\u2500\u2500 migrations/\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0001_initial.py  (33 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0002_auto_20220406_1742.py  (19 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0003_auto_20220406_1742.py  (15 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0004_auto_20220406_1749.py  (13 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0005_auto_20220406_1753.py  (30 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0006_productitem.py  (31 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0007_product_image.py  (13 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0008_auto_20220419_1918.py  (23 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0009_auto_20220420_2139.py  (18 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0010_auto_20220420_2151.py  (20 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0011_auto_20220424_1928.py  (19 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0012_auto_20220424_2058.py  (18 LOC)\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 __init__.py  (0 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 __init__.py  (0 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 admin.py  (8 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 apps.py  (3 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 models.py  (31 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 serializers.py  (55 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 tests.py  (2 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 urls.py  (12 LOC)\n\u2502   \u2502   \u2514\u2500\u2500 views.py  (91 LOC)\n\u2502   \u251c\u2500\u2500 review/\n\u2502   \u2502   \u251c\u2500\u2500 migrations/\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0001_initial.py  (31 LOC)\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 __init__.py  (0 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 __init__.py  (0 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 admin.py  (5 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 apps.py  (3 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 models.py  (21 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 serializers.py  (14 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 tests.py  (2 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 urls.py  (6 LOC)\n\u2502   \u2502   \u2514\u2500\u2500 views.py  (31 LOC)\n\u2502   \u251c\u2500\u2500 user/\n\u2502   \u2502   \u251c\u2500\u2500 migrations/\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0001_initial.py  (59 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0002_auto_20220405_2037.py  (19 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0003_auto_20220405_2040.py  (15 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 0004_user_name.py  (13 LOC)\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 __init__.py  (0 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 __init__.py  (0 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 admin.py  (17 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 apps.py  (5 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 forms.py  (21 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 models.py  (15 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 serializers.py  (71 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 signals.py  (11 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 tests.py  (2 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 urls.py  (11 LOC)\n\u2502   \u2502   \u2514\u2500\u2500 views.py  (78 LOC)\n\u2502   \u2514\u2500\u2500 __init__.py  (0 LOC)\n\u251c\u2500\u2500 frontend/\n\u2502   \u251c\u2500\u2500 public/\n\u2502   \u2502   \u251c\u2500\u2500 images/\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 404-error.png\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 airpods.jpg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 alexa.jpg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 camera.jpg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 login.png\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 mouse.jpg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 order.png\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 payment.png\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 phone.jpg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 playstation.jpg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 sample.jpg\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 shipping.png\n\u2502   \u2502   \u251c\u2500\u2500 favicon.ico\n\u2502   \u2502   \u251c\u2500\u2500 index.html  (41 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 logo192.png\n\u2502   \u2502   \u251c\u2500\u2500 logo512.png\n\u2502   \u2502   \u251c\u2500\u2500 manifest.json\n\u2502   \u2502   \u2514\u2500\u2500 robots.txt\n\u2502   \u251c\u2500\u2500 src/\n\u2502   \u2502   \u251c\u2500\u2500 apis/\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 orderApis.js  (54 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 productApis.js  (60 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 reviewApis.js  (19 LOC)\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 userApis.js  (64 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 components/\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 cart/\n\u2502   \u2502   \u2502   \u2502   \u251c\u2500\u2500 Cart.js  (9 LOC)\n\u2502   \u2502   \u2502   \u2502   \u2514\u2500\u2500 CheckoutSteps.js  (46 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 layout/\n\u2502   \u2502   \u2502   \u2502   \u251c\u2500\u2500 style/\n\u2502   \u2502   \u2502   \u2502   \u2502   \u2514\u2500\u2500 Container.module.css  (3 LOC)\n\u2502   \u2502   \u2502   \u2502   \u251c\u2500\u2500 Content.js  (13 LOC)\n\u2502   \u2502   \u2502   \u2502   \u251c\u2500\u2500 Footer.js  (16 LOC)\n\u2502   \u2502   \u2502   \u2502   \u251c\u2500\u2500 Header.js  (67 LOC)\n\u2502   \u2502   \u2502   \u2502   \u2514\u2500\u2500 Layout.js  (9 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 product/\n\u2502   \u2502   \u2502   \u2502   \u251c\u2500\u2500 style/\n\u2502   \u2502   \u2502   \u2502   \u2502   \u2514\u2500\u2500 ProductCarousel.modeule.css  (28 LOC)\n\u2502   \u2502   \u2502   \u2502   \u251c\u2500\u2500 Product.js  (27 LOC)\n\u2502   \u2502   \u2502   \u2502   \u2514\u2500\u2500 ProductCarousel.js  (42 LOC)\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 ui/\n\u2502   \u2502   \u2502       \u251c\u2500\u2500 style/\n\u2502   \u2502   \u2502       \u2502   \u251c\u2500\u2500 Loader.module.css  (6 LOC)\n\u2502   \u2502   \u2502       \u2502   \u251c\u2500\u2500 NotFound.module.css  (11 LOC)\n\u2502   \u2502   \u2502       \u2502   \u2514\u2500\u2500 Rating.module.css  (3 LOC)\n\u2502   \u2502   \u2502       \u251c\u2500\u2500 FormContainer.js  (14 LOC)\n\u2502   \u2502   \u2502       \u251c\u2500\u2500 LinkButton.js  (14 LOC)\n\u2502   \u2502   \u2502       \u251c\u2500\u2500 Loader.js  (15 LOC)\n\u2502   \u2502   \u2502       \u251c\u2500\u2500 Message.js  (10 LOC)\n\u2502   \u2502   \u2502       \u251c\u2500\u2500 NotFound.js  (28 LOC)\n\u2502   \u2502   \u2502       \u251c\u2500\u2500 Paginate.js  (21 LOC)\n\u2502   \u2502   \u2502       \u251c\u2500\u2500 Rating.js  (27 LOC)\n\u2502   \u2502   \u2502       \u2514\u2500\u2500 SearchBox.js  (38 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 screens/\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 style/\n\u2502   \u2502   \u2502   \u2502   \u251c\u2500\u2500 CartScreen.module.css  (6 LOC)\n\u2502   \u2502   \u2502   \u2502   \u2514\u2500\u2500 ProductScreen.module.css  (11 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 CartScreen.js  (118 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 HomeScreen.js  (50 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 LoginScreen.js  (63 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 OrderListScreen.js  (84 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 OrderScreen.js  (197 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 PaymentScreen.js  (46 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 PlaceOrderScreen.js  (137 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 ProductEditScreen.js  (236 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 ProductListScreen.js  (128 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 ProductScreen.js  (248 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 ProfileScreen.js  (191 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 RegisterScreen.js  (114 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 ShippingScreen.js  (116 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 UserEditScreen.js  (147 LOC)\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 UserListScreen.js  (101 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 store/\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 cart/\n\u2502   \u2502   \u2502   \u2502   \u251c\u2500\u2500 cartActions.js  (55 LOC)\n\u2502   \u2502   \u2502   \u2502   \u251c\u2500\u2500 cartConstants.js  (6 LOC)\n\u2502   \u2502   \u2502   \u2502   \u2514\u2500\u2500 cartReducers.js  (59 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 order/\n\u2502   \u2502   \u2502   \u2502   \u251c\u2500\u2500 orderActions.js  (209 LOC)\n\u2502   \u2502   \u2502   \u2502   \u251c\u2500\u2500 orderConstants.js  (24 LOC)\n\u2502   \u2502   \u2502   \u2502   \u2514\u2500\u2500 orderReducers.js  (168 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 product/\n\u2502   \u2502   \u2502   \u2502   \u251c\u2500\u2500 productActions.js  (185 LOC)\n\u2502   \u2502   \u2502   \u2502   \u251c\u2500\u2500 productConstants.js  (22 LOC)\n\u2502   \u2502   \u2502   \u2502   \u2514\u2500\u2500 productReducers.js  (150 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 review/\n\u2502   \u2502   \u2502   \u2502   \u251c\u2500\u2500 reviewActions.js  (62 LOC)\n\u2502   \u2502   \u2502   \u2502   \u251c\u2500\u2500 reviewConstants.js  (7 LOC)\n\u2502   \u2502   \u2502   \u2502   \u2514\u2500\u2500 reviewReducers.js  (52 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 user/\n\u2502   \u2502   \u2502   \u2502   \u251c\u2500\u2500 userActions.js  (255 LOC)\n\u2502   \u2502   \u2502   \u2502   \u251c\u2500\u2500 userConstants.js  (26 LOC)\n\u2502   \u2502   \u2502   \u2502   \u2514\u2500\u2500 userReducers.js  (167 LOC)\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 store.js  (72 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 utils/\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 helpers.js  (147 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 App.js  (19 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 bootstrap.min.css  (12 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 index.css  (0 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 index.js  (20 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 logo.svg\n\u2502   \u2502   \u251c\u2500\u2500 products.js  (81 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 reportWebVitals.js  (12 LOC)\n\u2502   \u2502   \u2514\u2500\u2500 Router.js  (42 LOC)\n\u2502   \u251c\u2500\u2500 .gitignore\n\u2502   \u251c\u2500\u2500 package-lock.json\n\u2502   \u251c\u2500\u2500 package.json\n\u2502   \u2514\u2500\u2500 README.md\n\u251c\u2500\u2500 staticfiles/\n\u2502   \u251c\u2500\u2500 admin/\n\u2502   \u2502   \u251c\u2500\u2500 css/\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 autocomplete.css  (213 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 base.css  (798 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 changelists.css  (285 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 dashboard.css  (21 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 fonts.css  (18 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 forms.css  (428 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 login.css  (66 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 responsive.css  (779 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 responsive_rtl.css  (69 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 rtl.css  (209 LOC)\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 widgets.css  (465 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 fonts/\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 LICENSE.txt\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 README.txt\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 Roboto-Bold-webfont.woff\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 Roboto-Light-webfont.woff\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 Roboto-Regular-webfont.woff\n\u2502   \u2502   \u251c\u2500\u2500 img/\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 gis/\n\u2502   \u2502   \u2502   \u2502   \u251c\u2500\u2500 move_vertex_off.svg\n\u2502   \u2502   \u2502   \u2502   \u2514\u2500\u2500 move_vertex_on.svg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 calendar-icons.svg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 icon-addlink.svg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 icon-alert.svg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 icon-calendar.svg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 icon-changelink.svg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 icon-clock.svg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 icon-deletelink.svg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 icon-no.svg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 icon-unknown-alt.svg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 icon-unknown.svg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 icon-viewlink.svg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 icon-yes.svg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 inline-delete.svg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 LICENSE\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 README.txt\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 search.svg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 selector-icons.svg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 sorting-icons.svg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 tooltag-add.svg\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 tooltag-arrowright.svg\n\u2502   \u2502   \u2514\u2500\u2500 js/\n\u2502   \u2502       \u251c\u2500\u2500 admin/\n\u2502   \u2502       \u2502   \u251c\u2500\u2500 DateTimeShortcuts.js  (397 LOC)\n\u2502   \u2502       \u2502   \u2514\u2500\u2500 RelatedObjectLookups.js  (165 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 actions.js  (152 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 actions.min.js  (7 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 autocomplete.js  (34 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 calendar.js  (192 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 cancel.js  (13 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 change_form.js  (18 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 collapse.js  (54 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 collapse.min.js  (3 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 core.js  (157 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 inlines.js  (283 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 inlines.min.js  (10 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 jquery.init.js  (8 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 popup_response.js  (16 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 prepopulate.js  (38 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 prepopulate.min.js  (1 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 prepopulate_init.js  (10 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 SelectBox.js  (144 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 SelectFilter2.js  (226 LOC)\n\u2502   \u2502       \u2514\u2500\u2500 urlify.js  (189 LOC)\n\u2502   \u251c\u2500\u2500 css/\n\u2502   \u2502   \u251c\u2500\u2500 main.b4255e49.chunk.css  (14 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 main.b4255e49.chunk.css.map\n\u2502   \u2502   \u2514\u2500\u2500 project.css  (11 LOC)\n\u2502   \u251c\u2500\u2500 images/\n\u2502   \u2502   \u2514\u2500\u2500 favicons/\n\u2502   \u2502       \u2514\u2500\u2500 favicon.ico\n\u2502   \u251c\u2500\u2500 js/\n\u2502   \u2502   \u251c\u2500\u2500 1.60e457aa.chunk.js  (2 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 1.60e457aa.chunk.js.map\n\u2502   \u2502   \u251c\u2500\u2500 2.d300e514.chunk.js  (2 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 2.d300e514.chunk.js.map\n\u2502   \u2502   \u251c\u2500\u2500 main.d1999ce5.chunk.js  (2 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 main.d1999ce5.chunk.js.map\n\u2502   \u2502   \u251c\u2500\u2500 project.js  (1 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 runtime~main.30712100.js  (2 LOC)\n\u2502   \u2502   \u2514\u2500\u2500 runtime~main.30712100.js.map\n\u2502   \u251c\u2500\u2500 rest_framework/\n\u2502   \u2502   \u251c\u2500\u2500 css/\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 bootstrap-theme.min.css  (6 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 bootstrap-tweaks.css  (187 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 bootstrap.min.css  (6 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 default.css  (65 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 font-awesome-4.0.3.css  (1338 LOC)\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 prettify.css  (28 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 docs/\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 css/\n\u2502   \u2502   \u2502   \u2502   \u251c\u2500\u2500 base.css  (295 LOC)\n\u2502   \u2502   \u2502   \u2502   \u251c\u2500\u2500 highlight.css  (105 LOC)\n\u2502   \u2502   \u2502   \u2502   \u2514\u2500\u2500 jquery.json-view.min.css  (11 LOC)\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 img/\n\u2502   \u2502   \u2502   \u2502   \u251c\u2500\u2500 favicon.ico\n\u2502   \u2502   \u2502   \u2502   \u2514\u2500\u2500 grid.png\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 js/\n\u2502   \u2502   \u2502       \u251c\u2500\u2500 api.js  (285 LOC)\n\u2502   \u2502   \u2502       \u251c\u2500\u2500 highlight.pack.js  (2 LOC)\n\u2502   \u2502   \u2502       \u2514\u2500\u2500 jquery.json-view.min.js  (7 LOC)\n\u2502   \u2502   \u251c\u2500\u2500 fonts/\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 fontawesome-webfont.eot\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 fontawesome-webfont.svg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 fontawesome-webfont.ttf\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 fontawesome-webfont.woff\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 glyphicons-halflings-regular.eot\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 glyphicons-halflings-regular.svg\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 glyphicons-halflings-regular.ttf\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 glyphicons-halflings-regular.woff\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 glyphicons-halflings-regular.woff2\n\u2502   \u2502   \u251c\u2500\u2500 img/\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 glyphicons-halflings-white.png\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 glyphicons-halflings.png\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 grid.png\n\u2502   \u2502   \u2514\u2500\u2500 js/\n\u2502   \u2502       \u251c\u2500\u2500 ajax-form.js  (106 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 bootstrap.min.js  (6 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 coreapi-0.1.1.js  (1694 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 csrf.js  (43 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 default.js  (38 LOC)\n\u2502   \u2502       \u251c\u2500\u2500 jquery-3.5.1.min.js  (2 LOC)\n\u2502   \u2502       \u2514\u2500\u2500 prettify-min.js  (28 LOC)\n\u2502   \u2514\u2500\u2500 sass/\n\u2502       \u251c\u2500\u2500 custom_bootstrap_vars.scss  (0 LOC)\n\u2502       \u2514\u2500\u2500 project.scss  (26 LOC)\n\u251c\u2500\u2500 design.md\n\u251c\u2500\u2500 manage.py  (17 LOC)\n\u2514\u2500\u2500 README.md",
+      "repo_map": "ecommerce/core/behaviours.py:\n    class StatusMixin:\n    class PhoneMixin:\n    class AddressMixin:\n    class ProfileMixin:\n\necommerce/user/serializers.py:\n    class UserSerializer:\n    class UserProfileSerializer:\n    class UserTokenizedSerializer:\n        def get_access(self, user)\n    class UserDetailSerializer:\n        def get_profile(self, user)\n        def update(self, user, validated_data)\n    class UserDetailTokenizedSerializer:\n        def get_access(self, user)\n    class UserCreateSerializer:\n        def create(self, validated_data)\n    class UserAuthSerializer:\n        def validate(self)\n\necommerce/product/models.py:\n    class Product:\n        def save(self)\n        def __str__(self)\n    class ProductItem:\n        def __str__(self)\n\necommerce/review/models.py:\n    class Review:\n        def save(self)\n        def __str__(self)\n\necommerce/user/models.py:\n    class User:\n        def __str__(self)\n    class UserProfile:\n        def __str__(self)\n\necommerce/product/serializers.py:\n    class ProductSerializer:\n        def find_by_slug(self, slug)\n    class ProductReviewSerializer:\n    class ProductDetailSerializer:\n        def find_by_slug(self, slug)\n    class ProductImageSerializer:\n    class ProductItemSerializer:\n        def create(self, validated_data)\n    class ProductItemDetailSerializer:\n        def get_name(self, instance)\n        def get_slug(self, instance)\n\necommerce/order/models.py:\n    class OrderStatus:\n    class Order:\n        def __str__(self)\n\necommerce/core/models.py:\n    class Country:\n        def __str__(self)\n    class State:\n        def __str__(self)\n    class City:\n        def __str__(self)\n\necommerce/payment/models.py:\n    class PaymentStatus:\n    class Payment:\n        def __str__(self)\n\necommerce/address/models.py:\n    class ShippingAddress:\n        def __str__(self)\n\necommerce/product/views.py:\n    class ProductCreateView:\n        def post(self, request)\n        def patch(self, request, id)\n        def delete(self, request, id)\n    class ProductDetailView:\n        def get(self, request, id)\n    class ProductListView:\n        def get(self, request)\n    class ProductListTopView:\n        def get(self, request)\n    class ProductImageView:\n        def post(self, request, id)\n\necommerce/user/views.py:\n    class UserCreateView:\n        def post(self, request)\n    class UserDetailView:\n        def get(self, request)\n        def patch(self, request)\n    class UserListView:\n        def get(self, request)\n    class UserAdminView:\n        def get(self, request, id)\n        def patch(self, request, id)\n        def delete(self, request, id)\n    class UserAuthView:\n\necommerce/order/serializers.py:\n    class OrderSerializer:\n        def get_by_id(self, id)\n        def update(self, instance, validated_data)\n    class OrderCreateSerializer:\n        def create(self, validated_data)\n\necommerce/order/views.py:\n    class OrderCreateView:\n        def post(self, request)\n    class OrderDetailView:\n        def get(self, request, id)\n        def patch(self, request, id)\n    class OrderListView:\n        def get(self, request)\n    class OrderAdminView:\n        def get(self, request)\n        def patch(self, request, id)\n\necommerce/review/views.py:\n    class ReviewCreateView:\n        def post(self, request)\n    class ReviewListView:\n        def get(self, request)\n\necommerce/user/forms.py:\n    class UserChangeForm:\n    class UserCreationForm:\n        def clean_username(self)\n\necommerce/core/serializers.py:\n    class CountrySerializer:\n    class StateSerializer:\n    class CitySerializer:\n\necommerce/address/serializers.py:\n    class ShippingAddressSerializer:\n    class ShippingAddressDetailSerializer:\n        def get_name(self, instance)\n\necommerce/review/serializers.py:\n    class ReviewSerializer:\n    class ReviewDetailSerializer:\n\necommerce/user/signals.py:\n    def update_user(sender, instance)\n\necommerce/payment/serializers.py:\n    class PaymentSerializer:\n\necommerce/user/migrations/0001_initial.py:\n    class Migration:\n\necommerce/order/migrations/0001_initial.py:\n    class Migration:\n\necommerce/address/migrations/0001_initial.py:\n    class Migration:\n\necommerce/product/migrations/0001_initial.py:\n    class Migration:\n\necommerce/core/migrations/0001_initial.py:\n    class Migration:\n\necommerce/product/migrations/0006_productitem.py:\n    class Migration:\n\necommerce/review/migrations/0001_initial.py:\n    class Migration:\n\necommerce/product/migrations/0005_auto_20220406_1753.py:\n    class Migration:\n\necommerce/payment/migrations/0001_initial.py:\n    class Migration:\n\necommerce/address/migrations/0003_auto_20220420_1734.py:\n    class Migration:\n\necommerce/product/migrations/0008_auto_20220419_1918.py:\n    class Migration:\n\necommerce/product/migrations/0010_auto_20220420_2151.py:\n    class Migration:\n\necommerce/product/migrations/0002_auto_20220406_1742.py:\n    class Migration:\n\necommerce/product/migrations/0011_auto_20220424_1928.py:\n    class Migration:\n\necommerce/user/migrations/0002_auto_20220405_2037.py:\n    class Migration:\n\necommerce/product/migrations/0009_auto_20220420_2139.py:\n    class Migration:\n\necommerce/product/migrations/0012_auto_20220424_2058.py:\n    class Migration:\n\necommerce/address/migrations/0002_auto_20220406_1930.py:\n    class Migration:\n\necommerce/user/admin.py:\n    class UserAdmin:\n    class UserProfile:\n\nmanage.py:\n    def main()\n\necommerce/payment/migrations/0002_auto_20220419_1942.py:\n    class Migration:\n\necommerce/payment/migrations/0003_auto_20220420_2139.py:\n    class Migration:\n\necommerce/product/migrations/0003_auto_20220406_1742.py:\n    class Migration:\n\necommerce/user/migrations/0003_auto_20220405_2040.py:\n    class Migration:\n\necommerce/address/migrations/0004_shippingaddress_pincode.py:\n    class Migration:\n\necommerce/order/migrations/0002_auto_20220424_1928.py:\n    class Migration:\n\necommerce/product/migrations/0004_auto_20220406_1749.py:\n    class Migration:\n\necommerce/product/migrations/0007_product_image.py:\n    class Migration:\n\necommerce/user/migrations/0004_user_name.py:\n    class Migration:\n\necommerce/core/admin.py:\n    class CountryAdmin:\n    class CityAdmin:\n    class StateAdmin:\n\necommerce/product/admin.py:\n    class ProductAdmin:\n    class ProductItemAdmin:\n\necommerce/address/admin.py:\n    class ShippingAddressAdmin:\n\necommerce/order/admin.py:\n    class OrderAdmin:\n\necommerce/payment/admin.py:\n    class PaymentAdmin:\n\necommerce/review/admin.py:\n    class ReviewAdmin:\n\necommerce/user/apps.py:\n    class UserConfig:\n        def ready(self)\n\necommerce/address/apps.py:\n    class AddressConfig:\n\necommerce/core/apps.py:\n    class CoreConfig:\n\necommerce/order/apps.py:\n    class OrderConfig:\n\necommerce/payment/apps.py:\n    class PaymentConfig:\n\necommerce/product/apps.py:\n    class ProductConfig:\n\necommerce/review/apps.py:\n    class ReviewConfig:",
+      "dependency_edges": [
+        {
+          "source": "config/settings/local.py",
+          "target": "config/settings/base.py"
+        },
+        {
+          "source": "ecommerce/address/admin.py",
+          "target": "ecommerce/address/models.py"
+        },
+        {
+          "source": "ecommerce/address/models.py",
+          "target": "ecommerce/core/behaviours.py"
+        },
+        {
+          "source": "ecommerce/address/serializers.py",
+          "target": "ecommerce/address/models.py"
+        },
+        {
+          "source": "ecommerce/address/serializers.py",
+          "target": "ecommerce/core/models.py"
+        },
+        {
+          "source": "ecommerce/address/serializers.py",
+          "target": "ecommerce/core/serializers.py"
+        },
+        {
+          "source": "ecommerce/core/admin.py",
+          "target": "ecommerce/core/models.py"
+        },
+        {
+          "source": "ecommerce/core/behaviours.py",
+          "target": "ecommerce/__init__.py"
+        },
+        {
+          "source": "ecommerce/core/behaviours.py",
+          "target": "ecommerce/core/__init__.py"
+        },
+        {
+          "source": "ecommerce/core/serializers.py",
+          "target": "ecommerce/core/models.py"
+        },
+        {
+          "source": "ecommerce/order/admin.py",
+          "target": "ecommerce/order/models.py"
+        },
+        {
+          "source": "ecommerce/order/models.py",
+          "target": "ecommerce/core/behaviours.py"
+        },
+        {
+          "source": "ecommerce/order/serializers.py",
+          "target": "ecommerce/address/serializers.py"
+        },
+        {
+          "source": "ecommerce/order/serializers.py",
+          "target": "ecommerce/order/models.py"
+        },
+        {
+          "source": "ecommerce/order/serializers.py",
+          "target": "ecommerce/payment/serializers.py"
+        },
+        {
+          "source": "ecommerce/order/serializers.py",
+          "target": "ecommerce/product/serializers.py"
+        },
+        {
+          "source": "ecommerce/order/serializers.py",
+          "target": "ecommerce/user/serializers.py"
+        },
+        {
+          "source": "ecommerce/order/urls.py",
+          "target": "ecommerce/order/views.py"
+        },
+        {
+          "source": "ecommerce/order/views.py",
+          "target": "ecommerce/order/models.py"
+        },
+        {
+          "source": "ecommerce/order/views.py",
+          "target": "ecommerce/order/serializers.py"
+        },
+        {
+          "source": "ecommerce/payment/admin.py",
+          "target": "ecommerce/payment/models.py"
+        },
+        {
+          "source": "ecommerce/payment/models.py",
+          "target": "ecommerce/core/behaviours.py"
+        },
+        {
+          "source": "ecommerce/payment/serializers.py",
+          "target": "ecommerce/payment/models.py"
+        },
+        {
+          "source": "ecommerce/product/admin.py",
+          "target": "ecommerce/product/models.py"
+        },
+        {
+          "source": "ecommerce/product/models.py",
+          "target": "ecommerce/core/behaviours.py"
+        },
+        {
+          "source": "ecommerce/product/serializers.py",
+          "target": "ecommerce/product/models.py"
+        },
+        {
+          "source": "ecommerce/product/serializers.py",
+          "target": "ecommerce/review/models.py"
+        },
+        {
+          "source": "ecommerce/product/serializers.py",
+          "target": "ecommerce/user/serializers.py"
+        },
+        {
+          "source": "ecommerce/product/urls.py",
+          "target": "ecommerce/product/views.py"
+        },
+        {
+          "source": "ecommerce/product/views.py",
+          "target": "ecommerce/product/models.py"
+        },
+        {
+          "source": "ecommerce/product/views.py",
+          "target": "ecommerce/product/serializers.py"
+        },
+        {
+          "source": "ecommerce/review/admin.py",
+          "target": "ecommerce/review/models.py"
+        },
+        {
+          "source": "ecommerce/review/models.py",
+          "target": "ecommerce/core/behaviours.py"
+        },
+        {
+          "source": "ecommerce/review/serializers.py",
+          "target": "ecommerce/product/serializers.py"
+        },
+        {
+          "source": "ecommerce/review/serializers.py",
+          "target": "ecommerce/review/models.py"
+        },
+        {
+          "source": "ecommerce/review/serializers.py",
+          "target": "ecommerce/user/serializers.py"
+        },
+        {
+          "source": "ecommerce/review/urls.py",
+          "target": "ecommerce/review/views.py"
+        },
+        {
+          "source": "ecommerce/review/views.py",
+          "target": "ecommerce/product/models.py"
+        },
+        {
+          "source": "ecommerce/review/views.py",
+          "target": "ecommerce/review/models.py"
+        },
+        {
+          "source": "ecommerce/review/views.py",
+          "target": "ecommerce/review/serializers.py"
+        },
+        {
+          "source": "ecommerce/user/admin.py",
+          "target": "ecommerce/user/forms.py"
+        },
+        {
+          "source": "ecommerce/user/admin.py",
+          "target": "ecommerce/user/models.py"
+        },
+        {
+          "source": "ecommerce/user/apps.py",
+          "target": "ecommerce/user/signals.py"
+        },
+        {
+          "source": "ecommerce/user/models.py",
+          "target": "ecommerce/core/behaviours.py"
+        },
+        {
+          "source": "ecommerce/user/serializers.py",
+          "target": "ecommerce/user/models.py"
+        },
+        {
+          "source": "ecommerce/user/signals.py",
+          "target": "ecommerce/user/models.py"
+        },
+        {
+          "source": "ecommerce/user/urls.py",
+          "target": "ecommerce/user/views.py"
+        },
+        {
+          "source": "ecommerce/user/views.py",
+          "target": "ecommerce/user/models.py"
+        },
+        {
+          "source": "ecommerce/user/views.py",
+          "target": "ecommerce/user/serializers.py"
+        }
+      ],
+      "architecture_diagram": "",
+      "tech_stack": {
+        "languages": {
+          "Python": 1707,
+          "HTML": 41,
+          "JavaScript": 8746,
+          "CSS": 5523
+        },
+        "frameworks": [
+          "React"
+        ],
+        "dependencies": [
+          "@paypal/paypal-js",
+          "@testing-library/jest-dom",
+          "@testing-library/react",
+          "@testing-library/user-event",
+          "axios",
+          "lodash",
+          "react",
+          "react-bootstrap",
+          "react-dom",
+          "react-paypal-button-v2",
+          "react-redux",
+          "react-router-bootstrap",
+          "react-router-dom",
+          "react-scripts",
+          "redux",
+          "redux-devtools-extension",
+          "redux-thunk",
+          "web-vitals"
+        ],
+        "external_services": []
+      },
+      "integration_interface": ""
+    },
+    "behavior": {
+      "overview": "This repository is an e-commerce platform built as a Django-based backend monolith and a React frontend. It provides standard e-commerce capabilities including user management, product catalog browsing, a shopping cart, order placement, and payment integration.",
+      "partitions": [
+        {
+          "name": "Backend Services",
+          "paths": [
+            "ecommerce/address",
+            "ecommerce/core",
+            "ecommerce/order",
+            "ecommerce/payment",
+            "ecommerce/product",
+            "ecommerce/review",
+            "ecommerce/user"
+          ],
+          "role": "The core application engine providing RESTful APIs for all platform entities.",
+          "functionality": "Handles business logic, database models, and API endpoints for products, user accounts, authentication, order processing, and shipping/payment data management."
+        },
+        {
+          "name": "Frontend Application",
+          "paths": [
+            "frontend/src"
+          ],
+          "role": "The client-side interface allowing users to interact with the e-commerce system.",
+          "functionality": "Implements the user interface using React and Redux, covering product listings, cart management, checkout flows, user authentication screens, and profile management."
+        },
+        {
+          "name": "Configuration",
+          "paths": [
+            "config"
+          ],
+          "role": "System-wide configuration and routing.",
+          "functionality": "Manages Django project settings for local and production environments, along with global URL routing and application server entry points."
+        },
+        {
+          "name": "Static Assets",
+          "paths": [
+            "staticfiles",
+            "frontend/public"
+          ],
+          "role": "Storage for non-executable assets.",
+          "functionality": "Contains images, CSS, fonts, and JavaScript files required for both the Django admin interface and the React frontend client."
+        }
+      ]
+    }
+  },
+  "context_record": {
+    "project_name": "",
+    "business_goal": "Modernize existing monolith to improve scalability and maintainability and enable incremental evolution without business disruption.",
+    "problem_statement": "The existing Django/React monolith struggles with scalability and maintainability during peak traffic.",
+    "users": [
+      "Customers",
+      "Administrators"
+    ],
+    "functional_requirements": [
+      "Customer registration and login",
+      "User account management",
+      "Product catalog and browsing",
+      "Product search",
+      "Shopping cart",
+      "Checkout and payment processing",
+      "Order management and tracking",
+      "Inventory management",
+      "Shipping and fulfilment",
+      "Product reviews"
+    ],
+    "non_functional_requirements": [
+      "Handle substantially higher peak traffic without degradation",
+      "Maintain high availability during peak periods",
+      "Maintain responsive customer-facing interactions"
+    ],
+    "cloud_provider": "",
+    "budget": "",
+    "compliance_requirements": [],
+    "existing_systems": [
+      "Django-based backend monolith",
+      "React frontend"
+    ],
+    "assumptions": [],
+    "open_questions": [],
+    "summary": "Goal: Modernize existing monolith to improve scalability and maintainability and enable incremental evolution without business disruption. | Problem: The existing Django/React monolith struggles with scalability and maintainability during peak traffic.",
+    "version": 1,
+    "revision_reason": ""
+  },
+  "context_history": [],
+  "blueprint": {
+    "blueprint_id": "BP-001-ECOMMERCE-MODERNIZATION",
+    "project_name": "E-Commerce Monolith Modernization",
+    "selected_pattern": "Event-Driven Microservices (Strangler Fig Pattern)",
+    "rationale": "The monolith faces scalability bottlenecks during peak traffic. Adopting an event-driven microservices architecture via the Strangler Fig pattern allows for incremental extraction of high-traffic domains (e.g., Catalog, Order) while maintaining business continuity. The architecture specifically addresses the non-functional requirements: 'Handle substantially higher peak traffic without degradation', 'Maintain high availability during peak periods', and 'Maintain responsive customer-facing interactions'. It manages the functional requirements: 'Shopping cart' and 'Shipping and fulfilment'.",
+    "stakeholder_view": "This architecture transforms the monolithic application into a resilient, scalable platform. By breaking down the system into business-aligned services, we can independently scale and deploy features, ensuring high availability during peak traffic periods. Customers will experience a more responsive interface, and administrators gain modular control over operations like inventory management, order tracking, 'Shipping and fulfilment', and the 'Shopping cart'.",
+    "technical_view": "The system evolves from a Django monolith to a distributed architecture. An API Gateway manages ingress, routing traffic between a React Frontend Application and independently deployable microservices. Each service (e.g., Identity, Catalog, Order Processing Service, Inventory Service, Review Service) encapsulates its domain, owning a private database. Communication is facilitated through asynchronous events via a Message Broker to decouple services and improve throughput, allowing the system to 'Handle substantially higher peak traffic without degradation'.",
+    "components": [
+      "API Gateway",
+      "Identity Service",
+      "Catalog Service",
+      "Order Processing Service",
+      "Inventory Service",
+      "Review Service",
+      "Message Broker",
+      "React Frontend Application"
+    ],
+    "data_flows": [
+      "React Frontend Application \u2192 API Gateway \u2192 Identity Service",
+      "React Frontend Application \u2192 API Gateway \u2192 Catalog Service",
+      "React Frontend Application \u2192 API Gateway \u2192 Order Processing Service",
+      "Order Processing Service \u2192 Message Broker \u2192 Inventory Service",
+      "Order Processing Service \u2192 Message Broker \u2192 Review Service"
+    ],
+    "addressed_feature_ids": [
+      "FEAT-001",
+      "FEAT-002",
+      "FEAT-003",
+      "FEAT-004",
+      "FEAT-005"
+    ],
+    "constraints_addressed": [
+      "Handle substantially higher peak traffic without degradation",
+      "Maintain high availability during peak periods",
+      "Maintain responsive customer-facing interactions",
+      "Cloud scalability for peak traffic",
+      "Incremental migration with no business disruption",
+      "Shopping cart",
+      "Shipping and fulfilment"
+    ],
+    "assumptions": [
+      "The cloud environment provides a managed message broker (e.g., Amazon SQS/SNS or RabbitMQ).",
+      "Network latency introduced by microservice communication will be mitigated by efficient API design and frontend caching."
+    ],
+    "open_risks": [
+      "Operational complexity of managing distributed services (logging, tracing).",
+      "Potential data consistency challenges requiring eventual consistency patterns."
+    ],
+    "migration_steps": [
+      {
+        "title": "Establish API Gateway and Foundation",
+        "objective": "Introduce an entry point that will route requests to either the legacy monolith or new microservices.",
+        "changes": [
+          "Deploy API Gateway",
+          "Setup infrastructure for shared concerns (logging, monitoring)"
+        ],
+        "coexistence_or_data_strategy": "The legacy monolith remains the primary backend; traffic is proxied through the new API Gateway. React Frontend Application is already present.",
+        "exit_condition": "Traffic successfully routed through gateway."
+      },
+      {
+        "title": "Extract Catalog Service",
+        "objective": "Move read-heavy product browsing to a separate service to improve scalability during peak traffic.",
+        "changes": [
+          "Create Catalog Service",
+          "Migrate Product and Category data"
+        ],
+        "coexistence_or_data_strategy": "The API Gateway routes /products requests to the new service; other traffic hits the legacy monolith.",
+        "exit_condition": "Product browsing handled by Catalog Service."
+      },
+      {
+        "title": "Extract Identity and Order Services",
+        "objective": "Decouple core transaction capabilities to ensure system resilience. Introduce Inventory Service, Review Service, and Message Broker.",
+        "changes": [
+          "Create Identity Service",
+          "Create Order Processing Service",
+          "Create Inventory Service",
+          "Create Review Service",
+          "Deploy Message Broker",
+          "Implement event-driven integration with legacy systems"
+        ],
+        "coexistence_or_data_strategy": "Sagas used to maintain consistency between new Order Processing Service and legacy systems during the migration period.",
+        "exit_condition": "Order lifecycle and community feedback managed by new services."
+      }
+    ],
+    "version": "1.1.0",
+    "revision_note": "Addressed migration dispositions for new services, integrated missing functional/non-functional requirement naming, and added migration ADR."
+  },
+  "adrs": [
+    {
+      "id": "ADR-001",
+      "title": "ADR-001: Adopt Event-Driven Microservices Pattern",
+      "status": "accepted",
+      "context": "The existing Django monolith is tightly coupled and struggles with scaling under peak load. Non-functional requirements demand 'Handle substantially higher peak traffic without degradation'.",
+      "decision": "Transition to a distributed event-driven microservices architecture.",
+      "rationale": "Microservices enable independent scalability for high-traffic components. Event-driven communication decouples services, preventing chain reactions of failures. This meets the NFRs for high availability and responsiveness.",
+      "alternatives_considered": [
+        "Modular Monolith"
+      ],
+      "positive_consequences": [
+        "Improved scalability",
+        "Fault isolation"
+      ],
+      "negative_consequences": [
+        "Increased operational complexity"
+      ],
+      "related_feature_ids": [
+        "FEAT-005"
+      ],
+      "related_component_names": [
+        "Catalog Service",
+        "Order Processing Service",
+        "Message Broker"
+      ],
+      "source_references": [],
+      "evidence_ids": [
+        "KB-E003",
+        "KB-E005",
+        "KB-E008"
+      ],
+      "related_decision_topic_ids": [
+        "TOPIC-1",
+        "TOPIC-3",
+        "TOPIC-4"
+      ]
+    },
+    {
+      "id": "ADR-002",
+      "title": "ADR-002: Implement Database-per-Service Strategy",
+      "status": "accepted",
+      "context": "Shared databases lead to tight coupling and make independent deployments impossible.",
+      "decision": "Each microservice will own its private database instance/schema.",
+      "rationale": "Private data stores prevent unintended coupling and support independent development/deployment lifecycles.",
+      "alternatives_considered": [
+        "Shared Database"
+      ],
+      "positive_consequences": [
+        "Decoupled data ownership",
+        "Scalable data stores"
+      ],
+      "negative_consequences": [
+        "Complexity in cross-service data consistency"
+      ],
+      "related_feature_ids": [
+        "FEAT-003",
+        "FEAT-004"
+      ],
+      "related_component_names": [
+        "Identity Service",
+        "Order Processing Service",
+        "Catalog Service"
+      ],
+      "source_references": [],
+      "evidence_ids": [
+        "KB-E002",
+        "KB-E006"
+      ],
+      "related_decision_topic_ids": [
+        "TOPIC-2"
+      ]
+    },
+    {
+      "id": "ADR-003",
+      "title": "ADR-003: Brownfield Migration via Strangler Fig",
+      "status": "accepted",
+      "context": "Requirement to evolve existing monolith without business disruption.",
+      "decision": "Adopt the Strangler Fig pattern to incrementally extract services.",
+      "rationale": "This strategy minimizes risk and ensures continuous delivery of business value while migrating to the target microservices architecture.",
+      "alternatives_considered": [
+        "Big Bang Migration"
+      ],
+      "positive_consequences": [
+        "Low risk",
+        "Incremental value delivery"
+      ],
+      "negative_consequences": [
+        "Longer transition period for co-existence"
+      ],
+      "related_feature_ids": [
+        "FEAT-001",
+        "FEAT-002",
+        "FEAT-003",
+        "FEAT-004",
+        "FEAT-005"
+      ],
+      "related_component_names": [
+        "API Gateway",
+        "Identity Service",
+        "Order Processing Service",
+        "Catalog Service",
+        "Inventory Service",
+        "Review Service",
+        "Message Broker"
+      ],
+      "source_references": [],
+      "evidence_ids": [
+        "KB-E001",
+        "KB-E003"
+      ],
+      "related_decision_topic_ids": [
+        "TOPIC-5"
+      ]
+    }
+  ],
+  "components": [
+    {
+      "id": "COMP-001",
+      "name": "API Gateway",
+      "component_type": "service",
+      "purpose": "Entry point for client traffic.",
+      "description": "Routes requests to appropriate microservices or the legacy monolith.",
+      "inputs": [
+        "Client HTTP requests"
+      ],
+      "outputs": [
+        "Routed requests to services"
+      ],
+      "dependencies": [
+        "Catalog Service",
+        "Identity Service",
+        "Order Processing Service"
+      ],
+      "related_feature_ids": [
+        "FEAT-005"
+      ],
+      "related_adr_ids": [
+        "ADR-001",
+        "ADR-003"
+      ],
+      "technology_choices": [
+        "Nginx/Kong"
+      ],
+      "security_considerations": [
+        "SSL termination",
+        "Rate limiting"
+      ],
+      "scalability_considerations": [
+        "Load balancing"
+      ]
+    },
+    {
+      "id": "COMP-002",
+      "name": "Identity Service",
+      "component_type": "service",
+      "purpose": "User management and authentication.",
+      "description": "Handles registration, login, and profile management independently.",
+      "inputs": [
+        "User credentials",
+        "API requests"
+      ],
+      "outputs": [
+        "Auth tokens",
+        "User profile data"
+      ],
+      "dependencies": [],
+      "related_feature_ids": [
+        "FEAT-001"
+      ],
+      "related_adr_ids": [
+        "ADR-002"
+      ],
+      "technology_choices": [
+        "Django (preserved stack)"
+      ],
+      "security_considerations": [
+        "JWT validation"
+      ],
+      "scalability_considerations": [
+        "Cache-aside for profiles"
+      ]
+    },
+    {
+      "id": "COMP-003",
+      "name": "Catalog Service",
+      "component_type": "service",
+      "purpose": "Product discovery and browsing.",
+      "description": "Provides high-performance access to product metadata. Supports 'Product catalog and browsing'.",
+      "inputs": [
+        "Search keywords",
+        "Product ID"
+      ],
+      "outputs": [
+        "Product lists",
+        "Product details"
+      ],
+      "dependencies": [],
+      "related_feature_ids": [
+        "FEAT-002"
+      ],
+      "related_adr_ids": [
+        "ADR-001"
+      ],
+      "technology_choices": [
+        "Django (preserved stack)"
+      ],
+      "security_considerations": [
+        "Read-only access policies"
+      ],
+      "scalability_considerations": [
+        "CDN caching"
+      ]
+    },
+    {
+      "id": "COMP-004",
+      "name": "Order Processing Service",
+      "component_type": "service",
+      "purpose": "Transaction handling.",
+      "description": "Manages 'Shopping cart', checkout, payment initiation, order status, and 'Shipping and fulfilment'.",
+      "inputs": [
+        "Checkout data",
+        "Payment events"
+      ],
+      "outputs": [
+        "Order status updates",
+        "Payment events"
+      ],
+      "dependencies": [
+        "Message Broker"
+      ],
+      "related_feature_ids": [
+        "FEAT-003"
+      ],
+      "related_adr_ids": [
+        "ADR-001",
+        "ADR-002"
+      ],
+      "technology_choices": [
+        "Django (preserved stack)"
+      ],
+      "security_considerations": [
+        "Data encryption"
+      ],
+      "scalability_considerations": [
+        "Asynchronous processing"
+      ]
+    },
+    {
+      "id": "COMP-005",
+      "name": "Inventory Service",
+      "component_type": "service",
+      "purpose": "Stock levels management.",
+      "description": "Updates inventory counts via events triggered by orders (extracted during migration phase 3).",
+      "inputs": [
+        "Order events"
+      ],
+      "outputs": [
+        "Inventory status"
+      ],
+      "dependencies": [
+        "Message Broker"
+      ],
+      "related_feature_ids": [
+        "FEAT-004"
+      ],
+      "related_adr_ids": [
+        "ADR-001"
+      ],
+      "technology_choices": [
+        "Django (preserved stack)"
+      ],
+      "security_considerations": [
+        "Internal-only access"
+      ],
+      "scalability_considerations": [
+        "Event-based consistency"
+      ]
+    },
+    {
+      "id": "COMP-006",
+      "name": "Review Service",
+      "component_type": "service",
+      "purpose": "Community feedback.",
+      "description": "Stores and retrieves product reviews (extracted during migration phase 3).",
+      "inputs": [
+        "Review submission"
+      ],
+      "outputs": [
+        "Product ratings"
+      ],
+      "dependencies": [
+        "Message Broker"
+      ],
+      "related_feature_ids": [
+        "FEAT-004"
+      ],
+      "related_adr_ids": [
+        "ADR-001"
+      ],
+      "technology_choices": [
+        "Django (preserved stack)"
+      ],
+      "security_considerations": [
+        "Review moderation"
+      ],
+      "scalability_considerations": [
+        "Caching"
+      ]
+    },
+    {
+      "id": "COMP-007",
+      "name": "Message Broker",
+      "component_type": "service",
+      "purpose": "Asynchronous communication.",
+      "description": "Decouples services using an event-driven pattern (deployed during migration phase 3).",
+      "inputs": [
+        "Domain events"
+      ],
+      "outputs": [
+        "Event distribution"
+      ],
+      "dependencies": [],
+      "related_feature_ids": [
+        "FEAT-003",
+        "FEAT-004"
+      ],
+      "related_adr_ids": [
+        "ADR-001"
+      ],
+      "technology_choices": [
+        "RabbitMQ/SQS"
+      ],
+      "security_considerations": [
+        "Encrypted event streams"
+      ],
+      "scalability_considerations": [
+        "Clustered brokers"
+      ]
+    },
+    {
+      "id": "COMP-008",
+      "name": "React Frontend Application",
+      "component_type": "service",
+      "purpose": "User interface.",
+      "description": "Maintains a responsive UI and interacts with the API Gateway (already existing system).",
+      "inputs": [
+        "User interaction"
+      ],
+      "outputs": [
+        "API requests"
+      ],
+      "dependencies": [
+        "API Gateway"
+      ],
+      "related_feature_ids": [
+        "FEAT-001",
+        "FEAT-002",
+        "FEAT-003"
+      ],
+      "related_adr_ids": [
+        "ADR-001"
+      ],
+      "technology_choices": [
+        "React (preserved stack)"
+      ],
+      "security_considerations": [
+        "CSRF protection"
+      ],
+      "scalability_considerations": [
+        "Browser caching"
+      ]
+    }
+  ],
+  "review": {
+    "rubric_version": "3.0",
+    "overall_status": "pass",
+    "rubric_scores": {
+      "all_artifacts_present": 2,
+      "constraint_coverage": 2,
+      "traceability": 2,
+      "adr_presence": 2,
+      "source_integrity": 2,
+      "kb_evidence_grounding": 2,
+      "repo_grounding": true,
+      "flaw_detection": true,
+      "adr_soundness": true,
+      "best_practice_grounding": true,
+      "refinement_readiness": true
+    },
+    "judgment_reasons": {
+      "repo_grounding": "The design consistently uses the existing Django backend and React frontend components evidenced in the repository structure (e.g., ecommerce/user, ecommerce/order) as the basis for the new microservices, rather than proposing a generic technology stack.",
+      "flaw_detection": "The design directly addresses the business goal of scaling during peak traffic by identifying specific bottleneck domains (Catalog, Order) for extraction and employing an event-driven architecture to decouple them from the legacy monolith, as evidenced by the migration steps in the Blueprint.",
+      "adr_soundness": "ADRs are internally consistent with the context and requirements. The decision to preserve the Django stack is justified by the goal of incremental migration, and the move to an event-driven architecture is supported by KB-E003, which links this pattern to improved scalability in e-commerce.",
+      "best_practice_grounding": "The recommendations are grounded in retrieved evidence (e.g., KB-E003 for EDA, KB-E002/KB-E006 for database-per-service). All cited evidence IDs map logically to their respective ADR topics, and the decomposition aligns with the existing functional modules identified in the repository.",
+      "refinement_readiness": "The design is sufficiently detailed with a clear migration path, component definitions, and addressed risks, allowing the architect to proceed with implementation planning."
+    },
+    "issues": [],
+    "requires_refinement": false,
+    "refinement_instruction": "",
+    "not_applicable": []
+  },
+  "clarifying_questions": [],
+  "clarification_answers": {
+    "What scale, availability, or performance targets does this need to meet?": "Handle substantially higher peak traffic without degradation, maintain high availability during peak periods, and keep customer-facing interactions responsive. No specific numeric SLA, latency, or throughput targets are defined."
+  },
+  "vetoed_assumptions": [],
+  "advisory_turns": [],
+  "user_feedback": [],
+  "accepted_at": "",
+  "waiver": null,
+  "retrieved_knowledge": [
+    {
+      "content": "Modernizing\u00a0to microservices\nMicroservices are essentially small, independent units that make up an application. Transitioning \nfrom traditional monolithic structures to microservices can follow various strategies.\nAre you Well-Architected? 2",
+      "source": "Rag Database\\microservices-on-aws.pdf",
+      "page": 5,
+      "box": 1,
+      "distance": 0.4816316068172455,
+      "evidence_id": "KB-E001"
+    },
+    {
+      "content": "With a domain-driven microservices approach, each service uses the database that fits its data characteristics. Each microservice owns its private data store. This design prevents unintentional coupling between services and supports independent updates and deployments without coordinating changes across the system.\n\n## Architecture \u2014 Data flow",
+      "source": "ecommerce_polyglot_persistence_microsoft.md",
+      "page": 0,
+      "box": 2,
+      "distance": 0.4954931139945984,
+      "evidence_id": "KB-E002"
+    },
+    {
+      "content": "Microservices architecture has emerged as a compelling alternative, offering the promise of enhanced scalability, improved fault tolerance, and greater development agility [1]. By decomposing monolithic applications into smaller, independently deployable services, organizations can achieve better resource utilization, faster deployment cycles, and improved system resilience.\n\nEvent-driven architecture (EDA) patterns have gained particular attention in the context of microservices migration, especially for e-commerce systems where business processes are inherently event-oriented. Customer actions such as placing orders, updating profiles, or processing payments naturally translate to domain events that can drive system behavior [5]. The asynchronous nature of event-driven communication provides better decoupling between services, enhanced fault tolerance, and improved scalability compared to synchronous request-response patterns [4].",
+      "source": "ecommerce_migration_event_driven_bulus.md",
+      "page": 0,
+      "box": 2,
+      "distance": 0.47285524010658264,
+      "evidence_id": "KB-E003"
+    },
+    {
+      "content": "breaking the work\ufb02ow into multiple work\ufb02ow executions, revising your task code or creating a \nStandard Work\ufb02ow.\nAsynchronous Transactions\nBecause your customers expect more modern and interactive user interfaces, you can no longer \nsustain complex work\ufb02ows using synchronous transactions. The more service interaction you need, \nthe more you end up chaining calls that may end up increasing the risk on service stability as well \nas response time.\nModern UI frameworks, such as Angular.js, VueJS, and React, asynchronous transactions, and cloud \nnative work\ufb02ows provide a sustainable approach to meet customer demand, as well as helping you \ndecouple components and focus on process and business domains instead.\nThese asynchronous transactions (or often times described as an event-driven architecture) kick \no\ufb00 downstream subsequent choreographed events in the cloud instead of constraining clients to",
+      "source": "Rag Database\\wellarchitected-serverless-applications-lens.pdf",
+      "page": 72,
+      "box": 1,
+      "distance": 0.49660706520080566,
+      "evidence_id": "KB-E004"
+    },
+    {
+      "content": "**Solution mechanics:** The application is decomposed into a suite of small, independently deployable services, each owning a single business capability within a bounded context, each running in its own process, communicating over lightweight mechanisms (typically HTTP/REST or asynchronous messaging). The defining mechanics: (1) each service is independently deployable via automated pipelines; (2) each service privately owns its data (Database per Service) \u2014 no shared database; (3) decentralized governance lets each team choose its own stack; (4) an orchestration platform (e.g., Kubernetes) schedules, scales, and recovers services; (5) an API gateway fronts external clients; (6) observability (centralized logging, distributed tracing, metrics) is mandatory because a request now traverses many processes. Module boundaries are enforced *physically*: because a service is reachable only over the network through its API, illegal cross-boundary access is structurally prevented.",
+      "source": "architecture_patterns_v2.md",
+      "page": 0,
+      "box": 1,
+      "distance": 0.4948274791240692,
+      "evidence_id": "KB-E005"
+    },
+    {
+      "content": "**Solution mechanics:** Each service exclusively owns its data; persistent data is accessed only through that service's API, never by another service reaching into its tables. Implementation variants (increasing isolation): private-tables-per-service, schema-per-service, and database-server-per-service (private-tables and schema-per-service have the lowest overhead). True database-per-service means separate connection strings, credentials, and lifecycle management, so a team can migrate or upgrade its database without coordinating with others. Because a single ACID transaction can no longer span services, cross-service data operations are implemented as a series of local transactions coordinated by **Sagas**, and cross-service queries use **API Composition** (the caller/gateway joins results from multiple services) or **CQRS materialized views** (a view subscribes to services' events). The **Transactional Outbox** pattern atomically updates a service's database and publishes an event.",
+      "source": "architecture_patterns_v2.md",
+      "page": 0,
+      "box": 1,
+      "distance": 0.5073598623275757,
+      "evidence_id": "KB-E006"
+    },
+    {
+      "content": "components that perform a business functionality.\nUser experience is decoupled with asynchronous calls. Instead of blocking the entire experience \nuntil the overall execution is completed, frontend systems receive a reference or job ID as part of \ntheir initial request and they subscribe for real-time changes, or in legacy systems use an additional \nAPI to poll its status. This decoupling allows the frontend to be more e\ufb03cient by using event loops, \nparallel, or concurrency techniques while making such requests and lazily loading parts of the \napplication when a response is partially or completely available.\nThe frontend becomes a key element in asynchronous calls as it becomes more robust with custom \nretries and caching. It can halt an in-\ufb02ight request if no response has been received within an \nacceptable SLA, whether it's caused by an anomaly, transient condition, networking, or degraded \nenvironments.",
+      "source": "Rag Database\\wellarchitected-serverless-applications-lens.pdf",
+      "page": 58,
+      "box": 1,
+      "distance": 0.5167617797851562,
+      "evidence_id": "KB-E007"
+    },
+    {
+      "content": "## 2.2 Monolithic and Microservices Architectures Comparison *(printed p. 478)*\n\nIn the e-commerce landscape, choosing between microservices and traditional monolithic architectures requires careful consideration of various factors. Monolithic architectures, characterized by their single, tightly coupled codebase. However, when e-commerce systems increase in size, they frequently face scalability and maintenance issues. Microservices provide an alternative approach by decomposing monolithic applications into smaller, self-contained services [6]. This decomposition results in fine-grained services, each focusing on a specific business capability. Scalability is one of the most major advantages of microservices. E-commerce platforms often experience fluctuating traffic patterns, especially during promotions or seasonal events. Microservices enable organisations to scale individual services, ensuring that resources are deployed efficiently to manage workload properly.",
+      "source": "ecommerce_microservices_challenges_ibrahim_luong.md",
+      "page": 0,
+      "box": 2,
+      "distance": 0.560147762298584,
+      "evidence_id": "KB-E008"
+    },
+    {
+      "content": "# Monolith-to-Microservices-Migration im E-Commerce: Zerlegung, Event-Driven Patterns und Leistung (kuratorischer Auszug)\n\n- **Source title:** Migrating Monolithic E-Commerce Systems to Microservices: A Systematic Review of Event-Driven Architecture Approaches (curated excerpts)\n- **Author(s):** Stephen W. Bulus, Olubukola D. Adekola, Folasade Y. Ayankoya, Oluwabamise J. Adeniyi, Ayodeji G. Abiodun\n- **Year:** 2025\n- **Knowledge box:** 2\n- **Domain:** e-commerce\n- **Original PDF:** `AJSTE_O1G0V4GO.pdf`",
+      "source": "ecommerce_migration_event_driven_bulus.md",
+      "page": 0,
+      "box": 2,
+      "distance": 0.5339903831481934,
+      "evidence_id": "KB-E009"
+    },
+    {
+      "content": "ThrottledRequests, UserErrors.\nCentralized and structured logging\nStandardize your application logging to emit operational information about transactions, \ncorrelation identi\ufb01ers, request identi\ufb01ers across components, and business outcomes using \nOperate 28",
+      "source": "Rag Database\\wellarchitected-serverless-applications-lens.pdf",
+      "page": 32,
+      "box": 1,
+      "distance": 0.5797922611236572,
+      "evidence_id": "KB-E010"
+    }
+  ],
+  "decision_topics": [
+    {
+      "id": "TOPIC-1",
+      "topic": "service decomposition and boundaries",
+      "query": "service decomposition and boundaries The existing Django/React monolith struggles with scalability and maintainability during peak traffic. Modernize existing monolith to improve scalability and maintainability and enable incremental evolution without business disruption.",
+      "evidence_ids": [
+        "KB-E001",
+        "KB-E003",
+        "KB-E005"
+      ]
+    },
+    {
+      "id": "TOPIC-2",
+      "topic": "data ownership and persistence strategy",
+      "query": "data ownership and persistence strategy The existing Django/React monolith struggles with scalability and maintainability during peak traffic. Modernize existing monolith to improve scalability and maintainability and enable incremental evolution without business disruption.",
+      "evidence_ids": [
+        "KB-E002",
+        "KB-E003",
+        "KB-E006"
+      ]
+    },
+    {
+      "id": "TOPIC-3",
+      "topic": "integration style: synchronous vs asynchronous communication",
+      "query": "integration style: synchronous vs asynchronous communication The existing Django/React monolith struggles with scalability and maintainability during peak traffic. Modernize existing monolith to improve scalability and maintainability and enable incremental evolution without business disruption.",
+      "evidence_ids": [
+        "KB-E003",
+        "KB-E004",
+        "KB-E007"
+      ]
+    },
+    {
+      "id": "TOPIC-4",
+      "topic": "scaling and availability strategy",
+      "query": "scaling and availability strategy The existing Django/React monolith struggles with scalability and maintainability during peak traffic. Modernize existing monolith to improve scalability and maintainability and enable incremental evolution without business disruption.",
+      "evidence_ids": [
+        "KB-E001",
+        "KB-E003",
+        "KB-E008"
+      ]
+    },
+    {
+      "id": "TOPIC-5",
+      "topic": "brownfield migration and evolution strategy",
+      "query": "brownfield migration and evolution strategy The existing Django/React monolith struggles with scalability and maintainability during peak traffic. Modernize existing monolith to improve scalability and maintainability and enable incremental evolution without business disruption.",
+      "evidence_ids": [
+        "KB-E001",
+        "KB-E003",
+        "KB-E009"
+      ]
+    },
+    {
+      "id": "TOPIC-6",
+      "topic": "technology conservation vs replacement",
+      "query": "technology conservation vs replacement The existing Django/React monolith struggles with scalability and maintainability during peak traffic. Modernize existing monolith to improve scalability and maintainability and enable incremental evolution without business disruption.",
+      "evidence_ids": [
+        "KB-E001",
+        "KB-E003",
+        "KB-E008"
+      ]
+    },
+    {
+      "id": "TOPIC-7",
+      "topic": "observability and operations",
+      "query": "observability and operations The existing Django/React monolith struggles with scalability and maintainability during peak traffic. Modernize existing monolith to improve scalability and maintainability and enable incremental evolution without business disruption.",
+      "evidence_ids": [
+        "KB-E001",
+        "KB-E003",
+        "KB-E010"
+      ]
+    }
+  ],
+  "features": [
+    {
+      "id": "FEAT-001",
+      "name": "Identity and Access Management",
+      "description": "System functionality for customer authentication and profile maintenance.",
+      "scenario": "A customer registers for a new account, logs in securely, and updates their profile information.",
+      "related_requirement_ids": [
+        "FR-001",
+        "FR-002"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "User can create an account with a unique identifier",
+        "User can authenticate securely",
+        "User can view and edit personal account details"
+      ]
+    },
+    {
+      "id": "FEAT-002",
+      "name": "Catalog and Discovery Service",
+      "description": "Functionality allowing users to browse and search the product catalog.",
+      "scenario": "A customer browses available categories and searches for a specific product keyword.",
+      "related_requirement_ids": [
+        "FR-003",
+        "FR-004"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "Product catalog items are visible to users",
+        "Search functionality returns relevant results based on keywords"
+      ]
+    },
+    {
+      "id": "FEAT-003",
+      "name": "E-commerce Transaction Lifecycle",
+      "description": "Management of the shopping cart, payment, order processing, and fulfillment.",
+      "scenario": "A customer adds products to a cart, proceeds to checkout, completes payment, and tracks the subsequent order status.",
+      "related_requirement_ids": [
+        "FR-005",
+        "FR-006",
+        "FR-007",
+        "FR-009"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "Cart persists item selection for the user",
+        "Checkout process handles payment and triggers order creation",
+        "User can view the current status of their order",
+        "Shipping and fulfillment workflows are triggered after payment"
+      ]
+    },
+    {
+      "id": "FEAT-004",
+      "name": "Inventory and Feedback Management",
+      "description": "Internal management of stock levels and community-generated product reviews.",
+      "scenario": "An administrator updates stock levels for a product, and a customer submits a review for a purchased item.",
+      "related_requirement_ids": [
+        "FR-008",
+        "FR-010"
+      ],
+      "priority": "should",
+      "acceptance_criteria": [
+        "Inventory levels adjust following successful orders",
+        "Users can submit and view reviews for products"
+      ]
+    },
+    {
+      "id": "FEAT-005",
+      "name": "Performance and Resiliency Infrastructure",
+      "description": "System capabilities to maintain operations under load and maintain user experience responsiveness.",
+      "scenario": "During a period of substantially higher peak traffic, the system continues to process requests and provide a responsive interface to users without failing.",
+      "related_requirement_ids": [
+        "NFR-001",
+        "NFR-002",
+        "NFR-003"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "System maintains high availability during peak traffic periods",
+        "User interactions remain responsive under high load",
+        "System scales to handle peak demand without performance degradation"
+      ]
+    }
+  ],
+  "repo_deep_dives": [],
+  "run_id": "20260824T141045Z-e1cdb3ee",
+  "stage": "done",
+  "pending_decision": null,
+  "user_rounds": 0,
+  "require_context_approval": true,
+  "optional_context_resolved_version": 1,
+  "history": [
+    {
+      "agent": "repo_ingestor",
+      "stage_in": "created",
+      "stage_out": "ingesting",
+      "note": "ingested https://github.com/harsh020/ecommerce-monolith@23f7ab8: 49 import edge(s), 4 partition(s)",
+      "timestamp": "2026-08-24T14:10:48.863314+00:00",
+      "model": "gemini-3.1-flash-lite",
+      "input_tokens": 8512,
+      "output_tokens": 430,
+      "cost_usd": 0.002773
+    },
+    {
+      "agent": "clarifier",
+      "stage_in": "ingesting",
+      "stage_out": "awaiting_input",
+      "note": "missing 1 critical fact(s); asked 1",
+      "timestamp": "2026-08-24T14:10:50.493761+00:00",
+      "model": "gemini-3.1-flash-lite",
+      "input_tokens": 1199,
+      "output_tokens": 196,
+      "cost_usd": 0.00059375
+    },
+    {
+      "agent": "clarifier",
+      "stage_in": "awaiting_input",
+      "stage_out": "awaiting_input",
+      "note": "context locked; 3 optional question(s) pending before approval",
+      "timestamp": "2026-08-24T14:10:58.817682+00:00",
+      "model": "gemini-3.1-flash-lite",
+      "input_tokens": 1266,
+      "output_tokens": 385,
+      "cost_usd": 0.000894
+    },
+    {
+      "agent": "researcher",
+      "stage_in": "clarifying",
+      "stage_out": "researching",
+      "note": "planned 7 decision topic(s); retrieved 10 curated-KB evidence item(s)",
+      "timestamp": "2026-08-24T14:11:49.893529+00:00",
+      "model": "",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "agent": "architect",
+      "stage_in": "researching",
+      "stage_out": "designing",
+      "note": "derived 5 feature(s); generated blueprint, 2 ADR(s), and 8 component(s); canonicalized 5 data-flow endpoint(s)",
+      "timestamp": "2026-08-24T14:12:01.852468+00:00",
+      "model": "gemini-3.1-flash-lite",
+      "input_tokens": 18363,
+      "output_tokens": 3120,
+      "cost_usd": 0.00927075
+    },
+    {
+      "agent": "reviewer",
+      "stage_in": "designing",
+      "stage_out": "refining",
+      "note": "fail; 13 issue(s)",
+      "timestamp": "2026-08-24T14:12:04.722880+00:00",
+      "model": "gemini-3.1-flash-lite",
+      "input_tokens": 20441,
+      "output_tokens": 473,
+      "cost_usd": 0.00581975
+    },
+    {
+      "agent": "refine_gate",
+      "stage_in": "refining",
+      "stage_out": "refining",
+      "note": "refine 1/3 \u2192 architect; round 1 is the new best",
+      "timestamp": "2026-08-24T14:12:04.728502+00:00",
+      "model": "",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "agent": "architect",
+      "stage_in": "refining",
+      "stage_out": "designing",
+      "note": "reused 5 feature(s); generated blueprint, 3 ADR(s), and 8 component(s)",
+      "timestamp": "2026-08-24T14:12:14.839871+00:00",
+      "model": "gemini-3.1-flash-lite",
+      "input_tokens": 21013,
+      "output_tokens": 3442,
+      "cost_usd": 0.01041625
+    },
+    {
+      "agent": "reviewer",
+      "stage_in": "designing",
+      "stage_out": "done",
+      "note": "pass; 0 issue(s)",
+      "timestamp": "2026-08-24T14:12:18.172376+00:00",
+      "model": "gemini-3.1-flash-lite",
+      "input_tokens": 20017,
+      "output_tokens": 424,
+      "cost_usd": 0.00564025
+    }
+  ],
+  "retry_counts": {},
+  "refine_iterations": 1,
+  "ask_rounds": 1,
+  "stopped_on_cap": false,
+  "best_design": {
+    "round": 1,
+    "features": [
+      {
+        "id": "FEAT-001",
+        "name": "Identity and Access Management",
+        "description": "System functionality for customer authentication and profile maintenance.",
+        "scenario": "A customer registers for a new account, logs in securely, and updates their profile information.",
+        "related_requirement_ids": [
+          "FR-001",
+          "FR-002"
+        ],
+        "priority": "must",
+        "acceptance_criteria": [
+          "User can create an account with a unique identifier",
+          "User can authenticate securely",
+          "User can view and edit personal account details"
+        ]
+      },
+      {
+        "id": "FEAT-002",
+        "name": "Catalog and Discovery Service",
+        "description": "Functionality allowing users to browse and search the product catalog.",
+        "scenario": "A customer browses available categories and searches for a specific product keyword.",
+        "related_requirement_ids": [
+          "FR-003",
+          "FR-004"
+        ],
+        "priority": "must",
+        "acceptance_criteria": [
+          "Product catalog items are visible to users",
+          "Search functionality returns relevant results based on keywords"
+        ]
+      },
+      {
+        "id": "FEAT-003",
+        "name": "E-commerce Transaction Lifecycle",
+        "description": "Management of the shopping cart, payment, order processing, and fulfillment.",
+        "scenario": "A customer adds products to a cart, proceeds to checkout, completes payment, and tracks the subsequent order status.",
+        "related_requirement_ids": [
+          "FR-005",
+          "FR-006",
+          "FR-007",
+          "FR-009"
+        ],
+        "priority": "must",
+        "acceptance_criteria": [
+          "Cart persists item selection for the user",
+          "Checkout process handles payment and triggers order creation",
+          "User can view the current status of their order",
+          "Shipping and fulfillment workflows are triggered after payment"
+        ]
+      },
+      {
+        "id": "FEAT-004",
+        "name": "Inventory and Feedback Management",
+        "description": "Internal management of stock levels and community-generated product reviews.",
+        "scenario": "An administrator updates stock levels for a product, and a customer submits a review for a purchased item.",
+        "related_requirement_ids": [
+          "FR-008",
+          "FR-010"
+        ],
+        "priority": "should",
+        "acceptance_criteria": [
+          "Inventory levels adjust following successful orders",
+          "Users can submit and view reviews for products"
+        ]
+      },
+      {
+        "id": "FEAT-005",
+        "name": "Performance and Resiliency Infrastructure",
+        "description": "System capabilities to maintain operations under load and maintain user experience responsiveness.",
+        "scenario": "During a period of substantially higher peak traffic, the system continues to process requests and provide a responsive interface to users without failing.",
+        "related_requirement_ids": [
+          "NFR-001",
+          "NFR-002",
+          "NFR-003"
+        ],
+        "priority": "must",
+        "acceptance_criteria": [
+          "System maintains high availability during peak traffic periods",
+          "User interactions remain responsive under high load",
+          "System scales to handle peak demand without performance degradation"
+        ]
+      }
+    ],
+    "blueprint": {
+      "blueprint_id": "BP-001-ECOMMERCE-MODERNIZATION",
+      "project_name": "E-Commerce Monolith Modernization",
+      "selected_pattern": "Event-Driven Microservices (Strangler Fig Pattern)",
+      "rationale": "The monolith faces scalability bottlenecks during peak traffic. Adopting an event-driven microservices architecture via the Strangler Fig pattern allows for incremental extraction of high-traffic domains (e.g., Catalog, Order) while maintaining business continuity. Independent services enable targeted scaling to meet peak demand.",
+      "stakeholder_view": "This architecture transforms the monolithic application into a resilient, scalable platform. By breaking down the system into business-aligned services, we can independently scale and deploy features, ensuring high availability during peak traffic periods. Customers will experience a more responsive interface, and administrators gain modular control over operations like inventory and order management.",
+      "technical_view": "The system evolves from a Django monolith to a distributed architecture. An API Gateway manages ingress, routing traffic between a React frontend and independently deployable microservices. Each service (e.g., Identity, Catalog, Order) encapsulates its domain, owning a private database. Communication is facilitated through asynchronous events via a message broker to decouple services and improve throughput.",
+      "components": [
+        "API Gateway",
+        "Identity Service",
+        "Catalog Service",
+        "Order Processing Service",
+        "Inventory Service",
+        "Review Service",
+        "Message Broker",
+        "React Frontend Application"
+      ],
+      "data_flows": [
+        "React Frontend Application \u2192 API Gateway \u2192 Identity Service",
+        "React Frontend Application \u2192 API Gateway \u2192 Catalog Service",
+        "React Frontend Application \u2192 API Gateway \u2192 Order Processing Service",
+        "Order Processing Service \u2192 Message Broker \u2192 Inventory Service",
+        "Order Processing Service \u2192 Message Broker \u2192 Review Service"
+      ],
+      "addressed_feature_ids": [
+        "FEAT-001",
+        "FEAT-002",
+        "FEAT-003",
+        "FEAT-004",
+        "FEAT-005"
+      ],
+      "constraints_addressed": [
+        "Cloud scalability for peak traffic",
+        "Incremental migration with no business disruption",
+        "Maintain high availability"
+      ],
+      "assumptions": [
+        "The cloud environment provides a managed message broker (e.g., Amazon SQS/SNS or RabbitMQ).",
+        "Network latency introduced by microservice communication will be mitigated by efficient API design and frontend caching."
+      ],
+      "open_risks": [
+        "Operational complexity of managing distributed services (logging, tracing).",
+        "Potential data consistency challenges requiring eventual consistency patterns."
+      ],
+      "migration_steps": [
+        {
+          "title": "Establish API Gateway and Foundation",
+          "objective": "Introduce an entry point that will route requests to either the legacy monolith or new microservices.",
+          "changes": [
+            "Deploy API Gateway",
+            "Setup infrastructure for shared concerns (logging, monitoring)"
+          ],
+          "coexistence_or_data_strategy": "The legacy monolith remains the primary backend; traffic is proxied through the new API Gateway.",
+          "exit_condition": ""
+        },
+        {
+          "title": "Extract Catalog Service",
+          "objective": "Move read-heavy product browsing to a separate service to improve scalability during peak traffic.",
+          "changes": [
+            "Create Catalog Service",
+            "Migrate Product and Category data"
+          ],
+          "coexistence_or_data_strategy": "The API Gateway routes /products requests to the new service; other traffic hits the legacy monolith.",
+          "exit_condition": ""
+        },
+        {
+          "title": "Extract Identity and Order Services",
+          "objective": "Decouple core transaction capabilities to ensure system resilience.",
+          "changes": [
+            "Create Identity Service",
+            "Create Order Processing Service",
+            "Implement event-driven integration with legacy systems"
+          ],
+          "coexistence_or_data_strategy": "Sagas used to maintain consistency between new Order Processing Service and legacy systems during the migration period.",
+          "exit_condition": ""
+        }
+      ],
+      "version": "1.0.0",
+      "revision_note": ""
+    },
+    "adrs": [
+      {
+        "id": "ADR-001",
+        "title": "ADR-001: Adopt Event-Driven Microservices Pattern",
+        "status": "accepted",
+        "context": "The existing Django monolith is tightly coupled and struggles with scaling under peak load.",
+        "decision": "Transition to a distributed event-driven microservices architecture.",
+        "rationale": "Microservices enable independent scalability for high-traffic components like the product catalog. Event-driven communication decouples services, preventing chain reactions of failures.",
+        "alternatives_considered": [],
+        "positive_consequences": [],
+        "negative_consequences": [],
+        "related_feature_ids": [
+          "FEAT-005"
+        ],
+        "related_component_names": [
+          "Catalog Service",
+          "Order Processing Service",
+          "Message Broker"
+        ],
+        "source_references": [],
+        "evidence_ids": [
+          "KB-E003",
+          "KB-E005",
+          "KB-E008"
+        ],
+        "related_decision_topic_ids": [
+          "TOPIC-1",
+          "TOPIC-3",
+          "TOPIC-4"
+        ]
+      },
+      {
+        "id": "ADR-002",
+        "title": "ADR-002: Implement Database-per-Service Strategy",
+        "status": "accepted",
+        "context": "Shared databases lead to tight coupling and make independent deployments impossible.",
+        "decision": "Each microservice will own its private database instance/schema.",
+        "rationale": "Private data stores prevent unintended coupling and support independent development/deployment lifecycles.",
+        "alternatives_considered": [],
+        "positive_consequences": [],
+        "negative_consequences": [],
+        "related_feature_ids": [
+          "FEAT-003",
+          "FEAT-004"
+        ],
+        "related_component_names": [
+          "Identity Service",
+          "Order Processing Service",
+          "Catalog Service"
+        ],
+        "source_references": [],
+        "evidence_ids": [
+          "KB-E002",
+          "KB-E006"
+        ],
+        "related_decision_topic_ids": [
+          "TOPIC-2"
+        ]
+      }
+    ],
+    "components": [
+      {
+        "id": "COMP-001",
+        "name": "API Gateway",
+        "component_type": "service",
+        "purpose": "Entry point for client traffic.",
+        "description": "Routes requests to appropriate microservices or the legacy monolith.",
+        "inputs": [],
+        "outputs": [],
+        "dependencies": [],
+        "related_feature_ids": [
+          "FEAT-005"
+        ],
+        "related_adr_ids": [
+          "ADR-001"
+        ],
+        "technology_choices": [],
+        "security_considerations": [],
+        "scalability_considerations": []
+      },
+      {
+        "id": "COMP-002",
+        "name": "Identity Service",
+        "component_type": "service",
+        "purpose": "User management and authentication.",
+        "description": "Handles registration, login, and profile management independently of the store logic.",
+        "inputs": [],
+        "outputs": [],
+        "dependencies": [],
+        "related_feature_ids": [
+          "FEAT-001"
+        ],
+        "related_adr_ids": [
+          "ADR-002"
+        ],
+        "technology_choices": [],
+        "security_considerations": [],
+        "scalability_considerations": []
+      },
+      {
+        "id": "COMP-003",
+        "name": "Catalog Service",
+        "component_type": "service",
+        "purpose": "Product discovery and browsing.",
+        "description": "Provides high-performance access to product metadata.",
+        "inputs": [],
+        "outputs": [],
+        "dependencies": [],
+        "related_feature_ids": [
+          "FEAT-002"
+        ],
+        "related_adr_ids": [
+          "ADR-001"
+        ],
+        "technology_choices": [],
+        "security_considerations": [],
+        "scalability_considerations": []
+      },
+      {
+        "id": "COMP-004",
+        "name": "Order Processing Service",
+        "component_type": "service",
+        "purpose": "Transaction handling.",
+        "description": "Manages checkout, payment initiation, and order status updates.",
+        "inputs": [],
+        "outputs": [],
+        "dependencies": [],
+        "related_feature_ids": [
+          "FEAT-003"
+        ],
+        "related_adr_ids": [
+          "ADR-001",
+          "ADR-002"
+        ],
+        "technology_choices": [],
+        "security_considerations": [],
+        "scalability_considerations": []
+      },
+      {
+        "id": "COMP-005",
+        "name": "Inventory Service",
+        "component_type": "service",
+        "purpose": "Stock levels management.",
+        "description": "Updates inventory counts via events triggered by orders.",
+        "inputs": [],
+        "outputs": [],
+        "dependencies": [],
+        "related_feature_ids": [
+          "FEAT-004"
+        ],
+        "related_adr_ids": [
+          "ADR-001"
+        ],
+        "technology_choices": [],
+        "security_considerations": [],
+        "scalability_considerations": []
+      },
+      {
+        "id": "COMP-006",
+        "name": "Review Service",
+        "component_type": "service",
+        "purpose": "Community feedback.",
+        "description": "Stores and retrieves product reviews.",
+        "inputs": [],
+        "outputs": [],
+        "dependencies": [],
+        "related_feature_ids": [
+          "FEAT-004"
+        ],
+        "related_adr_ids": [
+          "ADR-001"
+        ],
+        "technology_choices": [],
+        "security_considerations": [],
+        "scalability_considerations": []
+      },
+      {
+        "id": "COMP-007",
+        "name": "Message Broker",
+        "component_type": "service",
+        "purpose": "Asynchronous communication.",
+        "description": "Decouples services using an event-driven pattern.",
+        "inputs": [],
+        "outputs": [],
+        "dependencies": [],
+        "related_feature_ids": [
+          "FEAT-003",
+          "FEAT-004"
+        ],
+        "related_adr_ids": [
+          "ADR-001"
+        ],
+        "technology_choices": [],
+        "security_considerations": [],
+        "scalability_considerations": []
+      },
+      {
+        "id": "COMP-008",
+        "name": "React Frontend Application",
+        "component_type": "service",
+        "purpose": "User interface.",
+        "description": "Maintains a responsive UI and interacts with the API Gateway.",
+        "inputs": [],
+        "outputs": [],
+        "dependencies": [],
+        "related_feature_ids": [
+          "FEAT-001",
+          "FEAT-002",
+          "FEAT-003"
+        ],
+        "related_adr_ids": [
+          "ADR-001"
+        ],
+        "technology_choices": [],
+        "security_considerations": [],
+        "scalability_considerations": []
+      }
+    ],
+    "review": {
+      "rubric_version": "3.0",
+      "overall_status": "fail",
+      "rubric_scores": {
+        "all_artifacts_present": 1,
+        "constraint_coverage": 1,
+        "traceability": 1,
+        "adr_presence": 1,
+        "source_integrity": 2,
+        "kb_evidence_grounding": 2,
+        "repo_grounding": true,
+        "flaw_detection": false,
+        "adr_soundness": false,
+        "best_practice_grounding": false,
+        "refinement_readiness": false
+      },
+      "judgment_reasons": {
+        "repo_grounding": "The design correctly maps the existing Django monolith structure (ecommerce/order, ecommerce/product, etc.) to a microservices-based target architecture.",
+        "flaw_detection": "The design fails to address critical functional requirements ('Shopping cart', 'Shipping and fulfilment') and non-functional requirements regarding peak traffic handling and responsive user experience.",
+        "adr_soundness": "The ADRs are missing critical required fields (alternatives_considered, positive_consequences, negative_consequences) and fail to record the material brownfield migration strategy, which is listed as an undocumented decision.",
+        "best_practice_grounding": "Multiple components (Inventory Service, Message Broker, React Frontend Application, Review Service) lack a specified migration disposition, and the Order Service is referenced in the migration steps but missing from the component registry.",
+        "refinement_readiness": "The deterministic check identified multiple high-severity issues including missing component descriptions, undocumented migration steps, and empty ADR fields."
+      },
+      "issues": [
+        {
+          "id": "DET-1",
+          "severity": "medium",
+          "category": "completeness",
+          "finding": "6 required field(s) are empty.",
+          "evidence": "adrs[0].alternatives_considered; adrs[0].positive_consequences; adrs[0].negative_consequences; adrs[1].alternatives_considered; adrs[1].positive_consequences; adrs[1].negative_consequences",
+          "suggested_fix": "Fill every required field on each architecture artifact.",
+          "requires_refinement": false,
+          "non_refinable": false
+        },
+        {
+          "id": "DET-2",
+          "severity": "high",
+          "category": "constraint",
+          "finding": "Constraint group(s) not addressed in the design: functional, non_functional.",
+          "evidence": "Uncovered requirement(s): functional: 'Shopping cart', 'Shipping and fulfilment'; non_functional: 'Handle substantially higher peak traffic without degradation', 'Maintain responsive customer-facing interactions'",
+          "suggested_fix": "Name every uncovered requirement verbatim in the design text (Blueprint, ADRs, or Components): functional: 'Shopping cart', 'Shipping and fulfilment'; non_functional: 'Handle substantially higher peak traffic without degradation', 'Maintain responsive customer-facing interactions'",
+          "requires_refinement": true,
+          "non_refinable": false
+        },
+        {
+          "id": "DET-3",
+          "severity": "high",
+          "category": "traceability",
+          "finding": "'Inventory Service' is a new internal service with no explicit migration disposition.",
+          "evidence": "component=Inventory Service",
+          "suggested_fix": "State 'Inventory Service's migration disposition explicitly: extracted in a named migration step, deferred to a later phase, retained in the legacy system for now, or external/already existing.",
+          "requires_refinement": true,
+          "non_refinable": false
+        },
+        {
+          "id": "DET-4",
+          "severity": "high",
+          "category": "traceability",
+          "finding": "'Message Broker' is a new internal service with no explicit migration disposition.",
+          "evidence": "component=Message Broker",
+          "suggested_fix": "State 'Message Broker's migration disposition explicitly: extracted in a named migration step, deferred to a later phase, retained in the legacy system for now, or external/already existing.",
+          "requires_refinement": true,
+          "non_refinable": false
+        },
+        {
+          "id": "DET-5",
+          "severity": "high",
+          "category": "traceability",
+          "finding": "'React Frontend Application' is a new internal service with no explicit migration disposition.",
+          "evidence": "component=React Frontend Application",
+          "suggested_fix": "State 'React Frontend Application's migration disposition explicitly: extracted in a named migration step, deferred to a later phase, retained in the legacy system for now, or external/already existing.",
+          "requires_refinement": true,
+          "non_refinable": false
+        },
+        {
+          "id": "DET-6",
+          "severity": "high",
+          "category": "traceability",
+          "finding": "'Review Service' is a new internal service with no explicit migration disposition.",
+          "evidence": "component=Review Service",
+          "suggested_fix": "State 'Review Service's migration disposition explicitly: extracted in a named migration step, deferred to a later phase, retained in the legacy system for now, or external/already existing.",
+          "requires_refinement": true,
+          "non_refinable": false
+        },
+        {
+          "id": "DET-7",
+          "severity": "high",
+          "category": "traceability",
+          "finding": "Migration step(s) introduce 'Order Service', but no Component Description exists for it in the target architecture.",
+          "evidence": "named in migration step(s): Extract Identity and Order Services",
+          "suggested_fix": "Either add a Component Description for 'Order Service', or correct the migration step to name only services the target architecture actually declares (or explicitly disposes as legacy, external, or deferred).",
+          "requires_refinement": true,
+          "non_refinable": false
+        },
+        {
+          "id": "DET-8",
+          "severity": "high",
+          "category": "traceability",
+          "finding": "Structured traceability links are missing or reference unknown artifacts.",
+          "evidence": "{'material_decisions_without_adr': ['brownfield migration and evolution strategy']}",
+          "suggested_fix": "Populate every Blueprint, Component, and ADR traceability field with identifiers or component names that resolve exactly.",
+          "requires_refinement": true,
+          "non_refinable": false
+        },
+        {
+          "id": "DET-9",
+          "severity": "medium",
+          "category": "adr",
+          "finding": "ADR(s) omit required decision evidence: ADR-001, ADR-002.",
+          "evidence": "Each ADR needs context, rationale, alternatives, and positive and negative consequences.",
+          "suggested_fix": "Complete every ADR's context, rationale, alternatives, and trade-offs.",
+          "requires_refinement": false,
+          "non_refinable": false
+        },
+        {
+          "id": "DET-10",
+          "severity": "high",
+          "category": "adr",
+          "finding": "Material architecture decision(s) are not represented by any ADR: brownfield migration and evolution strategy.",
+          "evidence": "material_decisions_without_adr=['brownfield migration and evolution strategy']",
+          "suggested_fix": "Add or extend an ADR whose related_decision_topic_ids names each listed decision topic, recording the actual decision made and citing genuinely relevant retrieved evidence if any exists for it.",
+          "requires_refinement": true,
+          "non_refinable": false
+        },
+        {
+          "id": "LLM-1",
+          "severity": "high",
+          "category": "grounding",
+          "finding": "The design does not adequately resolve the stated problem.",
+          "evidence": "The design fails to address critical functional requirements ('Shopping cart', 'Shipping and fulfilment') and non-functional requirements regarding peak traffic handling and responsive user experience.",
+          "suggested_fix": "Incorporate explicit descriptions or components for 'Shopping cart' and 'Shipping and fulfilment' and define the strategy (e.g., auto-scaling groups, caching) for handling peak traffic within the Blueprint.",
+          "requires_refinement": true,
+          "non_refinable": false
+        },
+        {
+          "id": "LLM-2",
+          "severity": "high",
+          "category": "adr",
+          "finding": "One or more ADR rationales or trade-offs are not sound.",
+          "evidence": "The ADRs are missing critical required fields (alternatives_considered, positive_consequences, negative_consequences) and fail to record the material brownfield migration strategy, which is listed as an undocumented decision.",
+          "suggested_fix": "Populate all ADR fields and create a new ADR to formally document the brownfield migration and evolution strategy, referencing the retrieved KB-E009.",
+          "requires_refinement": true,
+          "non_refinable": false
+        },
+        {
+          "id": "LLM-3",
+          "severity": "medium",
+          "category": "evidence",
+          "finding": "Recommendations are not adequately grounded in supplied evidence.",
+          "evidence": "Multiple components (Inventory Service, Message Broker, React Frontend Application, Review Service) lack a specified migration disposition, and the Order Service is referenced in the migration steps but missing from the component registry.",
+          "suggested_fix": "Add the 'Order Service' to the component registry and define an explicit migration disposition for all new services: whether they are extracted, deferred, or retained.",
+          "requires_refinement": true,
+          "non_refinable": false
+        }
+      ],
+      "requires_refinement": true,
+      "refinement_instruction": "The review found 13 issue(s). Address them in priority order.\n\n1. [high] Constraint group(s) not addressed in the design: functional, non_functional.\n   Evidence: Uncovered requirement(s): functional: 'Shopping cart', 'Shipping and fulfilment'; non_functional: 'Handle substantially higher peak traffic without degradation', 'Maintain responsive customer-facing...\n   Fix: Name every uncovered requirement verbatim in the design text (Blueprint, ADRs, or Components): functional: 'Shopping cart', 'Shipping and fulfilment'; non_functional: 'Handle substantially higher peak traffic without degradation'...\n2. [high] 'Inventory Service' is a new internal service with no explicit migration disposition.\n   Evidence: component=Inventory Service\n   Fix: State 'Inventory Service's migration disposition explicitly: extracted in a named migration step, deferred to a later phase, retained in the legacy system for now, or external/already existing.\n3. [high] 'Message Broker' is a new internal service with no explicit migration disposition.\n   Evidence: component=Message Broker\n   Fix: State 'Message Broker's migration disposition explicitly: extracted in a named migration step, deferred to a later phase, retained in the legacy system for now, or external/already existing.\n4. [high] 'React Frontend Application' is a new internal service with no explicit migration disposition.\n   Evidence: component=React Frontend Application\n   Fix: State 'React Frontend Application's migration disposition explicitly: extracted in a named migration step, deferred to a later phase, retained in the legacy system for now, or external/already existing.\n5. [high] 'Review Service' is a new internal service with no explicit migration disposition.\n   Evidence: component=Review Service\n   Fix: State 'Review Service's migration disposition explicitly: extracted in a named migration step, deferred to a later phase, retained in the legacy system for now, or external/already existing.\n6. [high] Migration step(s) introduce 'Order Service', but no Component Description exists for it in the target architecture.\n   Evidence: named in migration step(s): Extract Identity and Order Services\n   Fix: Either add a Component Description for 'Order Service', or correct the migration step to name only services the target architecture actually declares (or explicitly disposes as legacy, external, or deferred).\n7. [high] Structured traceability links are missing or reference unknown artifacts.\n   Evidence: {'material_decisions_without_adr': ['brownfield migration and evolution strategy']}\n   Fix: Populate every Blueprint, Component, and ADR traceability field with identifiers or component names that resolve exactly.\n8. [high] Material architecture decision(s) are not represented by any ADR: brownfield migration and evolution strategy.\n   Evidence: material_decisions_without_adr=['brownfield migration and evolution strategy']\n   Fix: Add or extend an ADR whose related_decision_topic_ids names each listed decision topic, recording the actual decision made and citing genuinely relevant retrieved evidence if any exists for it.\n\n(5 further lower-severity issue(s) omitted.)",
+      "not_applicable": []
+    }
+  },
+  "selected_round": 0,
+  "input_tokens": 90811,
+  "output_tokens": 8470,
+  "errors": []
+}

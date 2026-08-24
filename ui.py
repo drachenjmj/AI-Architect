@@ -161,11 +161,13 @@ section needed to change to support it.
 from __future__ import annotations
 
 import html
+import os
 import sys
 
 import streamlit as st
 
 import architecture_chat
+import demo_runs
 import field_discussion
 from pipeline.agents import clarifier as clarifier_gate
 from pipeline.llm import LLMError
@@ -518,6 +520,28 @@ def _demo_variant() -> str | None:
         return argv[position]
     return "pass"
 
+
+# ── bundled evaluation demo runs (Kush) ────────────────────────────────────
+# Curated, already-finished runs shipped under `demo_runs/` on branches that
+# carry them (see demo_runs.py). Cheap and safe to call on every rerun: an
+# already-seeded (or otherwise already-claimed) run id is left untouched, and
+# a checkout with no `demo_runs/` directory at all makes this a no-op — see
+# `seed_bundled_demo_runs`'s own idempotency contract. Swallowed like
+# `persistence.checkpoint`: losing a demo seed must never take the app down.
+#
+# ONLY when `AI_ARCHITECT_RUNS_DIR` is unset — i.e. only the TRUE default
+# `.cache/runs`, never a redirected one. `pipeline.persistence`'s own
+# docstring documents that override as how a run store gets isolated
+# ("tests do exactly that, so a test run never touches the real cache");
+# seeding an isolated/redirected store would inject bundled content into
+# every test (or deliberately separated run store) that redirects it and
+# expects an exact, self-controlled set of runs — exactly the kind of
+# fixture pollution this guard exists to prevent.
+if "AI_ARCHITECT_RUNS_DIR" not in os.environ:
+    try:
+        demo_runs.seed_bundled_demo_runs()
+    except Exception:  # noqa: BLE001 — a missing/broken bundle is never fatal
+        pass
 
 # ── session init ──────────────────────────────────────────────────────────
 st.session_state.setdefault("state", None)
