@@ -64,9 +64,11 @@ from typing import Sequence
 import streamlit as st
 import streamlit.components.v1 as components
 
+import field_discussion
 from pipeline.agents.clarifier import (
     CLARIFIER_LABEL,
     EDITABLE_RECORD_FIELDS,
+    field_purpose_hint,
     optional_slots,
     slot_question,
 )
@@ -1028,13 +1030,75 @@ def _render_advisory_thread(
             st.write(turn.answer)
 
 
+def render_ask_ai(
+    *, scope_id: str, field_key: str, field_label: str
+) -> tuple[str, str] | None:
+    """DRAW one compact "Ask AI" discussion beside a field. Pure — see the
+    module's ONE RULE: reads the session-only history
+    (`field_discussion.history_for`), draws it, and RETURNS what the human
+    just did. It never calls the model and never writes anywhere; the
+    caller (ui.py) acts on the returned intent:
+
+        ("ask",   message)     -> field_discussion.ask(...), then rerun
+        ("apply", suggestion)  -> copy `suggestion` into the field's own
+                                   draft/widget value, then rerun
+        None                   -> nothing submitted this render
+
+    MUST be called OUTSIDE the surrounding `st.form(...)` for that field:
+    Streamlit forbids any button but `st.form_submit_button` inside a form,
+    so every caller draws this (and the field's own label) ABOVE the form,
+    then renders the actual input INSIDE the form via the form object's own
+    method (`form.text_input(...)`/`form.text_area(...)`) with
+    `label_visibility="collapsed"` — see `render_context_approval` /
+    `render_optional_context` / ui.py's clarification and intake forms for
+    the exact interleaving pattern. A popover, not an expander: its content
+    is cheap (a session-state read, no disk/network I/O), so it needs none
+    of the lazy-render gating the sidebar's "Switch run" expander does.
+
+    `scope_id`/`field_key` are the SAME stable identity `field_discussion`
+    keys history by — see that module's docstring for the exact scheme
+    each screen uses (run_id + "context.<field>"/"clarification::<question>",
+    or `field_discussion.PRE_RUN_SCOPE` + "start.system_description" before
+    a run exists).
+    """
+    history = field_discussion.history_for(scope_id, field_key)
+    intent: tuple[str, str] | None = None
+    with st.popover("💬 Ask AI"):
+        st.caption(f"Discuss: {field_label}")
+        if not history:
+            st.caption(
+                "Ask before you fill this in — I can already see the "
+                "project context, so you do not need to repeat it."
+            )
+        for turn in history:
+            with st.chat_message("user"):
+                st.write(turn["question"])
+            with st.chat_message("assistant"):
+                st.write(turn["reply"])
+        message = st.text_input(
+            "Ask something",
+            key=f"ask_ai_msg_{scope_id}_{field_key}",
+            label_visibility="collapsed",
+            placeholder="What do you recommend?",
+        )
+        if st.button("Send", key=f"ask_ai_send_{scope_id}_{field_key}") and message.strip():
+            intent = ("ask", message.strip())
+        if history and history[-1]["suggested_answer"]:
+            st.info(f"Suggested answer: {history[-1]['suggested_answer']}")
+            if st.button("Use suggestion", key=f"ask_ai_use_{scope_id}_{field_key}"):
+                intent = ("apply", history[-1]["suggested_answer"])
+    return intent
+
+
 def render_optional_context(state: ArchitectState) -> tuple[str, object] | None:
     """The optional-context round. Returns the human's intent, or None.
 
     One of:
-        ("skip",     None)          leave every optional field as it stands
-        ("continue", ContextEdits)  apply whatever was filled in (may be none)
-        None                        this rerun carried no submission
+        ("skip",       None)          leave every optional field as it stands
+        ("continue",   ContextEdits)  apply whatever was filled in (may be none)
+        ("field_ask",  dict)          a per-field "Ask AI" message was sent —
+                                       kwargs for `field_discussion.ask(state, ...)`
+        None                          this rerun carried no submission
 
     Shown BETWEEN the required clarification questions and the Context Record
     review (`render_context_approval`) — never at the same time as either.
@@ -1046,6 +1110,14 @@ def render_optional_context(state: ArchitectState) -> tuple[str, object] | None:
     structurally prevents). Leaving every box blank and clicking "Skip
     optional questions" is a fully valid, unstyled outcome — this panel never
     adds warning/error styling for an empty field.
+
+    ASK AI, PER FIELD: each field also carries a compact `render_ask_ai`
+    popover (see its docstring for why it is drawn OUTSIDE this form). An
+    "apply" intent from it is handled RIGHT HERE — it is a session-state-only
+    write, not an LLM call or a ContextRecord mutation, so it stays within
+    the DRAW-only rule. An "ask" intent DOES need the model, so it is the one
+    thing this otherwise-DRAW-only function returns for ui.py to act on,
+    exactly like "skip"/"continue" already are — never called directly.
     """
     record = state.context_record
     if record is None:  # defensive: only reachable with a record locked
@@ -1057,47 +1129,88 @@ def render_optional_context(state: ArchitectState) -> tuple[str, object] | None:
         return "skip", None
 
     nonce = _record_nonce(record)
+    scope_id = state.run_id
     st.markdown("#### Optional context")
     st.caption(
         "These details may improve the design, but they are not required. "
         "You can answer any of them, leave fields blank, or skip this step."
     )
 
-    with st.form(f"optional_context_{nonce}"):
-        fields: dict[str, str | list[str]] = {}
-        for field in slots:
-            question = slot_question(field)
-            help_text = question.why_needed or None
-            if isinstance(getattr(record, field), list):
-                text = st.text_area(
-                    question.question,
-                    value="",
-                    help=help_text,
-                    height=68,
-                    key=f"oc_field_{field}_{nonce}",
-                )
-                value: str | list[str] = [
-                    line.strip() for line in text.splitlines() if line.strip()
-                ]
-            else:
-                value = st.text_input(
-                    question.question,
-                    value="",
-                    help=help_text,
-                    key=f"oc_field_{field}_{nonce}",
-                ).strip()
-            if value:
-                fields[field] = value
+    form = st.form(f"optional_context_{nonce}")
+    fields: dict[str, str | list[str]] = {}
+    for field in slots:
+        question = slot_question(field)
+        help_text = question.why_needed or None
+        input_key = f"oc_field_{field}_{nonce}"
+        field_key = f"context.{field}"
 
-        left, right = st.columns(2)
-        with left:
-            skip = st.form_submit_button(
-                "Skip optional questions", use_container_width=True
+        col1, col2 = st.columns([6, 1])
+        with col1:
+            st.markdown(question.question)
+        with col2:
+            intent = render_ask_ai(
+                scope_id=scope_id, field_key=field_key, field_label=question.question
             )
-        with right:
-            cont = st.form_submit_button(
-                "Continue", type="primary", use_container_width=True
+        if intent is not None:
+            action, value = intent
+            if action == "apply":
+                st.session_state[input_key] = value
+                st.rerun()
+            else:  # "ask" — needs the model; bubble up to ui.py's REACT half
+                other_known: dict[str, object] = {
+                    other: st.session_state.get(f"oc_field_{other}_{nonce}", "")
+                    for other in slots
+                    if other != field
+                }
+                other_known.update(
+                    {
+                        name: getattr(record, name)
+                        for name in EDITABLE_RECORD_FIELDS
+                        if getattr(record, name)
+                    }
+                )
+                return "field_ask", {
+                    "scope_id": scope_id,
+                    "field_key": field_key,
+                    "raw_prompt": state.initial_request.raw_prompt,
+                    "repo_representation": state.repo_representation,
+                    "known_context": other_known,
+                    "field_label": question.question,
+                    "field_purpose": question.why_needed,
+                    "current_draft_answer": st.session_state.get(input_key, ""),
+                    "message": value,
+                }
+
+        if isinstance(getattr(record, field), list):
+            text = form.text_area(
+                question.question,
+                value="",
+                help=help_text,
+                height=68,
+                key=input_key,
+                label_visibility="collapsed",
             )
+            value = [line.strip() for line in text.splitlines() if line.strip()]
+        else:
+            value = form.text_input(
+                question.question,
+                value="",
+                help=help_text,
+                key=input_key,
+                label_visibility="collapsed",
+            ).strip()
+        if value:
+            fields[field] = value
+
+    left, right = st.columns(2)
+    with left:
+        skip = form.form_submit_button(
+            "Skip optional questions", use_container_width=True
+        )
+    with right:
+        cont = form.form_submit_button(
+            "Continue", type="primary", use_container_width=True
+        )
 
     if skip:
         return "skip", None
@@ -1110,10 +1223,12 @@ def render_context_approval(state: ArchitectState) -> tuple[str, object] | None:
     """The approval panel. Returns the human's intent, or None if they did nothing.
 
     One of:
-        ("accept", None)            approve the record as it stands
-        ("edit",   ContextEdits)    a veto pass — fields, strikes, "you recommend"
-        ("ask",    "question")      a read-only question; resolves nothing
-        None                        this rerun carried no submission
+        ("accept",    None)            approve the record as it stands
+        ("edit",      ContextEdits)    a veto pass — fields, strikes, "you recommend"
+        ("ask",       "question")      a read-only question about the WHOLE record
+        ("field_ask", dict)            a per-field "Ask AI" message was sent —
+                                        kwargs for `field_discussion.ask(state, ...)`
+        None                          this rerun carried no submission
 
     Called AFTER the dedicated optional-context round (`render_optional_
     context`, resolved before this screen is ever reached — see
@@ -1129,6 +1244,12 @@ def render_context_approval(state: ArchitectState) -> tuple[str, object] | None:
     edit is right — nothing should fire until the whole veto pass is submitted —
     but batching a QUESTION with it would mean you could not ask what a field
     means without also submitting your changes to it.
+
+    ASK AI, PER FIELD: same pattern as `render_optional_context` — an
+    "apply" intent from `render_ask_ai` is a session-state-only write,
+    handled right here; an "ask" intent needs the model and is returned as
+    "field_ask" for ui.py to act on. See `render_ask_ai`'s docstring for why
+    it is drawn outside this form.
     """
     record = state.context_record
     if record is None:  # defensive: the gate is only reachable with a record
@@ -1136,6 +1257,7 @@ def render_context_approval(state: ArchitectState) -> tuple[str, object] | None:
         return None
 
     nonce = _record_nonce(record)
+    scope_id = state.run_id
     st.markdown("#### Approve the ground truth before any design work starts")
     st.caption(
         "Everything below was either taken from your request or assumed on your "
@@ -1145,28 +1267,62 @@ def render_context_approval(state: ArchitectState) -> tuple[str, object] | None:
         "accept, then approve."
     )
 
-    with st.form(f"context_gate_{nonce}"):
-        st.markdown("**The record**")
-        edited: dict[str, str | list[str]] = {}
-        for name in EDITABLE_RECORD_FIELDS:
-            current = getattr(record, name)
-            label = _field_label(name)
-            if isinstance(current, list):
-                text = st.text_area(
-                    label,
-                    value="\n".join(str(v) for v in current),
-                    help=_LIST_HELP,
-                    height=90,
-                    key=f"cg_field_{name}_{nonce}",
-                )
-                edited[name] = [line.strip() for line in text.splitlines() if line.strip()]
-            else:
-                edited[name] = st.text_input(
-                    label,
-                    value=str(current),
-                    key=f"cg_field_{name}_{nonce}",
-                ).strip()
+    form = st.form(f"context_gate_{nonce}")
+    st.markdown("**The record**")
+    edited: dict[str, str | list[str]] = {}
+    for name in EDITABLE_RECORD_FIELDS:
+        current = getattr(record, name)
+        label = _field_label(name)
+        input_key = f"cg_field_{name}_{nonce}"
+        field_key = f"context.{name}"
 
+        col1, col2 = st.columns([6, 1])
+        with col1:
+            st.markdown(f"**{label}**")
+        with col2:
+            intent = render_ask_ai(scope_id=scope_id, field_key=field_key, field_label=label)
+        if intent is not None:
+            action, value = intent
+            if action == "apply":
+                st.session_state[input_key] = value
+                st.rerun()
+            else:  # "ask" — needs the model; bubble up to ui.py's REACT half
+                other_known = {
+                    other: getattr(record, other)
+                    for other in EDITABLE_RECORD_FIELDS
+                    if other != name and getattr(record, other)
+                }
+                return "field_ask", {
+                    "scope_id": scope_id,
+                    "field_key": field_key,
+                    "raw_prompt": state.initial_request.raw_prompt,
+                    "repo_representation": state.repo_representation,
+                    "known_context": other_known,
+                    "field_label": label,
+                    "field_purpose": field_purpose_hint(name),
+                    "current_draft_answer": st.session_state.get(input_key, str(current)),
+                    "message": value,
+                }
+
+        if isinstance(current, list):
+            text = form.text_area(
+                label,
+                value="\n".join(str(v) for v in current),
+                help=_LIST_HELP,
+                height=90,
+                key=input_key,
+                label_visibility="collapsed",
+            )
+            edited[name] = [line.strip() for line in text.splitlines() if line.strip()]
+        else:
+            edited[name] = form.text_input(
+                label,
+                value=str(current),
+                key=input_key,
+                label_visibility="collapsed",
+            ).strip()
+
+    with form:
         recommend = st.multiselect(
             "I do not know — you recommend",
             options=list(EDITABLE_RECORD_FIELDS),

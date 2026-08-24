@@ -139,6 +139,8 @@ from __future__ import annotations
 import re
 from typing import Literal, Sequence
 
+from pydantic import BaseModel, Field
+
 from pipeline.agents.base import make_step, node
 from pipeline.llm import LLMUsage, attach_usage, llm_call
 from pipeline.state import (
@@ -150,8 +152,10 @@ from pipeline.state import (
     ContextEdits,
     ContextRecord,
     PendingDecision,
+    RepoRepresentation,
     Stage,
     StepLog,
+    new_run,
 )
 
 # The clarifier's judgment sets the quality of everything downstream, so it uses
@@ -766,15 +770,21 @@ CLARIFIER_ASSUME_SYSTEM = _CLARIFIER_BASE + _ASSUME_MODE
 # ══════════════════════════════════════════════════════════════════════════
 # Prompt assembly
 # ══════════════════════════════════════════════════════════════════════════
-def _format_repo_context(state: ArchitectState) -> str:
-    """Condensed repo analysis for the Clarifier, or "" on a greenfield run.
+def _format_repo_context(rep: RepoRepresentation | None) -> str:
+    """Condensed repo analysis, or "" when none is available yet.
 
     Malte's repo_ingestor runs BEFORE the clarifier (see orchestrator table), so
-    on a brownfield run `repo_representation` is already populated. Feeding a
-    compact digest of it here is what lets the clarifier ground its questions in
+    on a brownfield run `repo_representation` is already populated by the time
+    the clarifier or a field discussion (see `discuss_field`) reads it. Feeding
+    a compact digest of it here is what lets a caller ground its questions in
     the actual codebase and skip asking about facts the repo already shows.
+
+    Takes the `RepoRepresentation` directly (not `ArchitectState`) so it is
+    equally usable by a real run's clarifier prompt and by a field discussion
+    that may be running before any `ArchitectState` exists at all (the
+    pre-run intake form always passes `None` here — a repository is never
+    inspected before a run starts).
     """
-    rep = state.repo_representation
     if rep is None:
         return ""
     ts = rep.structure.tech_stack
@@ -826,7 +836,7 @@ def _build_prompt(state: ArchitectState) -> str:
     injected too, so the model extends their record instead of replacing it.
     """
     parts = [f"USER REQUEST:\n{state.initial_request.raw_prompt}"]
-    repo = _format_repo_context(state)
+    repo = _format_repo_context(state.repo_representation)
     if repo:
         parts.append(repo)
     if state.clarification_answers:
@@ -1610,6 +1620,231 @@ def ask_advisor(
     state.input_tokens += usage.input_tokens
     state.output_tokens += usage.output_tokens
     return answer
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Field-scoped "Ask AI" discussion (Integration, Kush)
+#
+# At every clarification/ground-truth decision point (required questions,
+# the optional round, the Context Record approval screen, and the pre-run
+# intake form's system description — see ui_sections.render_ask_ai and
+# ui.py) the human can open a small, CONTEXT-AWARE discussion about the one
+# field they are currently deciding, before committing an answer.
+#
+# Deliberately its own function, not a third `ask_advisor` subject: that
+# channel is scoped to a WHOLE frozen record or a WHOLE finished design and
+# writes to `state.advisory_turns`/`state.history` because it can only ever
+# run once either object exists. A field discussion is scoped to ONE field,
+# can run before a Context Record — or even a run — exists at all, and its
+# history is session-only by design (see ui_sections's module docstring for
+# the state/history contract) — multiplying `ask_advisor`'s per-turn
+# ledger writes across every field on a form would pollute the run's
+# official token accounting for what is meant to be a lightweight,
+# throwaway scratch pad.
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class FieldDiscussionResponse(BaseModel):
+    """Structured reply for one 'Ask AI' turn.
+
+    A STRUCTURED `suggested_answer` (rather than free text) is what lets the
+    UI's explicit "Use suggestion" button copy a value into the field
+    without guessing which part of a conversational reply to extract — see
+    `ui_sections.render_ask_ai`. The assistant is instructed to leave it
+    empty whenever it has no concrete value to offer.
+    """
+
+    reply: str = Field(..., description="Conversational answer shown to the person.")
+    suggested_answer: str = Field(
+        "",
+        description=(
+            "A concrete value for the CURRENT field, only when one is "
+            "actually warranted; empty otherwise."
+        ),
+    )
+
+
+# Reuses the SAME cheap model the advisor already defaults to — this is a
+# clarifier-adjacent, decision-support call, not an architecture decision,
+# so it never touches `role_model_override` or Architect/Reviewer routing.
+FIELD_DISCUSSION_MODEL = ADVISOR_MODEL
+
+_FIELD_DISCUSSION_SYSTEM = """
+You are a decision-support partner helping a person fill in ONE field of a
+software-architecture project's requirements before any design work starts.
+You are not the Architect: you never design the target architecture, and
+your job ends the moment they have enough clarity to write their own answer.
+
+You may:
+- explain what the field/question means and why it matters;
+- recommend what belongs in it, and name the trade-offs between options;
+- point out when a numeric target (latency, throughput, availability
+  percentage, concurrency, uptime) is not actually known and should stay
+  qualitative rather than invented;
+- distinguish stated facts from your own assumptions or general practice;
+- suggest concise wording for the field;
+- ask ONE short follow-up question when you genuinely need more information
+  before recommending anything.
+
+You must NOT:
+- silently design the target architecture, choose technologies, or make
+  architecture decisions — that is the Architect's job, later, with
+  literature grounding this conversation does not have;
+- invent repository facts beyond what <repository_context> states;
+- invent a numeric SLA, latency, throughput, availability, or concurrency
+  target that was not supplied in <project_context> or
+  <current_context_record> — recommend keeping it qualitative instead;
+- invent compliance obligations that were not already stated;
+- claim your recommendation is settled or already applied — it is only a
+  suggestion until the person themselves enters it into the field;
+- treat retrieved architecture literature as confirmed project fact — none
+  is supplied here, and you must not act as if it were.
+
+Use only the supplied project/repository/context facts as facts. Clearly
+label recommendations or assumptions as such. Be concise and practical —
+a few short sentences, not a survey of every option.
+
+Respond with the structured fields:
+- `reply`: your conversational answer to the person.
+- `suggested_answer`: a concrete value they could enter into the CURRENT
+  field, ONLY when you actually have one to offer. Leave it empty ("")
+  when you are only explaining, asking a follow-up, or when the honest
+  answer is "leave this qualitative for now" — never pad this field with
+  your reasoning; it must be exactly what would go in the field, nothing
+  else.
+""".strip()
+
+
+def _format_known_context(known_context: dict[str, object]) -> str:
+    """Render an arbitrary field->value snapshot generically. Pure.
+
+    Deliberately NOT tied to `ContextRecord`/`EDITABLE_RECORD_FIELDS` (unlike
+    `_format_record`): a field discussion can happen before any
+    `ContextRecord` exists at all (mid-clarification, or on the pre-run
+    intake form), so the caller supplies whatever it currently knows as a
+    plain dict — the record's fields once locked, the answers already given
+    plus the OTHER not-yet-submitted answers currently visible on the same
+    form while still asking, or nothing at all before a run exists.
+    """
+    lines: list[str] = []
+    for name, value in known_context.items():
+        rendered = "; ".join(str(v) for v in value) if isinstance(value, list) else str(value)
+        rendered = rendered.strip()
+        if rendered:
+            lines.append(f"  {name}: {rendered}")
+    return "\n".join(lines) if lines else "  (nothing else captured yet)"
+
+
+def _build_field_discussion_prompt(
+    *,
+    raw_prompt: str,
+    repo_representation: RepoRepresentation | None,
+    known_context: dict[str, object],
+    field_label: str,
+    field_purpose: str,
+    current_draft_answer: str,
+    history: Sequence[tuple[str, str]],
+    user_message: str,
+) -> str:
+    """Assemble one field-discussion turn's prompt, in clearly tagged
+    blocks. Pure."""
+    parts = [
+        "<project_context>\nOriginal request: "
+        f"{raw_prompt.strip() or '(not yet written)'}\n</project_context>"
+    ]
+
+    repo_block = _format_repo_context(repo_representation)
+    if repo_block:
+        parts.append(f"<repository_context>\n{repo_block}\n</repository_context>")
+
+    parts.append(
+        "<current_context_record>\n"
+        + _format_known_context(known_context)
+        + "\n</current_context_record>"
+    )
+
+    target_lines = [f"Field/question: {field_label}"]
+    if field_purpose:
+        target_lines.append(f"Purpose: {field_purpose}")
+    target_lines.append(
+        f"Current draft answer: {current_draft_answer.strip() or '(empty)'}"
+    )
+    parts.append(
+        "<discussion_target>\n" + "\n".join(target_lines) + "\n</discussion_target>"
+    )
+
+    if history:
+        thread = "\n".join(f"Them: {q}\nYou: {a}" for q, a in history)
+        parts.append(f"<prior_discussion>\n{thread}\n</prior_discussion>")
+
+    parts.append(f"<their_message>\n{user_message.strip()}\n</their_message>")
+    return "\n\n".join(parts)
+
+
+def discuss_field(
+    state: ArchitectState | None,
+    *,
+    raw_prompt: str,
+    repo_representation: RepoRepresentation | None,
+    known_context: dict[str, object],
+    field_label: str,
+    field_purpose: str = "",
+    current_draft_answer: str = "",
+    history: Sequence[tuple[str, str]] = (),
+    user_message: str,
+) -> FieldDiscussionResponse:
+    """One turn of a field-scoped "Ask AI" discussion. Never routed through
+    the architecture literature RAG — this is for clarifying user intent and
+    project constraints, not architecture decision-making.
+
+    UNLIKE `ask_advisor`, this never touches `state` at all: no
+    `advisory_turns` entry, no `StepLog`, no token totals written back. This
+    is a lightweight, session-only scratch discussion by design (see
+    `ui_sections.render_ask_ai`'s module docstring for the full state/history
+    contract) — the person is deciding what to type, not asking about a
+    frozen record or a finished design, and it can run before either exists.
+
+    `state` may be `None` (the pre-run intake form, before any
+    `ArchitectState` exists): `llm_call` is documented as pure with respect
+    to `state` (see pipeline/llm.py), so a throwaway `new_run(raw_prompt)`
+    satisfies its signature with no side effects, exactly like the module's
+    own smoke test does.
+
+    Raises `LLMError` on failure — callers report it and leave the field
+    exactly as it was, the same contract `ask_advisor` gives its callers.
+    """
+    prompt = _build_field_discussion_prompt(
+        raw_prompt=raw_prompt,
+        repo_representation=repo_representation,
+        known_context=known_context,
+        field_label=field_label,
+        field_purpose=field_purpose,
+        current_draft_answer=current_draft_answer,
+        history=history,
+        user_message=user_message,
+    )
+    probe_state = state if state is not None else new_run(raw_prompt or "(no description yet)")
+    response, _usage = llm_call(
+        probe_state,
+        prompt,
+        system=_FIELD_DISCUSSION_SYSTEM,
+        model=FIELD_DISCUSSION_MODEL,
+        response_schema=FieldDiscussionResponse,
+    )
+    return response
+
+
+def field_purpose_hint(field: str) -> str:
+    """The deterministic `why_needed` text for a ContextRecord field, if this
+    module has a template for it (`_CRITICAL_SLOT_QUESTIONS`), else "".
+
+    Public so `ui_sections.render_ask_ai` can show the SAME "why this
+    matters" line the required/optional clarification questions already
+    use, for any field that has one, without reaching into a private module
+    dict.
+    """
+    question = _CRITICAL_SLOT_QUESTIONS.get(field)
+    return question.why_needed if question is not None else ""
 
 
 # ══════════════════════════════════════════════════════════════════════════

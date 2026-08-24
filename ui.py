@@ -166,6 +166,7 @@ import sys
 import streamlit as st
 
 import architecture_chat
+import field_discussion
 from pipeline.agents import clarifier as clarifier_gate
 from pipeline.llm import LLMError
 from pipeline import orchestrator
@@ -182,6 +183,7 @@ from ui_sections import (
     clear_pending_feedback,
     get_pending_feedback,
     live_step_caption,
+    render_ask_ai,
     render_context_approval,
     render_optional_context,
     render_user_rounds,
@@ -300,6 +302,29 @@ def _submit_pending_feedback(state: ArchitectState) -> None:
         return
     clear_pending_feedback()
     _run(state)
+
+
+def _handle_field_ask(state: ArchitectState | None, payload: dict) -> None:
+    """REACT half of one per-field "Ask AI" turn — shared by every screen
+    that renders `ui_sections.render_ask_ai` (required questions, the
+    optional round, the Context Record approval screen, and the pre-run
+    intake form). `payload` is exactly the kwargs `render_ask_ai`'s callers
+    assembled for `field_discussion.ask`.
+
+    `state` may be `None` (the pre-run intake form): `field_discussion.ask`
+    passes it straight through to `clarifier.discuss_field`, which is
+    documented as safe with `state=None` — see that function's docstring.
+
+    Never enters the graph, never touches the Context Record — this is the
+    same "read-only side channel" contract `ask_advisor` gives its callers,
+    just session-only instead of billed to the run trace (see
+    field_discussion.py's module docstring for why).
+    """
+    try:
+        field_discussion.ask(state, **payload)
+    except LLMError as exc:
+        st.error(f"Could not reach the assistant: {exc}")
+    st.rerun()
 
 
 def _sign_off(state: ArchitectState, note: str) -> None:
@@ -607,21 +632,65 @@ if state is None:
     # user clicks Start (a half-filled form never starts a run). The URL gets
     # its own hard-validated box — the repo is first-class input, not something
     # to bury in the prompt text.
-    with st.form("intake"):
-        prompt = st.text_area(
-            "System description",
-            height=160,
-            placeholder=(
-                "e.g. Our monolithic online shop crashes on peak sale days. "
-                "On AWS, medium budget, must stay GDPR-compliant, ~50k peak users."
-            ),
+    #
+    # "Ask AI" is offered on the system description only — the field that
+    # actually needs reasoning about — not the repo URL, which has nothing
+    # to discuss (see ui_sections.render_ask_ai's docstring for why it is
+    # drawn outside this form). No `ArchitectState` exists yet here, so the
+    # discussion is scoped by `field_discussion.PRE_RUN_SCOPE` rather than a
+    # run_id, and its "project context" IS the draft description itself.
+    _INTAKE_DESC_KEY = "intake_system_description"
+    _INTAKE_REPO_KEY = "intake_repo_url"
+    col1, col2 = st.columns([6, 1])
+    with col1:
+        st.markdown("System description")
+    with col2:
+        intent = render_ask_ai(
+            scope_id=field_discussion.PRE_RUN_SCOPE,
+            field_key="start.system_description",
+            field_label="System description",
         )
-        repo_url = st.text_input(
-            "GitHub repository URL (optional)",
-            placeholder="https://github.com/org/repo",
-        )
-        st.caption("Leave empty for a greenfield project (no existing code).")
-        submitted = st.form_submit_button("Start")
+    if intent is not None:
+        action, value = intent
+        if action == "apply":
+            st.session_state[_INTAKE_DESC_KEY] = value
+            st.rerun()
+        else:  # "ask"
+            draft_desc = st.session_state.get(_INTAKE_DESC_KEY, "")
+            draft_repo = st.session_state.get(_INTAKE_REPO_KEY, "").strip()
+            _handle_field_ask(
+                None,
+                {
+                    "scope_id": field_discussion.PRE_RUN_SCOPE,
+                    "field_key": "start.system_description",
+                    "raw_prompt": draft_desc,
+                    "repo_representation": None,  # never inspected pre-run
+                    "known_context": {"repo_url": draft_repo} if draft_repo else {},
+                    "field_label": "System description",
+                    "field_purpose": "",
+                    "current_draft_answer": draft_desc,
+                    "message": value,
+                },
+            )
+
+    form = st.form("intake")
+    prompt = form.text_area(
+        "System description",
+        height=160,
+        key=_INTAKE_DESC_KEY,
+        label_visibility="collapsed",
+        placeholder=(
+            "e.g. Our monolithic online shop crashes on peak sale days. "
+            "On AWS, medium budget, must stay GDPR-compliant, ~50k peak users."
+        ),
+    )
+    repo_url = form.text_input(
+        "GitHub repository URL (optional)",
+        key=_INTAKE_REPO_KEY,
+        placeholder="https://github.com/org/repo",
+    )
+    form.caption("Leave empty for a greenfield project (no existing code).")
+    submitted = form.form_submit_button("Start")
     if submitted:
         clean_url = repo_url.strip()
         if not prompt.strip():
@@ -662,22 +731,73 @@ else:
         with st.chat_message("assistant"):
             st.write("Before I can design safely, I need a few answers:")
             # st.form batches the inputs: nothing happens until Submit,
-            # so a half-filled form never triggers a pipeline run.
-            with st.form("clarify_form"):
-                answers: dict[str, str] = {}
-                for i, q in enumerate(state.clarifying_questions):
-                    answers[q] = st.text_input(q, key=f"answer_{i}")
-                if st.form_submit_button("Submit answers"):
-                    # Merge (not replace): keep earlier rounds so the
-                    # Clarifier re-judges with the FULL Q&A history.
-                    state.clarification_answers.update(
-                        {q: a.strip() for q, a in answers.items() if a.strip()}
+            # so a half-filled form never triggers a pipeline run. The
+            # per-question "Ask AI" popover is drawn OUTSIDE the form (see
+            # ui_sections.render_ask_ai — Streamlit forbids any button but
+            # form_submit_button inside a form); only the actual input stays
+            # inside, via the form object's own method.
+            form = st.form("clarify_form")
+            answer_keys = [f"answer_{i}" for i in range(len(state.clarifying_questions))]
+            for i, q in enumerate(state.clarifying_questions):
+                # Question TEXT is the stable field identity here — the
+                # loop index alone would wrongly reuse one field's history
+                # for a DIFFERENT question if a later round asks something
+                # else at the same position (see field_discussion.py).
+                field_key = f"clarification::{q}"
+                col1, col2 = st.columns([6, 1])
+                with col1:
+                    st.markdown(q)
+                with col2:
+                    intent = render_ask_ai(
+                        scope_id=state.run_id, field_key=field_key, field_label=q
                     )
-                    # No `begin_user_round` here. Answering the clarifier is the
-                    # pipeline working as designed, not the human asking it to
-                    # redo work — and charging for it drained the refinement
-                    # budget before design started. See state.user_rounds.
-                    _run(state)  # entry router sends us back to clarifier
+                if intent is not None:
+                    action, value = intent
+                    if action == "apply":
+                        st.session_state[f"answer_{i}"] = value
+                        st.rerun()
+                    else:  # "ask" — other currently-visible draft answers,
+                        # not only the prior rounds already on the record.
+                        known = dict(state.clarification_answers)
+                        known.update(
+                            {
+                                state.clarifying_questions[j]: st.session_state.get(key, "")
+                                for j, key in enumerate(answer_keys)
+                                if j != i and st.session_state.get(key, "").strip()
+                            }
+                        )
+                        _handle_field_ask(
+                            state,
+                            {
+                                "scope_id": state.run_id,
+                                "field_key": field_key,
+                                "raw_prompt": state.initial_request.raw_prompt,
+                                "repo_representation": state.repo_representation,
+                                "known_context": known,
+                                "field_label": q,
+                                "field_purpose": "",
+                                "current_draft_answer": st.session_state.get(
+                                    f"answer_{i}", ""
+                                ),
+                                "message": value,
+                            },
+                        )
+                form.text_input(q, key=f"answer_{i}", label_visibility="collapsed")
+            if form.form_submit_button("Submit answers"):
+                # Merge (not replace): keep earlier rounds so the
+                # Clarifier re-judges with the FULL Q&A history.
+                state.clarification_answers.update(
+                    {
+                        q: st.session_state.get(f"answer_{i}", "").strip()
+                        for i, q in enumerate(state.clarifying_questions)
+                        if st.session_state.get(f"answer_{i}", "").strip()
+                    }
+                )
+                # No `begin_user_round` here. Answering the clarifier is the
+                # pipeline working as designed, not the human asking it to
+                # redo work — and charging for it drained the refinement
+                # budget before design started. See state.user_rounds.
+                _run(state)  # entry router sends us back to clarifier
 
     # 3a-bis. Paused on the OPTIONAL round? → a dedicated, clearly-skippable
     #     step between the required questions and the review screen. Resolved
@@ -692,15 +812,19 @@ else:
 
             if intent is not None:
                 action, payload = intent
-                clarifier_gate.resolve_optional_context(
-                    state, payload if action == "continue" else None
-                )
-                # No `_run` here — no pipeline work happens on this transition,
-                # only a move to the next caller-resolved pause. Saved
-                # explicitly because nothing else will before the next graph
-                # entry (see `_sign_off`'s note on the same situation).
-                save_state(state)
-                st.rerun()
+                if action == "field_ask":
+                    _handle_field_ask(state, payload)
+                else:
+                    clarifier_gate.resolve_optional_context(
+                        state, payload if action == "continue" else None
+                    )
+                    # No `_run` here — no pipeline work happens on this
+                    # transition, only a move to the next caller-resolved
+                    # pause. Saved explicitly because nothing else will
+                    # before the next graph entry (see `_sign_off`'s note on
+                    # the same situation).
+                    save_state(state)
+                    st.rerun()
 
     # 3b. Paused at the context lock? → the veto panel. Resolved ENTIRELY here:
     #     the graph is not entered until the human has accepted, or until an
@@ -737,6 +861,9 @@ else:
                         # gate — report it and leave the pause exactly as it was.
                         st.error(f"Could not answer that: {exc}")
                     st.rerun()
+
+                elif action == "field_ask":
+                    _handle_field_ask(state, payload)
 
                 else:  # "edit"
                     try:
