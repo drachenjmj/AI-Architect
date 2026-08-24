@@ -17,6 +17,7 @@ from pipeline.state import (
     Blueprint,
     ComponentDescription,
     ContextRecord,
+    DecisionTopic,
     Feature,
     KBChunk,
     MigrationStep,
@@ -133,6 +134,7 @@ def _single_feature_state(
     component_name: str,
     component_purpose: str,
     component_description: str,
+    decision_topic: str,
     source: str,
     source_content: str,
     repo_url: str = "",
@@ -157,6 +159,14 @@ def _single_feature_state(
     state.repo_representation = repo_representation
     state.retrieved_knowledge = [
         KBChunk(content=source_content, source=source, box=1, evidence_id="KB-E001")
+    ]
+    state.decision_topics = [
+        DecisionTopic(
+            id="TOPIC-1",
+            topic=decision_topic,
+            query=decision_topic,
+            evidence_ids=["KB-E001"],
+        )
     ]
     state.features = [
         Feature(
@@ -198,6 +208,7 @@ def _single_feature_state(
             related_component_names=[component_name],
             source_references=[source],
             evidence_ids=["KB-E001"],
+            related_decision_topic_ids=["TOPIC-1"],
         )
     ]
     state.components = [
@@ -277,10 +288,13 @@ def sound_shop_state() -> ArchitectState:
         component_name="Checkout Service",
         component_purpose="Accept checkout requests without blocking on order processing.",
         component_description="Implements FEAT-001 under ADR-001 using an AWS queue.",
+        decision_topic="queue-buffered incremental checkout extraction for peak scaling",
         source="queue-pattern.md",
         source_content=(
             "A durable queue buffers burst traffic and decouples producers from "
-            "slower consumers; consumers must be idempotent."
+            "slower consumers; consumers must be idempotent. Incrementally "
+            "extracting an overloaded checkout boundary allows the legacy system "
+            "and the new consumer to coexist during migration."
         ),
         repo_url="https://example.invalid/seasonal-shop",
         repo_representation=_shop_repo(),
@@ -454,10 +468,13 @@ def sound_healthcare_state() -> ArchitectState:
         component_name="Appointment Service",
         component_purpose="Own appointment availability and booking transactions.",
         component_description="Implements FEAT-001 and ADR-001 with EU data controls.",
+        decision_topic="appointment consistency and GDPR data architecture",
         source="healthcare-privacy.md",
         source_content=(
             "Appointment data should use access controls, encryption, retention "
-            "limits, and EU-region processing when GDPR applies."
+            "limits, and EU-region processing when GDPR applies. Transactional "
+            "uniqueness controls prevent concurrent requests from double-booking "
+            "the same appointment slot."
         ),
     )
 
@@ -530,6 +547,7 @@ def repo_mismatch_state() -> ArchitectState:
         component_name="Inventory Event Service",
         component_purpose="Record inventory mutations as immutable events.",
         component_description="Implements FEAT-001 under ADR-001 through Kafka.",
+        decision_topic="tamper-evident audit logging strategy",
         source="audit-logging.md",
         source_content="Append-only audit records should capture actor, action, target, and timestamp.",
         repo_url="https://example.invalid/warehouse-api",
@@ -595,6 +613,7 @@ def sound_modular_monolith_state() -> ArchitectState:
         component_name="Inventory Application",
         component_purpose="Own transactional stock operations in separated modules.",
         component_description="Implements FEAT-001 under ADR-001 without distributed overhead.",
+        decision_topic="service decomposition and transaction boundaries at low scale",
         source="modular-monolith.md",
         source_content=(
             "A modular monolith can preserve clear boundaries and transactions when "

@@ -84,6 +84,16 @@ def test_full_code_score_seed_cases_have_no_hidden_deterministic_blockers():
         assert blocking == [], f"{scenario.name}: {blocking}"
 
 
+def test_seed_cases_use_current_decision_topic_contract():
+    for scenario in SCENARIOS:
+        state = scenario.build_state()
+        topic_ids = {topic.id for topic in state.decision_topics}
+        assert topic_ids, scenario.name
+        for adr in state.adrs:
+            assert adr.related_decision_topic_ids, (scenario.name, adr.id)
+            assert set(adr.related_decision_topic_ids) <= topic_ids
+
+
 def test_correct_final_verdict_for_wrong_reason_is_a_disagreement():
     scenario = next(item for item in SCENARIOS if not item.expected_pass)
     wrong_judgments = dict(scenario.expected_judgments)
