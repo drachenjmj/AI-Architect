@@ -85,6 +85,7 @@ from pipeline.llm import (
     LLMUsage,
     attach_usage,
     llm_call,
+    role_gemini_thinking_level,
     role_model_override,
     sum_usage,
 )
@@ -1103,6 +1104,7 @@ def architect_node(state: ArchitectState) -> dict:
                 system=FEATURE_SYSTEM_PROMPT,
                 model=role_model_override("architect", ARCHITECT_MODEL),
                 response_schema=FeatureDesign,
+                thinking_level=role_gemini_thinking_level("architect"),
             )
             usages.append(phase1_usage)
 
@@ -1129,6 +1131,7 @@ def architect_node(state: ArchitectState) -> dict:
             system=ARCHITECTURE_SYSTEM_PROMPT,
             model=role_model_override("architect", ARCHITECT_MODEL),
             response_schema=ArchitectureDesign,
+            thinking_level=role_gemini_thinking_level("architect"),
         )
         usages.append(phase2_usage)
 

@@ -55,7 +55,7 @@ def _install_stubs(monkeypatch) -> list[str]:
     calls: list[str] = []
 
     def _log(label, build):
-        def stub(state, prompt, *, system="", model="flash-lite", response_schema=None):
+        def stub(state, prompt, *, system="", model="flash-lite", response_schema=None, thinking_level=None):
             calls.append(label)
             value = build(state, prompt, response_schema)
             return value, tc.fake_usage()
@@ -283,7 +283,7 @@ def test_failed_node_keeps_already_billed_tokens(monkeypatch):
     """
     _install_stubs(monkeypatch)
 
-    def _fail_on_second_call(state, prompt, *, system="", model="", response_schema=None):
+    def _fail_on_second_call(state, prompt, *, system="", model="", response_schema=None, thinking_level=None):
         if response_schema is arch.FeatureDesign:
             return tc._architect_response(
                 state, prompt, response_schema=response_schema
@@ -312,7 +312,7 @@ def test_failed_node_does_not_double_count_carried_usage(monkeypatch):
     """
     _install_stubs(monkeypatch)
 
-    def _billed_but_unusable(state, prompt, *, system="", model="", response_schema=None):
+    def _billed_but_unusable(state, prompt, *, system="", model="", response_schema=None, thinking_level=None):
         if response_schema is arch.FeatureDesign:
             return tc._architect_response(
                 state, prompt, response_schema=response_schema

@@ -21,7 +21,13 @@ from pipeline.agents.architect import (
     web_context_block,
 )
 from pipeline.agents.base import make_step, node
-from pipeline.llm import LLMUsage, attach_usage, llm_call, role_model_override
+from pipeline.llm import (
+    LLMUsage,
+    attach_usage,
+    llm_call,
+    role_gemini_thinking_level,
+    role_model_override,
+)
 from pipeline.review_checks import DeterministicChecks, run_deterministic_checks
 from pipeline.state import (
     ArchitectState,
@@ -584,6 +590,7 @@ def run_reviewer(
             system=REVIEWER_SYSTEM,
             model=model,
             response_schema=LLMJudgments,
+            thinking_level=role_gemini_thinking_level("reviewer"),
         )
         report = _assemble_report(judgments, checks, state)
         stage_out = Stage.REFINING if report.requires_refinement else Stage.DONE

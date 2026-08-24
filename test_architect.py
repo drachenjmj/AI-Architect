@@ -45,6 +45,7 @@ def _fake_architect_llm(
     system="",
     model="",
     response_schema=None,
+    thinking_level=None,
 ):
     """Return canned outputs for both Architect phases, as `(reply, usage)`."""
 
@@ -299,7 +300,7 @@ def _incomplete_coverage_llm(calls: list[str], missing: str):
     test proves the fail-fast path, not merely a call-count assertion after
     the fact."""
 
-    def stub(state, prompt, *, system="", model="", response_schema=None):
+    def stub(state, prompt, *, system="", model="", response_schema=None, thinking_level=None):
         calls.append("phase1" if response_schema is arch.FeatureDesign else "phase2")
         if response_schema is arch.FeatureDesign:
             covered = ["NFR-001"] if missing == "functional" else ["FR-001"]
@@ -377,7 +378,7 @@ def test_fail_fast_preserves_phase_one_token_accounting():
 def _counting_llm(calls: list[str]):
     """`_fake_architect_llm`, but recording which phase each call was for."""
 
-    def stub(state, prompt, *, system="", model="", response_schema=None):
+    def stub(state, prompt, *, system="", model="", response_schema=None, thinking_level=None):
         calls.append("phase1" if response_schema is arch.FeatureDesign else "phase2")
         return _fake_architect_llm(
             state, prompt, system=system, model=model, response_schema=response_schema

@@ -49,6 +49,8 @@ from pipeline.llm import (
 ROUTING_ENV_VARS = (
     "ARCHITECT_LLM_PROVIDER", "ARCHITECT_LLM_MODEL",
     "REVIEWER_LLM_PROVIDER", "REVIEWER_LLM_MODEL",
+    # the Gemini thinking seam reads the same per-call env shape
+    "ARCHITECT_GEMINI_THINKING_LEVEL", "REVIEWER_GEMINI_THINKING_LEVEL",
 )
 
 
@@ -658,3 +660,267 @@ def test_reviewer_schema_keeps_native_structured_output(monkeypatch):
     )
 
     assert "format" in capture[0]["output_config"]
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Role-specific Gemini thinking levels — the final evaluation runs the
+# Gemini arm with an EXPLICIT ThinkingConfig.thinking_level (HIGH) on the
+# Architect and Reviewer only. Everything below is offline: the Google
+# client is a stub that captures the GenerateContentConfig it was handed.
+# ═════════════════════════════════════════════════════════════════════════
+
+
+class _FakeUsageMeta:
+    def __init__(self, input_tokens: int, output_tokens: int):
+        self.prompt_token_count = input_tokens
+        self.candidates_token_count = output_tokens
+
+
+class _FakeGenerateContentResponse:
+    """The three fields the Google path reads: text, usage_metadata, parsed."""
+
+    def __init__(self, text: str, parsed, input_tokens: int, output_tokens: int):
+        self.text = text
+        self.parsed = parsed
+        self.usage_metadata = _FakeUsageMeta(input_tokens, output_tokens)
+
+
+class _FakeGoogleModels:
+    def __init__(self, response, capture=None):
+        self._response = response
+        self.capture = capture if capture is not None else []
+
+    def generate_content(self, *, model, contents, config):
+        self.capture.append({"model": model, "contents": contents, "config": config})
+        return self._response
+
+
+class _FakeGoogleClient:
+    def __init__(self, response, capture=None):
+        self.models = _FakeGoogleModels(response, capture)
+
+
+def _google_stub(monkeypatch, capture, text="ok", parsed=None, in_tok=3, out_tok=1):
+    client = _FakeGoogleClient(
+        _FakeGenerateContentResponse(text, parsed, in_tok, out_tok), capture,
+    )
+    monkeypatch.setattr(llm, "_get_client", lambda: client)
+    return client
+
+
+_THINKING_ENV = (
+    "ARCHITECT_GEMINI_THINKING_LEVEL", "REVIEWER_GEMINI_THINKING_LEVEL",
+)
+
+
+def _config_thinking_level(config) -> str | None:
+    """The effective thinking_level on a captured GenerateContentConfig, as
+    the API contract spells it (lowercase), None when not set."""
+    tc = getattr(config, "thinking_config", None)
+    if tc is None:
+        return None
+    level = getattr(tc, "thinking_level", None)
+    if level is None:
+        return None
+    # the SDK stores a ThinkingLevel enum member whose value is UPPERCASE
+    return getattr(level, "value", str(level)).lower()
+
+
+def test_architect_env_sends_high_to_google_call(monkeypatch):
+    from pipeline.state import new_run
+
+    monkeypatch.setenv("ARCHITECT_GEMINI_THINKING_LEVEL", "high")
+    capture = []
+    _google_stub(monkeypatch, capture)
+
+    _text, usage = llm.llm_call(
+        new_run("p"), "hi",
+        model=role_model_override("architect", arch.ARCHITECT_MODEL),
+        thinking_level=llm.role_gemini_thinking_level("architect"),
+    )
+
+    assert capture[0]["model"] == MODELS["flash-lite"]  # still Google-routed
+    assert _config_thinking_level(capture[0]["config"]) == "high"
+    assert usage.thinking_level == "high"  # recorded, not just sent
+
+
+def test_reviewer_env_sends_high_to_google_call(monkeypatch):
+    from pipeline.state import new_run
+
+    monkeypatch.setenv("REVIEWER_GEMINI_THINKING_LEVEL", "high")
+    capture = []
+    _google_stub(monkeypatch, capture)
+
+    _text, usage = llm.llm_call(
+        new_run("p"), "hi",
+        model=role_model_override("reviewer", rev.REVIEWER_MODEL),
+        thinking_level=llm.role_gemini_thinking_level("reviewer"),
+    )
+
+    assert _config_thinking_level(capture[0]["config"]) == "high"
+    assert usage.thinking_level == "high"
+
+
+def test_architect_and_reviewer_levels_are_independent(monkeypatch):
+    monkeypatch.setenv("ARCHITECT_GEMINI_THINKING_LEVEL", "high")
+    # reviewer var unset -> reviewer seam resolves None even with architect set
+
+    assert llm.role_gemini_thinking_level("architect") == "high"
+    assert llm.role_gemini_thinking_level("reviewer") is None
+
+    monkeypatch.setenv("REVIEWER_GEMINI_THINKING_LEVEL", "low")
+    monkeypatch.delenv("ARCHITECT_GEMINI_THINKING_LEVEL")
+    assert llm.role_gemini_thinking_level("architect") is None
+    assert llm.role_gemini_thinking_level("reviewer") == "low"
+
+
+def test_clarifier_and_advisor_have_no_thinking_seam(monkeypatch):
+    """No CLARIFIER_/ADVISOR_ env reader exists, so an evaluation-time
+    ARCHITECT/REVIEWER setting cannot reach them — same no-seam guarantee
+    as the provider routing above."""
+    for var in _THINKING_ENV:
+        monkeypatch.setenv(var, "high")
+
+    assert llm.role_gemini_thinking_level("clarifier") is None
+    assert llm.role_gemini_thinking_level("advisor") is None
+
+
+def test_unset_env_preserves_existing_gemini_behavior(monkeypatch):
+    """Both new vars absent -> NO thinking_config on the request at all, and
+    the usage records None: byte-for-byte the pre-seam behavior."""
+    from pipeline.state import new_run
+
+    capture = []
+    _google_stub(monkeypatch, capture)
+
+    _text, usage = llm.llm_call(new_run("p"), "hi", model="flash-lite")
+
+    assert capture[0]["config"].thinking_config is None
+    assert usage.thinking_level is None
+
+
+def test_all_four_api_levels_are_accepted(monkeypatch):
+    from pipeline.state import new_run
+
+    for level in llm.GEMINI_THINKING_LEVELS:
+        capture = []
+        _google_stub(monkeypatch, capture)
+
+        _text, usage = llm.llm_call(
+            new_run("p"), "hi", model="flash-lite", thinking_level=level,
+        )
+        assert _config_thinking_level(capture[0]["config"]) == level, level
+        assert usage.thinking_level == level
+
+
+def test_invalid_level_fails_loudly(monkeypatch):
+    """The SDK itself only WARNS on an unknown level string — the explicit
+    allowlist in llm_call is the real validation, and it must raise before
+    any request is sent (an evaluation run must never silently run at
+    default thinking while believing it ran HIGH)."""
+    from pipeline.state import new_run
+
+    capture = []
+    _google_stub(monkeypatch, capture)
+
+    with pytest.raises(LLMError, match="ultra"):
+        llm.llm_call(new_run("p"), "hi", model="flash-lite", thinking_level="ultra")
+    assert capture == []  # nothing was sent
+
+
+def test_claude_calls_reject_gemini_thinking_level(monkeypatch):
+    """A Gemini thinking level on an Anthropic-routed call is a
+    misconfiguration (Claude effort is CLAUDE_EFFORT) — fail loudly, and
+    never put thinking config into an Anthropic request."""
+    from pipeline.state import new_run
+
+    fake_client = _FakeAnthropicClient(
+        response=_FakeMessage("ok", input_tokens=3, output_tokens=1)
+    )
+    monkeypatch.setattr(llm, "_get_anthropic_client", lambda: fake_client)
+
+    with pytest.raises(LLMError, match="CLAUDE_EFFORT"):
+        llm.llm_call(
+            new_run("p"), "hi", model="anthropic/claude-opus-5",
+            thinking_level="high",
+        )
+    # and no Anthropic request left the building
+    assert fake_client.messages.capture == []
+
+
+def test_thinking_level_flows_into_step_log_metadata(monkeypatch):
+    """Run-trace provenance: the effective level lands on the StepLog via
+    make_step, so the final evaluation can prove HIGH per step without
+    re-deriving it from `.env`."""
+    from pipeline.agents.base import make_step
+    from pipeline.llm import LLMUsage, sum_usage
+    from pipeline.state import Stage
+
+    usage = LLMUsage(
+        model="gemini-3.1-flash-lite", input_tokens=1, output_tokens=1,
+        cost_usd=0.0, thinking_level="high",
+    )
+    step = make_step("reviewer", Stage.DESIGNING, Stage.DONE, "n", usage)
+    assert step.thinking_level == "high"
+
+    # sum_usage keeps it across the Architect's two-call fold...
+    total = sum_usage([usage, usage.model_copy()])
+    assert total.thinking_level == "high"
+    # ...mixes visibly rather than silently picking one...
+    mixed = sum_usage([usage, LLMUsage(model="x", thinking_level="low")])
+    assert mixed.thinking_level == "high, low"
+    # ...and stays None when nothing was configured.
+    assert sum_usage([LLMUsage(model="x"), LLMUsage(model="x")]).thinking_level is None
+
+    # A step without usage stays "" (old checkpoints deserialize unchanged).
+    plain = make_step("researcher", step.stage_in, step.stage_out, "n", None)
+    assert plain.thinking_level == ""
+
+
+def test_run_reviewer_passes_env_thinking_level_to_llm_call(monkeypatch):
+    """The node-level seam: run_reviewer must forward the env-resolved level
+    into llm_call for its Google call (the counterpart of the model-routing
+    test above)."""
+    monkeypatch.setenv("REVIEWER_GEMINI_THINKING_LEVEL", "high")
+
+    captured = {}
+
+    def _capture(_state, _prompt, **kwargs):
+        captured["thinking_level"] = kwargs.get("thinking_level")
+        return trev._all_pass_judgments(), trev.tc.fake_usage()
+
+    monkeypatch.setattr(rev, "llm_call", _capture)
+    rev.run_reviewer(trev._good_design_state())
+
+    assert captured["thinking_level"] == "high"
+
+
+def test_architect_node_passes_env_thinking_level_to_llm_calls(monkeypatch):
+    """Both Architect phases forward the env-resolved level (initial pass:
+    phase 1 features AND phase 2 design both carry it)."""
+    from pipeline.state import Feature
+
+    monkeypatch.setenv("ARCHITECT_GEMINI_THINKING_LEVEL", "high")
+
+    captured = []
+
+    def _fake_call(_state, _prompt, **kwargs):
+        captured.append(kwargs.get("thinking_level"))
+        if kwargs.get("response_schema") is arch.FeatureDesign:
+            return arch.FeatureDesign(features=[Feature(
+                id="FEAT-001", name="Survive seasonal peak load",
+                scenario="Checkout remains responsive under seasonal peaks.",
+                related_requirement_ids=[
+                    "Customers complete purchases",
+                    "Handle 50k concurrent users",
+                ],
+            )]), trev.tc.fake_usage()
+        return arch.ArchitectureDesign(
+            blueprint=arch.Blueprint(stakeholder_view="s", technical_view="t"),
+            adrs=[], components=[],
+        ), trev.tc.fake_usage()
+
+    monkeypatch.setattr(arch, "llm_call", _fake_call)
+    arch.architect_node(trev._good_design_state())
+
+    assert captured == ["high", "high"]  # phase 1 AND phase 2 carried the level

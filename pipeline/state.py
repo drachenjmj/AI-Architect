@@ -810,6 +810,11 @@ class StepLog(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
     cost_usd: float = Field(0.0, description="List-price-equivalent cost of THIS step, in USD (free-tier key: not money spent).")
+    # Additive (default "" so old checkpoints deserialize unchanged): the
+    # EFFECTIVE Gemini thinking level this step's call(s) ran with, when one
+    # was explicitly configured (e.g. "high" for the final evaluation).
+    # Empty = no explicit level — the provider default — or not a Google call.
+    thinking_level: str = Field("", description="Effective Gemini thinking level for this step's call(s), if explicitly configured.")
 
 
 class AgentUsage(BaseModel):

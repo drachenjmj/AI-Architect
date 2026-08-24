@@ -195,7 +195,7 @@ class _StubLLM:
         self.calls = 0
 
     def __call__(self, state, prompt, *, system="", model="",
-                 response_schema=None):
+                 response_schema=None, thinking_level=None):
         self.calls += 1
         if response_schema is arch.FeatureDesign:
             return arch.FeatureDesign(features=[

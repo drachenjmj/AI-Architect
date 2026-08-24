@@ -152,8 +152,13 @@ def _architect_response(
     system="",
     model="",
     response_schema=None,
+    thinking_level=None,
 ):
-    """Return deterministic structured output for both Architect phases."""
+    """Return deterministic structured output for both Architect phases.
+
+    `thinking_level` (and any future per-call provider option) is accepted
+    and ignored: this double stands in for the provider seam, which is
+    exactly where such options are consumed."""
 
     if response_schema is arch.FeatureDesign:
         return (arch.FeatureDesign(

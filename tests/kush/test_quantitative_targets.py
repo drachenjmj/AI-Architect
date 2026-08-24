@@ -152,7 +152,7 @@ class _InventedTargetFeatureStub:
         self.acceptance_criteria = acceptance_criteria or ["Stays available."]
         self.phase2_calls = 0
 
-    def __call__(self, state, prompt, *, system="", model="", response_schema=None):
+    def __call__(self, state, prompt, *, system="", model="", response_schema=None, thinking_level=None):
         if response_schema is arch.FeatureDesign:
             return arch.FeatureDesign(features=[
                 Feature(
@@ -213,7 +213,7 @@ def test_qualitative_feature_text_passes_through(monkeypatch):
         acceptance_criteria=["Remains available during a peak sales event."],
     )
 
-    def _phase2(state, prompt, *, system="", model="", response_schema=None):
+    def _phase2(state, prompt, *, system="", model="", response_schema=None, thinking_level=None):
         if response_schema is arch.FeatureDesign:
             return stub(state, prompt, system=system, model=model, response_schema=response_schema)
         return arch.ArchitectureDesign(

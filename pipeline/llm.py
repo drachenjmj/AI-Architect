@@ -129,6 +129,40 @@ def role_model_override(role: str, default: str) -> str:
     return f"{provider}/{model_id}" if provider else model_id
 
 
+# ── Role-specific Gemini thinking level (final 2×2 evaluation) ────────────
+# The Gemini arm of the final evaluation must run the Architect and the
+# Reviewer with an EXPLICIT thinking level (HIGH), not the model's silent
+# default — while the cheap calls (Clarifier, advisor, Ask-AI chat, repo
+# ingestor) keep today's default behavior. Same per-call env-read shape as
+# `role_model_override` above, so the two seams cannot drift apart.
+#
+# Values are the Gemini API's own `ThinkingLevel` contract (verified against
+# the installed google-genai SDK's enum). NOTE: the SDK itself only WARNS on
+# an unknown string and would send it anyway — so the explicit allowlist
+# below is the real validation, and an invalid value must fail LOUDLY here
+# (never a silent default-thinking run the evaluation believes was HIGH).
+GEMINI_THINKING_LEVELS: tuple[str, ...] = ("minimal", "low", "medium", "high")
+
+
+def role_gemini_thinking_level(role: str) -> str | None:
+    """`{ROLE}_GEMINI_THINKING_LEVEL` for one agent role, this call. Pure.
+
+    Returns None when unset — the caller then omits the setting entirely and
+    the provider/model's existing default behavior is preserved exactly (the
+    safe default: HIGH is opted into through `.env`, never global). A value
+    is returned LOWERCASED but otherwise UNVALIDATED here; `llm_call`
+    validates at the single chokepoint where both env-readers and direct
+    callers converge.
+
+    Deliberately NO role outside architect/reviewer is read anywhere: the
+    Clarifier, advisor, Ask-AI chat and repo ingestor have no
+    `{ROLE}_GEMINI_THINKING_LEVEL` seam at all, so an evaluation-time
+    ARCHITECT/REVIEWER setting cannot reach them by construction.
+    """
+    raw = os.environ.get(f"{role.upper()}_GEMINI_THINKING_LEVEL", "").strip()
+    return raw.lower() or None
+
+
 class LLMError(RuntimeError):
     """Raised when an LLM call fails. base.run() catches it and marks FAILED."""
 
@@ -199,22 +233,33 @@ class LLMUsage(BaseModel):
     # None = no verified list price for `model`. Kept nullable rather than
     # defaulting to 0.0 so an unpriced model reads as "unknown" instead of free.
     cost_usd: float | None = None
+    # The EFFECTIVE Gemini thinking level this call ran with (e.g. "high"),
+    # or None when none was requested / this is not a Google call. Additive
+    # (default None): old checkpoints and Claude-path usages deserialize
+    # unchanged, and the final evaluation can PROVE what setting a run used
+    # instead of re-deriving it from `.env`.
+    thinking_level: str | None = None
 
 
 def sum_usage(usages: Sequence[LLMUsage]) -> LLMUsage:
     """Fold several calls' usage into one per-node total.
 
     The Architect makes two calls per run, so its node reports the sum. If ANY
-    component cost is None the total is None: better an honest "unknown" than a
-    total that silently omits an unpriced call.
+    component cost is None the total is None: better an honest "unknown" than
+    a total that silently omits an unpriced call.
     """
     models = sorted({u.model for u in usages if u.model})
     costs = [u.cost_usd for u in usages]
+    levels = sorted({u.thinking_level for u in usages if u.thinking_level})
     return LLMUsage(
         model=models[0] if len(models) == 1 else ", ".join(models),
         input_tokens=sum(u.input_tokens for u in usages),
         output_tokens=sum(u.output_tokens for u in usages),
         cost_usd=None if any(c is None for c in costs) else sum(costs),
+        # Same merge convention as `model`: one level reads as itself, a mix
+        # (a node whose calls disagreed) reads as the sorted joined list —
+        # visible, never silently dropped to the first value.
+        thinking_level=levels[0] if len(levels) == 1 else (", ".join(levels) or None),
     )
 
 
@@ -272,6 +317,7 @@ def llm_call(
     system: str = "",
     model: str = DEFAULT_MODEL,
     response_schema: type | None = None,
+    thinking_level: str | None = None,
 ) -> tuple[Any, LLMUsage]:
     """Send one prompt to the named model; return `(reply, usage)`.
 
@@ -295,6 +341,21 @@ def llm_call(
     instance of the class — no manual parsing outside the provider seam. When
     omitted, the reply is a plain `str`.
 
+    `thinking_level` (optional, GOOGLE calls only): the Gemini
+    `ThinkingConfig.thinking_level` for this call — the role-specific seam is
+    `role_gemini_thinking_level("architect" | "reviewer")`, and passing the
+    resolved value here is the ONLY sanctioned way to set it. None (the
+    default) omits the setting entirely and preserves the model's existing
+    behavior exactly. Validated against the API's own ThinkingLevel contract
+    (`GEMINI_THINKING_LEVELS`) at this chokepoint: an invalid value raises
+    LLMError rather than silently running at default thinking — an
+    evaluation run that believes it ran HIGH must never discover it did not.
+    On an Anthropic-routed call a Gemini thinking level is a misconfiguration
+    (Claude reasoning effort is `CLAUDE_EFFORT`, untouched) and raises LLMError.
+    Model support for the requested level is the provider's own contract: a
+    model that rejects it fails through the same LLMError wrapping below,
+    never a silent fallback.
+
     PROVIDER ROUTING: `model` is resolved by `resolve_model_routing`; the
     Google path is byte-for-byte the behaviour that existed before the
     seam, and the Anthropic path (`_anthropic_call`) returns the SAME
@@ -305,15 +366,34 @@ def llm_call(
     """
     provider, model_id = resolve_model_routing(model)
     if provider == "anthropic":
+        if thinking_level is not None:
+            raise LLMError(
+                f"Gemini thinking_level={thinking_level!r} cannot be applied to "
+                f"anthropic/{model_id} — Claude reasoning effort is configured "
+                "separately via CLAUDE_EFFORT."
+            )
         return _anthropic_call(
             prompt, system=system, model_id=model_id,
             response_schema=response_schema,
+        )
+
+    if thinking_level is not None and thinking_level not in GEMINI_THINKING_LEVELS:
+        raise LLMError(
+            f"Invalid Gemini thinking_level {thinking_level!r} for {model_id}. "
+            f"Valid levels: {', '.join(GEMINI_THINKING_LEVELS)}."
         )
 
     client = _get_client()
     config = types.GenerateContentConfig(
         system_instruction=system or None,
     )
+    if thinking_level is not None:
+        # Verified against the installed google-genai SDK: the field is
+        # `thinking_config.thinking_level` (there is no top-level
+        # thinking_level on GenerateContentConfig).
+        config.thinking_config = types.ThinkingConfig(
+            thinking_level=thinking_level,
+        )
     if response_schema is not None:
         config.response_mime_type = "application/json"
         config.response_schema = response_schema
@@ -335,6 +415,7 @@ def llm_call(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         cost_usd=estimate_cost_usd(model_id, input_tokens, output_tokens),
+        thinking_level=thinking_level,
     )
 
     if response_schema is not None:
