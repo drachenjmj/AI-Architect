@@ -107,6 +107,26 @@ def test_switcher_names_the_current_run(saved_runs):
     assert "seasonal-shop" in texts          # its repository
 
 
+def test_switch_run_expander_key_is_tracked_by_streamlit(saved_runs):
+    """Regression for the exact root cause of the "Switch run" bug:
+    `st.expander(key=...)` only populates `st.session_state[key]` at all
+    when `on_change="rerun"` is also passed. Without it, Streamlit never
+    tracks the expanded state, `st.session_state.get(key)` is permanently
+    `None` regardless of how a real user clicks the expander, and the
+    guarded body (`if not st.session_state.get(_SWITCH_OPEN_KEY): return`)
+    always returns before drawing the "Saved runs" selector — the control
+    visually opens but silently renders nothing.
+
+    This must hold on a run where the key was NOT pre-seeded, so it proves
+    Streamlit itself is tracking the key rather than merely confirming a
+    test-only workaround."""
+    at = AppTest.from_file(_UI, default_timeout=30)
+    at.session_state["state"] = build_demo_state("pass")
+    at.run()
+    assert not at.exception
+    assert "switch_run_expander" in at.session_state
+
+
 def test_switcher_closed_scans_nothing(saved_runs, monkeypatch):
     """With the expander closed the control must not touch the runs
     directory on ordinary reruns — that is what keeps the sidebar cheap."""
@@ -234,3 +254,140 @@ def test_browsing_history_does_not_switch_the_current_run(saved_runs):
     # only the explicit switcher can change it.
     assert at.session_state["history_selected_run_id"] == _RUN_B
     assert at.session_state["state"].run_id == demo_id
+
+
+# ── 5. same persisted-run source as the working resume picker ─────────────
+
+
+def test_switcher_and_resume_picker_list_the_same_persisted_runs(saved_runs):
+    """Both controls are driven by the SAME `persistence.list_runs()` call —
+    every OTHER persisted run visible to the working "Resume a previous
+    run" selector on the intake screen must also be available to "Switch
+    run" (the current demo run is deliberately excluded from the switcher
+    — see `test_current_run_is_excluded_from_switch_options`)."""
+    resume_at = AppTest.from_file(_UI, default_timeout=30)
+    resume_at.run()  # no "state" in session — the intake/resume screen draws
+    assert not resume_at.exception
+    resume_box = next(s for s in resume_at.selectbox if s.label == "Resume a previous run")
+
+    resumable_ids = {summary.run_id for summary in persistence.list_runs()}
+    assert resumable_ids == {_RUN_B, _RUN_C}
+    assert len(resume_box.options) == len(resumable_ids) + 1  # + the "Start a new run" sentinel
+
+    switch_at = _app(saved_runs)
+    current_id = switch_at.session_state["state"].run_id
+    switch_box = _switcher_selectbox(switch_at)
+    assert len(switch_box.options) == len(resumable_ids - {current_id})
+
+
+def test_switching_does_not_create_a_new_run_or_checkpoint(saved_runs, monkeypatch):
+    """Switching is a pure read: it must not write ANY new checkpoint file
+    to disk, for the current run or the target one."""
+    saves: list[str] = []
+    real_save = persistence.save_state
+
+    def counting(state):
+        saves.append(state.run_id)
+        return real_save(state)
+
+    at = _app(saved_runs)
+    before = {p.name for p in Path(saved_runs).iterdir()}
+
+    monkeypatch.setattr(persistence, "save_state", counting)
+    at = _apply(_pick_run(at, _B_NEEDLE))
+
+    after = {p.name for p in Path(saved_runs).iterdir()}
+    assert before == after       # no new run directory appeared
+    assert saves == []           # and nothing was ever (re)persisted
+    assert at.session_state["state"].run_id == _RUN_B
+
+
+def test_current_run_is_excluded_from_switch_options(saved_runs):
+    """The demo state `_app` seeds as current is held only in
+    `session_state` (never persisted), so by default it can never appear in
+    `list_runs()` regardless of the exclusion filter. Persist it here too,
+    so this test actually exercises the `summary.run_id != state.run_id`
+    filter rather than trivially passing because there was nothing to
+    filter in the first place."""
+    current = build_demo_state("pass")
+    persistence.save_state(current)
+    assert len(persistence.list_runs()) == 3  # current + B + C, all on disk
+
+    at = AppTest.from_file(_UI, default_timeout=30)
+    at.session_state["state"] = current
+    at.session_state["switch_run_expander"] = True
+    at.run()
+    assert not at.exception
+
+    box = _switcher_selectbox(at)
+    assert len(box.options) == 2  # every OTHER persisted run — current excluded
+
+
+def test_failed_historical_run_remains_selectable(saved_runs):
+    """`list_runs()` never filters by stage — a run that stopped FAILED is
+    just as resumable/switchable as a finished or mid-flight one."""
+    from pipeline.state import Stage, new_run
+
+    failed = new_run("A run that blew up mid-design.")
+    failed.run_id = "20260104T090000Z-switchfailed"
+    failed.stage = Stage.FAILED
+    persistence.save_state(failed)
+
+    at = _app(saved_runs)
+    box = _switcher_selectbox(at)
+    assert any("A run that blew up" in option for option in box.options)
+
+    target = next(o for o in box.options if "A run that blew up" in o)
+    box.set_value(target)
+    at.run()
+    at = _apply(at)
+
+    assert at.session_state["state"].run_id == failed.run_id
+
+
+def test_empty_history_shows_a_clean_disabled_state(tmp_path, monkeypatch):
+    """No other saved runs at all: a clear caption, never a selectbox with
+    nothing meaningful in it (which would look like a broken dropdown)."""
+    monkeypatch.setenv("AI_ARCHITECT_RUNS_DIR", str(tmp_path / "runs"))
+    only_run = build_demo_state("pass")
+    persistence.save_state(only_run)
+
+    at = AppTest.from_file(_UI, default_timeout=30)
+    at.session_state["state"] = only_run
+    at.session_state["switch_run_expander"] = True
+    at.run()
+
+    assert not at.exception
+    assert not any(s.label == "Saved runs" for s in at.selectbox)
+    assert any(
+        "No other saved runs" in c.value for c in at.caption
+    )
+
+
+# ── 6. the existing "Resume a previous run" flow stays intact ─────────────
+
+
+def test_resume_picker_still_lists_and_loads_a_saved_run(saved_runs):
+    """No current run yet ("Start a new run" screen): the picker lists the
+    saved fixtures and loading one makes it the CURRENT run, through the
+    same `persistence.load_state` the switcher uses."""
+    at = AppTest.from_file(_UI, default_timeout=30)
+    at.run()  # nothing in session_state["state"] — the intake screen draws
+    assert not at.exception
+
+    box = next(s for s in at.selectbox if s.label == "Resume a previous run")
+    target = next(o for o in box.options if _B_NEEDLE in o)
+    box.set_value(target)
+    at.run()
+    assert not at.exception
+
+    assert at.session_state["state"].run_id == _RUN_B
+
+
+def test_resume_picker_default_falls_through_to_the_intake_form(saved_runs):
+    """The zero-click default (index 0, the sentinel) must NOT auto-load a
+    run — the intake form still draws when nothing is explicitly chosen."""
+    at = AppTest.from_file(_UI, default_timeout=30)
+    at.run()
+    assert not at.exception
+    assert "state" not in at.session_state or at.session_state["state"] is None

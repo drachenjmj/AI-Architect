@@ -429,11 +429,19 @@ def _render_run_switcher(state: ArchitectState) -> None:
     The runs directory is scanned only while the expander is OPEN (Streamlit
     keeps an expander's open/closed state under its key), so ordinary
     reruns pay nothing for having this control in the sidebar.
+
+    BUG FIX: `on_change="rerun"` is REQUIRED for `key=` to actually populate
+    `st.session_state[key]` at all — with the default `on_change="ignore"`,
+    Streamlit never tracks the expanded state, `st.session_state.get(key)`
+    is permanently `None`, and this control silently rendered nothing the
+    moment a real user opened it (the sidebar "Switch run" bug). Without
+    `on_change="rerun"` the check below is not a lazy-render optimization,
+    it is a guaranteed early return.
     """
     st.caption("**Current run**")
     st.markdown(_current_run_line(state), unsafe_allow_html=True)
 
-    with st.expander("Switch run", key=_SWITCH_OPEN_KEY):
+    with st.expander("Switch run", key=_SWITCH_OPEN_KEY, on_change="rerun"):
         if not st.session_state.get(_SWITCH_OPEN_KEY):
             return  # closed: no directory scan, no widgets
         try:

@@ -356,12 +356,25 @@ def test_messages_are_keyed_by_run(saved_runs, fake_llm, monkeypatch):
 
 def test_switching_runs_does_not_leak_chat(saved_runs, fake_llm, monkeypatch):
     _booby_trap(monkeypatch)
-    at = _ask(_chat_app(saved_runs), "Why SQS?")
-    demo_id = at.session_state["state"].run_id
-
-    # Switch current run through the existing switcher.
+    # Built inline rather than via `_chat_app` so the switcher's expander
+    # key can be seeded BEFORE the very first `.run()`: AppTest has no
+    # click-based expander-toggle API, and re-assigning this key AFTER
+    # Streamlit has already rendered the (state-tracking, on_change="rerun")
+    # widget once is not honoured on a later rerun triggered by a
+    # DIFFERENT widget — the same convention test_ui_run_switcher.py's
+    # `_app()` relies on.
+    at = AppTest.from_file(_UI, default_timeout=30)
+    at.session_state["state"] = build_demo_state("pass")
     at.session_state["switch_run_expander"] = True
     at.run()
+    assert not at.exception
+    next(b for b in at.sidebar.button if b.label == "Chat").click()
+    at.run()
+    assert not at.exception
+
+    at = _ask(at, "Why SQS?")
+    demo_id = at.session_state["state"].run_id
+
     box = next(s for s in at.selectbox if s.label == "Saved runs")
     target = next(o for o in box.options if "Chat Beta" in o or "peak" in o)
     box.set_value(target)
