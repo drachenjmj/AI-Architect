@@ -33,9 +33,11 @@ process instead of one model object per (model, system_prompt).
 """
 from __future__ import annotations
 
+import json
 import os
 from typing import Any, NamedTuple, Sequence
 
+import requests
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -70,7 +72,7 @@ DEFAULT_MODEL = "flash-lite"
 # Roles pick their routing per call via `role_model_override`, so the
 # Architect and the Reviewer can be pointed at Claude by environment while
 # the Clarifier, the advisor, RAG and the web fallback stay on Gemini.
-PROVIDERS: tuple[str, ...] = ("google", "anthropic")
+PROVIDERS: tuple[str, ...] = ("google", "anthropic", "kiconnect")
 _PROVIDER_BY_PREFIX: dict[str, str] = {
     "gemini": "google",
     "claude": "anthropic",
@@ -358,11 +360,11 @@ def llm_call(
 
     PROVIDER ROUTING: `model` is resolved by `resolve_model_routing`; the
     Google path is byte-for-byte the behaviour that existed before the
-    seam, and the Anthropic path (`_anthropic_call`) returns the SAME
-    downstream types under the SAME contract — a validated Pydantic
-    instance or a plain str, plus an `LLMUsage`. There is NO cross-provider
-    fallback: a configured Claude call either succeeds as Claude or fails
-    as Claude, so an A/B run can never silently mix providers.
+    seam. The Anthropic and KI Connect paths return the SAME downstream
+    types under the SAME contract — a validated Pydantic instance or a
+    plain str, plus an `LLMUsage`. There is NO cross-provider fallback: a
+    configured call either succeeds on that provider or fails there, so an
+    evaluation run can never silently mix providers.
     """
     provider, model_id = resolve_model_routing(model)
     if provider == "anthropic":
@@ -373,6 +375,11 @@ def llm_call(
                 "separately via CLAUDE_EFFORT."
             )
         return _anthropic_call(
+            prompt, system=system, model_id=model_id,
+            response_schema=response_schema,
+        )
+    if provider == "kiconnect":
+        return _kiconnect_call(
             prompt, system=system, model_id=model_id,
             response_schema=response_schema,
         )
@@ -499,8 +506,6 @@ def _prompted_json_contract(response_schema: type) -> str:
     final validator remains the original Pydantic class, this text is only
     the contract the model is asked to satisfy.
     """
-    import json
-
     schema_text = json.dumps(
         response_schema.model_json_schema(), indent=2, ensure_ascii=False
     )
@@ -513,6 +518,145 @@ def _prompted_json_contract(response_schema: type) -> str:
         "Do not invent fields outside the schema.\n"
         f"<json_schema>\n{schema_text}\n</json_schema>"
     )
+
+
+# ── KI Connect NRW provider ──────────────────────────────────────────────
+# The University of Cologne provides institution-funded access through an
+# OpenAI-compatible endpoint. Live probes on 2026-08-24 established two
+# important boundaries that are encoded here rather than hidden:
+#   * /v1/chat/completions works and reports token usage;
+#   * response_format/json_schema is accepted but NOT enforced, and the
+#     available GPT-OSS model does not support /v1/responses.
+# Therefore every structured call uses the complete prompt-embedded schema
+# above and the original Pydantic class remains the only acceptance gate.
+# No fence stripping, JSON repair, retry, or provider fallback is allowed.
+KICONNECT_DEFAULT_BASE_URL = "https://chat.kiconnect.nrw/api/v1"
+KICONNECT_DEFAULT_MAX_TOKENS = 32000
+KICONNECT_DEFAULT_TIMEOUT_SECONDS = 180.0
+_kiconnect_session: requests.Session | None = None
+
+
+def _get_kiconnect_session() -> requests.Session:
+    global _kiconnect_session
+    if _kiconnect_session is None:
+        _kiconnect_session = requests.Session()
+    return _kiconnect_session
+
+
+def _kiconnect_settings() -> tuple[str, str, int, float]:
+    """Return validated KI Connect settings after loading the local .env."""
+    load_dotenv()
+    api_key = os.getenv("KICONNECT_API_KEY", "").strip()
+    if not api_key:
+        raise LLMError("KICONNECT_API_KEY not found in .env!")
+    base_url = os.getenv(
+        "KICONNECT_BASE_URL", KICONNECT_DEFAULT_BASE_URL
+    ).strip().rstrip("/")
+    if not base_url:
+        raise LLMError("KICONNECT_BASE_URL is empty in .env!")
+    try:
+        max_tokens = int(os.getenv(
+            "KICONNECT_MAX_TOKENS", str(KICONNECT_DEFAULT_MAX_TOKENS)
+        ))
+        timeout = float(os.getenv(
+            "KICONNECT_TIMEOUT_SECONDS",
+            str(KICONNECT_DEFAULT_TIMEOUT_SECONDS),
+        ))
+    except ValueError as exc:
+        raise LLMError(
+            "KICONNECT_MAX_TOKENS and KICONNECT_TIMEOUT_SECONDS must be numeric"
+        ) from exc
+    if max_tokens <= 0 or timeout <= 0:
+        raise LLMError(
+            "KICONNECT_MAX_TOKENS and KICONNECT_TIMEOUT_SECONDS must be positive"
+        )
+    return api_key, base_url, max_tokens, timeout
+
+
+def _kiconnect_call(
+    prompt: str,
+    *,
+    system: str,
+    model_id: str,
+    response_schema: type | None = None,
+) -> tuple[Any, LLMUsage]:
+    """One KI Connect chat-completion call under the shared LLM contract."""
+    api_key, base_url, max_tokens, timeout = _kiconnect_settings()
+    request_prompt = (
+        prompt + _prompted_json_contract(response_schema)
+        if response_schema is not None else prompt
+    )
+    messages: list[dict[str, str]] = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": request_prompt})
+    payload = {
+        "model": model_id,
+        "messages": messages,
+        "temperature": 0,
+        "max_tokens": max_tokens,
+    }
+
+    try:
+        resp = _get_kiconnect_session().post(
+            f"{base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        raise LLMError(f"kiconnect/{model_id} call failed: {exc}") from exc
+
+    choices = data.get("choices") if isinstance(data, dict) else None
+    choice = choices[0] if isinstance(choices, list) and choices else {}
+    message = choice.get("message") if isinstance(choice, dict) else {}
+    text = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(text, str):
+        raise LLMError(
+            f"kiconnect/{model_id} returned no text completion"
+        )
+
+    meta = data.get("usage") if isinstance(data, dict) else None
+    input_tokens = (
+        int(meta.get("prompt_tokens", 0) or 0)
+        if isinstance(meta, dict) else 0
+    )
+    output_tokens = (
+        int(meta.get("completion_tokens", 0) or 0)
+        if isinstance(meta, dict) else 0
+    )
+    usage = LLMUsage(
+        model=model_id,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_usd=estimate_cost_usd(model_id, input_tokens, output_tokens),
+    )
+
+    if response_schema is not None:
+        try:
+            return response_schema.model_validate_json(text), usage
+        except Exception as exc:
+            finish_reason = (
+                choice.get("finish_reason")
+                if isinstance(choice, dict) else None
+            )
+            err = LLMError(
+                f"kiconnect/{model_id} returned no schema-valid JSON "
+                f"for {response_schema.__name__} "
+                f"(finish_reason={finish_reason!r}, "
+                f"input_tokens={input_tokens}, "
+                f"output_tokens={output_tokens}, "
+                f"response_chars={len(text)}): "
+                f"{_validation_summary(exc)}"
+            )
+            attach_usage(err, usage)
+            raise err from exc
+    return text, usage
 
 
 def _get_anthropic_client() -> Any:

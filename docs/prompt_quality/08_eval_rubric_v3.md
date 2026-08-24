@@ -16,6 +16,7 @@ Every item retains a `0-2` diagnostic score and must equal `2` to pass.
 | Structured traceability | All Feature, Blueprint, Component, and ADR links are present and resolve |
 | ADR completeness | ADRs are uniquely numbered and contain context, rationale, alternatives, and positive and negative consequences |
 | Source integrity | Every ADR citation resolves to supplied KB or repository evidence |
+| KB evidence grounding | Every ADR cites valid curated-KB evidence retrieved for this run, and material decision topics are mapped to relevant evidence |
 
 Python also raises a high-severity issue when a repository was requested but no
 repository representation is available. Input constraints are never counted as
