@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -356,6 +357,8 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = _parse_args()
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     scenarios = (
         tuple(load_scenario_file(path) for path in args.case)
         if args.case
@@ -366,9 +369,10 @@ def main() -> int:
         model=args.model,
         repeats=args.repeats,
     )
+    output_path = write_summary(summary, args.output) if args.output else None
     _print_summary(summary)
-    if args.output:
-        print(f"Wrote: {write_summary(summary, args.output)}")
+    if output_path:
+        print(f"Wrote: {output_path}")
     return 0 if all(result.agrees for result in summary.results) else 1
 
 

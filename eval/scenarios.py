@@ -19,6 +19,7 @@ from pipeline.state import (
     ContextRecord,
     Feature,
     KBChunk,
+    MigrationStep,
     RepoBehavior,
     RepoMeta,
     RepoRepresentation,
@@ -179,7 +180,7 @@ def _single_feature_state(
         stakeholder_view=business_goal,
         technical_view=technical_view,
         components=[component_name],
-        data_flows=[f"Requests flow through {component_name}."],
+        data_flows=[f"User -> {component_name}: request"],
         addressed_feature_ids=["FEAT-001"],
         constraints_addressed=constraints_addressed,
     )
@@ -241,7 +242,7 @@ def _shop_repo() -> RepoRepresentation:
 def sound_shop_state() -> ArchitectState:
     """Brownfield repair that removes the repository's peak-load bottleneck."""
 
-    return _single_feature_state(
+    state = _single_feature_state(
         prompt="Make the existing shop survive seasonal peaks without losing orders.",
         project_name="Seasonal Shop",
         business_goal="Customers can complete purchases during seasonal peaks.",
@@ -284,6 +285,34 @@ def sound_shop_state() -> ArchitectState:
         repo_url="https://example.invalid/seasonal-shop",
         repo_representation=_shop_repo(),
     )
+    return state
+
+
+def _sound_shop_eval_state() -> ArchitectState:
+    """Current-contract variant of the UI's backward-compatible demo state."""
+
+    state = sound_shop_state()
+    state.blueprint.migration_steps = [
+        MigrationStep(
+            title="Extract Checkout Service behind a queue",
+            objective=(
+                "Introduce Checkout Service incrementally without replacing "
+                "the legacy shop in one cutover."
+            ),
+            changes=[
+                "Deploy Checkout Service and route checkout requests to it.",
+                "Buffer accepted orders in SQS for legacy order processing.",
+            ],
+            coexistence_or_data_strategy=(
+                "Checkout Service and the legacy shop coexist while traffic is "
+                "shifted gradually; SQS carries accepted orders across the boundary."
+            ),
+            exit_condition=(
+                "Peak checkout traffic no longer saturates the legacy storefront."
+            ),
+        )
+    ]
+    return state
 
 
 def symptom_patch_shop_state() -> ArchitectState:
@@ -311,7 +340,8 @@ def symptom_patch_shop_state() -> ArchitectState:
     # Checkout Service, which this variant replaces with the monolith. It is
     # kept in sync so the scenario's labeled flaw stays the vertical-scaling
     # patch, not a dangling target-service reference.
-    state.blueprint.data_flows = ["Requests flow through the Shop Monolith."]
+    state.blueprint.data_flows = ["User -> Shop Monolith: request"]
+    state.blueprint.migration_steps = []
     state.adrs[0].related_component_names = ["Shop Monolith"]
     return state
 
@@ -465,7 +495,7 @@ def repo_mismatch_state() -> ArchitectState:
         ),
         behavior=RepoBehavior(overview="FastAPI warehouse API with PostgreSQL persistence."),
     )
-    return _single_feature_state(
+    state = _single_feature_state(
         prompt="Add tamper-evident audit logging to our warehouse API.",
         project_name="Warehouse API",
         business_goal="Operators can trace every inventory change.",
@@ -505,6 +535,20 @@ def repo_mismatch_state() -> ArchitectState:
         repo_url="https://example.invalid/warehouse-api",
         repo_representation=repo,
     )
+    state.blueprint.migration_steps = [
+        MigrationStep(
+            title="Replace the API with Inventory Event Service",
+            objective="Cut over from the FastAPI API to the Java/Kafka service.",
+            changes=[
+                "Deploy Inventory Event Service and migrate inventory writes."
+            ],
+            coexistence_or_data_strategy=(
+                "Mirror writes during cutover, then retire the FastAPI API."
+            ),
+            exit_condition="All inventory writes use Inventory Event Service.",
+        )
+    ]
+    return state
 
 
 def fabricated_source_state() -> ArchitectState:
@@ -567,7 +611,7 @@ SCENARIOS = (
         expected_pass=True,
         expected_code_scores=_full_code_scores(),
         expected_judgments=_judgments(),
-        build_state=sound_shop_state,
+        build_state=_sound_shop_eval_state,
         label_rationale="The design removes synchronous peak-load coupling and addresses all stated constraints.",
     ),
     EvalScenario(
@@ -616,6 +660,7 @@ SCENARIOS = (
         expected_code_scores=_full_code_scores(),
         expected_judgments=_judgments(
             repo_grounding=False,
+            flaw_detection=False,
             adr_soundness=False,
             best_practice_grounding=False,
         ),

@@ -75,6 +75,15 @@ def test_seed_case_code_labels_match_the_real_deterministic_checks():
         assert actual == dict(scenario.expected_code_scores), scenario.name
 
 
+def test_full_code_score_seed_cases_have_no_hidden_deterministic_blockers():
+    for scenario in SCENARIOS:
+        if not all(score == 2 for score in scenario.expected_code_scores.values()):
+            continue
+        checks = run_deterministic_checks(scenario.build_state())
+        blocking = [issue.finding for issue in checks.issues if issue.severity == "high"]
+        assert blocking == [], f"{scenario.name}: {blocking}"
+
+
 def test_correct_final_verdict_for_wrong_reason_is_a_disagreement():
     scenario = next(item for item in SCENARIOS if not item.expected_pass)
     wrong_judgments = dict(scenario.expected_judgments)

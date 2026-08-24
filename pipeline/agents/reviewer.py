@@ -3,8 +3,8 @@
 The review standard is derived from each run rather than a built-in use case:
 
 * Python owns artifact, constraint, traceability, ADR, and source checks.
-* Gemini answers five atomic qualitative questions with yes/no, a reason, and
-  a suggested fix.
+* The configured Reviewer LLM answers five atomic qualitative questions with
+  yes/no, a reason, and a suggested fix.
 * Python assembles the report and derives the pass/fail route. There is no
   numeric threshold and the model never emits the final verdict.
 """
