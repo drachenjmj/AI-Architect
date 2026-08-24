@@ -606,6 +606,16 @@ class ReviewIssue(BaseModel):
     evidence: str = ""
     suggested_fix: str = ""
     requires_refinement: bool = False
+    # Integration note (Kush): True ONLY for a finding that another Architect
+    # pass cannot possibly close within THIS run — e.g. "the curated KB
+    # retrieved no evidence for any decision topic": research runs once,
+    # before the refine loop exists, so no redesign can manufacture evidence
+    # that was never retrieved. `refine_gate.py` reads this to stop the loop
+    # honestly instead of burning iterations re-describing the same
+    # architecture against an unfixable finding. Default False: an ordinary
+    # finding (missing field, bad traceability, fabricated citation, ...) IS
+    # refinable, and that is the overwhelmingly common case.
+    non_refinable: bool = False
 
 
 # Why a criterion can be marked NOT APPLICABLE, keyed by the names that appear in

@@ -204,20 +204,23 @@ SOURCE PROVENANCE (strict):
   a removed reference never becomes evidence.
 
 DECISION EVIDENCE GROUNDING (strict):
-- <decision_evidence> groups the KB evidence actually retrieved this run by
-  the decision topic it was retrieved for. Use REPOSITORY/CONTEXT facts for
-  case-specific reasoning; use <decision_evidence> for external architectural
-  principles.
+- <decision_topics> names each decision topic and which evidence IDs were
+  retrieved for it; <evidence_catalog> holds the actual content/metadata of
+  every one of those IDs, each shown exactly once; <web_context>, when
+  present, is supplementary web-search material that is explicitly NOT
+  curated KB literature. Use REPOSITORY/CONTEXT facts for case-specific
+  reasoning; use <evidence_catalog> for external architectural principles.
 - Every ADR's `evidence_ids` must list ONLY evidence IDs ("KB-Exxx") copied
-  EXACTLY from <decision_evidence> that genuinely support that specific
-  decision — never every ID, never a decorative one. An ADR may cite zero,
-  one, or several.
-- NEVER invent an evidence ID. If no supplied evidence in <decision_evidence>
-  actually supports an ADR, leave its `evidence_ids` EMPTY and say so in the
-  ADR's rationale (e.g. that the decision rests on requirements/context
-  reasoning) rather than dressing unsupported reasoning up as cited
-  literature. A topic marked with no evidence in <decision_evidence> is a
-  known KB gap, not something to fabricate around.
+  EXACTLY from <evidence_catalog> that genuinely support that specific
+  decision — never every ID, never a decorative one, and NEVER an ID from
+  <web_context> (it has none). An ADR may cite zero, one, or several.
+- NEVER invent an evidence ID, and never attach one merely to satisfy this
+  rule. If no entry in <evidence_catalog> actually supports an ADR, leave
+  its `evidence_ids` EMPTY and say so plainly in the ADR's rationale (e.g.
+  that the decision rests on requirements/context reasoning) rather than
+  dressing unsupported reasoning up as cited literature, or citing an
+  unrelated ID to appear grounded. A topic marked with no evidence in
+  <decision_topics> is a known KB gap, not something to fabricate around.
 - Fabricated or unresolvable evidence IDs are removed deterministically
   after you return; a removed ID never becomes evidence.
 
@@ -475,49 +478,105 @@ def _normalize_and_validate_requirement_coverage(
     return normalized
 
 
-def _decision_evidence_block(state: ArchitectState) -> str:
-    """`<decision_evidence>`: retrieved KB evidence grouped by decision
-    topic — the decision-level replacement for a flat, undifferentiated
-    dump of `retrieved_knowledge`. Pure.
+# ─────────────────────────────────────────────────────────────────────────
+# Decision-evidence prompt blocks (Integration, Kush).
+#
+# THREE blocks, deliberately SEPARATE, so no chunk's full text is ever
+# duplicated: `decision_topics_block` is a compact ID-only mapping (a topic
+# may legitimately be evidenced by the same chunk as another topic — that
+# is dedup working correctly, not something to hide), `evidence_catalog_block`
+# is the ONE place each qualifying chunk's content/metadata is rendered, and
+# `web_context_block` is bounded supplementary context that is explicitly,
+# visibly NOT citable KB literature. All three are public (no leading
+# underscore): the Reviewer prompt (pipeline/agents/reviewer.py) reuses them
+# verbatim so it sees exactly what the Architect saw — one rendering, not a
+# second one that could drift.
+# ─────────────────────────────────────────────────────────────────────────
 
-    Grouped by `state.decision_topics` (see pipeline/agents/researcher.py)
-    when present. Falls back to listing `retrieved_knowledge` ungrouped —
-    never silently empty — for states built without topic planning (older
-    checkpoints, or a caller/test that populates `retrieved_knowledge`
-    directly). Web-fallback chunks (`evidence_id == ""`) are shown with no
-    ID and are never eligible for `evidence_ids`, which the system prompt
-    states explicitly; they are still shown so the Architect can use them
-    for context the way any other supporting text is used.
+
+def decision_topics_block(state: ArchitectState) -> str:
+    """`<decision_topics>`: topic -> evidence_id mapping only, no chunk
+    content. Pure.
+
+    Falls back to a single synthetic "(ungrouped)" topic listing every
+    qualifying evidence ID when `state.decision_topics` is empty — never
+    silently blank — so a state built without topic planning (older
+    checkpoints, a caller/test that populates `retrieved_knowledge`
+    directly) still shows the Architect what it may cite.
     """
-    chunks_by_id = {
-        chunk.evidence_id: chunk
-        for chunk in state.retrieved_knowledge
-        if chunk.evidence_id
-    }
-
-    def render_chunk(chunk) -> str:
-        label = chunk.evidence_id or "(web, not citable)"
-        return (
-            f"- {label} | source={chunk.source} | page={chunk.page} "
-            f"| distance={chunk.distance}\n  \"{chunk.content}\""
-        )
-
-    if not state.decision_topics:
-        if not state.retrieved_knowledge:
-            return "<decision_evidence>\n(none retrieved)\n</decision_evidence>"
-        lines = "\n".join(render_chunk(chunk) for chunk in state.retrieved_knowledge)
-        return f"<decision_evidence>\nTopic: (ungrouped)\n{lines}\n</decision_evidence>"
-
-    sections: list[str] = []
-    for topic in state.decision_topics:
-        topic_lines = [
-            render_chunk(chunks_by_id[evidence_id])
-            for evidence_id in topic.evidence_ids
-            if evidence_id in chunks_by_id
+    if state.decision_topics:
+        lines = [
+            f"{topic.id} | {topic.topic} | evidence="
+            + (",".join(topic.evidence_ids) if topic.evidence_ids else "(none — KB gap for this topic)")
+            for topic in state.decision_topics
         ]
-        body = "\n".join(topic_lines) if topic_lines else "(no qualifying KB evidence retrieved for this topic)"
-        sections.append(f"Topic: {topic.topic}\n{body}")
-    return "<decision_evidence>\n" + "\n\n".join(sections) + "\n</decision_evidence>"
+    else:
+        qualifying_ids = [chunk.evidence_id for chunk in state.retrieved_knowledge if chunk.evidence_id]
+        lines = [
+            "TOPIC-ungrouped | (no topic planning on this state) | evidence="
+            + (",".join(qualifying_ids) if qualifying_ids else "(none retrieved)")
+        ]
+    return "<decision_topics>\n" + "\n".join(lines) + "\n</decision_topics>"
+
+
+def evidence_catalog_block(state: ArchitectState) -> str:
+    """`<evidence_catalog>`: every qualifying (curated-KB) chunk's content
+    and metadata, rendered EXACTLY ONCE regardless of how many decision
+    topics it supports. Pure.
+
+    This is the fix for a real duplication bug: the previous single grouped
+    block rendered a chunk's full content once PER TOPIC REFERENCING it, so
+    one chunk supporting four topics appeared four times in the Architect's
+    prompt. Evidence identity here is `KBChunk.evidence_id`, which is
+    unique per retrieved chunk by construction (pipeline/agents/researcher.py)
+    — iterating `retrieved_knowledge` once is therefore already the
+    deduplicated form; no extra bookkeeping is needed to keep it that way.
+    """
+    kb_chunks = [chunk for chunk in state.retrieved_knowledge if chunk.evidence_id]
+    if not kb_chunks:
+        return "<evidence_catalog>\n(no qualifying curated-KB evidence retrieved this run)\n</evidence_catalog>"
+    entries = [
+        f"{chunk.evidence_id} | source={chunk.source} | page={chunk.page} "
+        f"| distance={chunk.distance}\n\"{chunk.content}\""
+        for chunk in kb_chunks
+    ]
+    return "<evidence_catalog>\n" + "\n\n".join(entries) + "\n</evidence_catalog>"
+
+
+def web_context_block(state: ArchitectState) -> str:
+    """`<web_context>`: bounded supplementary web-fallback context, clearly
+    labelled as NOT curated KB literature. Pure. Returns "" (omitted from
+    the prompt entirely) when no web-fallback chunk was retrieved — an
+    empty block would read as "web context exists and is empty" rather
+    than "there is none".
+    """
+    web_chunks = [chunk for chunk in state.retrieved_knowledge if not chunk.evidence_id]
+    if not web_chunks:
+        return ""
+    entries = [
+        f"- source={chunk.source} | page={chunk.page}\n  \"{chunk.content}\""
+        for chunk in web_chunks
+    ]
+    return (
+        "\n<web_context>\n"
+        "Supplementary web-search context, NOT curated KB literature. "
+        "Never cite these via evidence_ids and never count them as "
+        "literature support.\n" + "\n".join(entries) + "\n</web_context>"
+    )
+
+
+def _decision_evidence_block(state: ArchitectState) -> str:
+    """The combined decision-evidence section of the Architect prompt: the
+    topic mapping, the deduplicated evidence catalog, and any web context —
+    in that order. Pure. See the three block functions above for why they
+    are separate rather than one grouped-and-duplicated render.
+    """
+    return (
+        decision_topics_block(state)
+        + "\n\n"
+        + evidence_catalog_block(state)
+        + web_context_block(state)
+    )
 
 
 def _build_architecture_prompt(

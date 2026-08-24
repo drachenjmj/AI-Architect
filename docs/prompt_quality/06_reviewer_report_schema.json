@@ -83,7 +83,8 @@
           "finding",
           "evidence",
           "suggested_fix",
-          "requires_refinement"
+          "requires_refinement",
+          "non_refinable"
         ],
         "properties": {
           "id": { "type": "string" },
@@ -104,7 +105,11 @@
           "finding": { "type": "string" },
           "evidence": { "type": "string" },
           "suggested_fix": { "type": "string" },
-          "requires_refinement": { "type": "boolean" }
+          "requires_refinement": { "type": "boolean" },
+          "non_refinable": {
+            "type": "boolean",
+            "description": "True only when another Architect pass cannot possibly close this finding within the same run (e.g. a total KB evidence gap - research runs once, before the refine loop). Read by refine_gate.py to stop honestly instead of burning iterations."
+          }
         }
       }
     },

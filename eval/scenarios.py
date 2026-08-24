@@ -155,7 +155,7 @@ def _single_feature_state(
     )
     state.repo_representation = repo_representation
     state.retrieved_knowledge = [
-        KBChunk(content=source_content, source=source, box=1)
+        KBChunk(content=source_content, source=source, box=1, evidence_id="KB-E001")
     ]
     state.features = [
         Feature(
@@ -196,6 +196,7 @@ def _single_feature_state(
             related_feature_ids=["FEAT-001"],
             related_component_names=[component_name],
             source_references=[source],
+            evidence_ids=["KB-E001"],
         )
     ]
     state.components = [

@@ -53,6 +53,7 @@ def _good_design_state():
         KBChunk(
             content="Use an asynchronous queue to decouple peak-load processing.",
             source="architecture_patterns.md",
+            evidence_id="KB-E001",
         )
     ]
     state.features = [
@@ -103,6 +104,7 @@ def _good_design_state():
             related_feature_ids=["FEAT-001"],
             related_component_names=["Checkout Service"],
             source_references=["architecture_patterns.md"],
+            evidence_ids=["KB-E001"],
         ),
         ADR(
             id="ADR-002",
@@ -116,6 +118,7 @@ def _good_design_state():
             related_feature_ids=["FEAT-002"],
             related_component_names=["Order Worker"],
             source_references=["architecture_patterns.md"],
+            evidence_ids=["KB-E001"],
         ),
     ]
     state.components = [
@@ -566,6 +569,13 @@ def _dangling_services_state():
             ],
         ),
     ]
+    state.retrieved_knowledge = [
+        KBChunk(
+            content="Extract capabilities behind an event bus to isolate peak load.",
+            source="architecture_patterns.md",
+            evidence_id="KB-E001",
+        )
+    ]
     state.blueprint = Blueprint(
         stakeholder_view=(
             "Peak-season shopping keeps working while the shop is "
@@ -613,6 +623,7 @@ def _dangling_services_state():
             related_component_names=[
                 "Order Service", "Payment Service", "Shared Event Bus",
             ],
+            evidence_ids=["KB-E001"],
         ),
         ADR(
             id="ADR-002",
@@ -632,6 +643,7 @@ def _dangling_services_state():
             negative_consequences=["Event schema governance is required."],
             related_feature_ids=["FEAT-004"],
             related_component_names=["Legacy Monolith"],
+            evidence_ids=["KB-E001"],
         ),
     ]
     state.components = [
@@ -2105,6 +2117,7 @@ def _no_knowledge_state():
     state.retrieved_knowledge = []
     for adr in state.adrs:
         adr.source_references = []
+        adr.evidence_ids = []
     return state
 
 
@@ -2124,17 +2137,29 @@ def test_refinement_readiness_is_recorded_but_raises_no_issue():
 
 
 def test_empty_knowledge_makes_best_practice_grounding_not_applicable():
+    """`best_practice_grounding` (the LLM judgment) is correctly marked
+    not_applicable with no retrieved knowledge — that part of the original
+    behaviour is unchanged. But zero retrieved knowledge ALSO means zero
+    qualifying curated-KB evidence for the SEPARATE, code-owned
+    `kb_evidence_grounding` gate, and that must not silently pass: the run
+    cannot truthfully be reported as literature-grounded, so it fails, with
+    an explicit non_refinable evidence-category finding (see
+    review_checks._check_kb_evidence_grounding)."""
     rev.llm_call = _as_llm_call(
         _judgments_failing("best_practice_grounding", "Nothing cited.")
     )
     report = rev.reviewer_node(_no_knowledge_state())["review"]
 
     assert report.not_applicable == ["repo_grounding", "best_practice_grounding"]
-    assert not [i for i in report.issues if i.category == "evidence"]
-    assert report.overall_status == "pass"
     # True ONLY so downstream readers keep working; not_applicable is the truth,
     # and every renderer consults it first.
     assert report.rubric_scores.best_practice_grounding is True
+
+    evidence_issues = [i for i in report.issues if i.category == "evidence"]
+    assert len(evidence_issues) == 1
+    assert evidence_issues[0].non_refinable is True
+    assert report.rubric_scores.kb_evidence_grounding == 0
+    assert report.overall_status == "fail"
 
 
 def test_retrieved_knowledge_restores_the_original_behaviour():

@@ -15,6 +15,11 @@ from typing import Sequence
 
 from pydantic import BaseModel, Field
 
+from pipeline.agents.architect import (
+    decision_topics_block,
+    evidence_catalog_block,
+    web_context_block,
+)
 from pipeline.agents.base import make_step, node
 from pipeline.llm import LLMUsage, attach_usage, llm_call, role_model_override
 from pipeline.review_checks import DeterministicChecks, run_deterministic_checks
@@ -110,7 +115,19 @@ final verdict; Python owns all of those decisions.
    existing stack.
 4. best_practice_grounding: Are the recommendations supported by retrieved
    knowledge, repository evidence, or clearly labelled assumptions and open
-   risks, rather than fabricated citations or unsupported certainty?
+   risks, rather than fabricated citations or unsupported certainty? This
+   includes SEMANTIC RELEVANCE of cited literature, which
+   <deterministic_check_results> cannot judge — it only proves an ADR's
+   evidence_ids were actually retrieved this run, never that they are
+   RELEVANT to that ADR's decision. Using <decision_topics> and
+   <evidence_catalog>, check for each ADR that lists evidence_ids: does the
+   cited content genuinely support what the ADR decided, or does the ADR
+   cite an evidence ID that is real but UNRELATED to its own decision —
+   attached only to satisfy the deterministic check rather than because it
+   actually informed the choice? A decorative/unrelated citation is a
+   best_practice_grounding failure even though the ID itself resolves.
+   Conversely, an ADR that leaves evidence_ids EMPTY and says so honestly in
+   its rationale is not a failure on this ground alone.
 5. refinement_readiness: Considering your preceding answers, are any remaining
    shortcomings described specifically enough for the Architect to correct
    without guessing? If all preceding answers pass, answer yes.
@@ -334,10 +351,21 @@ def _build_prompt(state: ArchitectState, checks: DeterministicChecks) -> str:
             else "not_provided_greenfield"
         )
     )
-    findings = "\n".join(
-        f"- [{chunk.source}] {chunk.content}"
-        for chunk in state.retrieved_knowledge
-    ) or "(none retrieved)"
+    # Integration note (Kush): the SAME decision-evidence blocks the
+    # Architect prompt is built from (pipeline/agents/architect.py) — not a
+    # second rendering. best_practice_grounding's semantic-relevance
+    # question (see REVIEWER_SYSTEM) needs the actual evidence content and
+    # the topic mapping to judge whether an ADR's cited ID genuinely
+    # supports its decision; a source+content bullet list with no evidence
+    # ID (the previous <researcher_findings>) gave the Reviewer no way to
+    # even connect an ADR's `evidence_ids` (visible in
+    # <architecture_artifacts>) back to what that ID actually says.
+    decision_evidence = (
+        decision_topics_block(state)
+        + "\n\n"
+        + evidence_catalog_block(state)
+        + web_context_block(state)
+    )
     return (
         f"<initial_request>\n{initial_request}\n</initial_request>\n\n"
         f"<locked_context_record>\n{context}\n</locked_context_record>\n\n"
@@ -348,7 +376,7 @@ def _build_prompt(state: ArchitectState, checks: DeterministicChecks) -> str:
         f"</architecture_artifacts>\n\n"
         f"<deterministic_check_results>\n{checks.model_dump_json(indent=2)}\n"
         f"</deterministic_check_results>\n\n"
-        f"<researcher_findings>\n{findings}\n</researcher_findings>"
+        f"{decision_evidence}"
     )
 
 

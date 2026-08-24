@@ -152,60 +152,120 @@ def _dedupe_key(chunk: dict) -> tuple:
     )
 
 
+def allocate_evidence(
+    topic_chunks: list[list[dict]],
+    topic_origins: list[str],
+    cap: int,
+) -> tuple[list[dict], list[str], list[list[int]]]:
+    """Fair, deterministic cross-topic allocation into the bounded pool. Pure.
+
+    NOT a straight `pool[:cap]` truncation in topic order — that let the
+    FIRST topic alone fill the entire cap and starve every later topic of
+    all evidence, even when the later topic's own best hit was perfectly
+    good. Instead this fills the pool in RANK LAYERS: every topic's best
+    (rank-0) candidate first, in topic order, THEN every topic's second-best,
+    and so on, stopping the instant the cap is reached. With at most 8
+    topics and a cap of 15, every topic is therefore guaranteed its rank-0
+    hit (if it has one) before any topic receives a second — a later topic
+    with a valid first hit can never lose all its evidence merely because
+    earlier topics exist.
+
+    KB-origin topics are allocated to EXHAUSTION before any web/none-origin
+    topic contributes anything, so bounded web context can never crowd out
+    qualifying curated-KB evidence while curated candidates remain
+    unconsidered (see `researcher_node`'s origin-based provenance).
+
+    Returns `(pool, pool_origins, topic_chunk_indices)`: `pool_origins[i]`
+    is the retrieval origin ("kb"/"web"/"none") of `pool[i]`, and
+    `topic_chunk_indices[t]` lists — in rank order — the `pool` indices
+    each topic's own retrieval contributed (including indices shared with
+    an earlier topic via dedup).
+    """
+    seen: dict[tuple, int] = {}
+    pool: list[dict] = []
+    pool_origins: list[str] = []
+    topic_chunk_indices: list[list[int]] = [[] for _ in topic_chunks]
+
+    def process(positions: list[int]) -> None:
+        rank = 0
+        while True:
+            if len(pool) >= cap:
+                return
+            progressed = False
+            for topic_position in positions:
+                if len(pool) >= cap:
+                    return
+                chunks = topic_chunks[topic_position]
+                if rank >= len(chunks):
+                    continue
+                progressed = True
+                chunk = chunks[rank]
+                key = _dedupe_key(chunk)
+                if key in seen:
+                    topic_chunk_indices[topic_position].append(seen[key])
+                    continue
+                index = len(pool)
+                pool.append(chunk)
+                pool_origins.append(topic_origins[topic_position])
+                seen[key] = index
+                topic_chunk_indices[topic_position].append(index)
+            if not progressed:
+                return
+            rank += 1
+
+    kb_positions = [i for i, origin in enumerate(topic_origins) if origin == "kb"]
+    other_positions = [i for i, origin in enumerate(topic_origins) if origin != "kb"]
+    process(kb_positions)
+    process(other_positions)
+    return pool, pool_origins, topic_chunk_indices
+
+
 @node("researcher")
 def researcher_node(state: ArchitectState) -> dict:
     from architect import retrieve_chunks
 
     topics = plan_decision_topics(state.context_record, state.repo_representation)
 
-    seen: dict[tuple, int] = {}  # dedupe key -> index into `pool`
-    pool: list[dict] = []
-    topic_chunk_indices: list[list[int]] = []
-    gaps: list[str] = []
-
+    topic_chunks: list[list[dict]] = []
+    topic_origins: list[str] = []
     for topic in topics:
         query = _topic_query(topic, state.context_record)
-        chunks, _origin = retrieve_chunks(query, k=PER_TOPIC_K)
-        indices: list[int] = []
-        for chunk in chunks:
-            key = _dedupe_key(chunk)
-            if key in seen:
-                indices.append(seen[key])
-                continue
-            index = len(pool)
-            pool.append(chunk)
-            seen[key] = index
-            indices.append(index)
-        topic_chunk_indices.append(indices)
-        if not indices:
-            gaps.append(topic)
+        chunks, origin = retrieve_chunks(query, k=PER_TOPIC_K)
+        topic_chunks.append(chunks)
+        topic_origins.append(origin)
 
-    # Deterministic total bound: keep the first MAX_TOTAL_EVIDENCE unique
-    # chunks in first-seen (topic order, then per-topic distance) order.
-    bounded_pool = pool[:MAX_TOTAL_EVIDENCE]
-    kept_indices = set(range(len(bounded_pool)))
+    pool, pool_origins, topic_chunk_indices = allocate_evidence(
+        topic_chunks, topic_origins, MAX_TOTAL_EVIDENCE
+    )
 
-    # Stable per-run evidence IDs — ONLY for curated-KB chunks (box != 3).
-    # A web-fallback chunk keeps evidence_id="" so it can never be cited by
-    # an ADR's evidence_ids and never satisfies the literature gate.
+    # PROVENANCE TRUTH (Finding 3): the retrieval call's own reported
+    # `origin` decides evidence-ID eligibility — NOT `chunk["box"]`. `origin`
+    # is what `architect.retrieve_chunks` actually did (hit the curated
+    # index vs. fell back to the web); `box` is descriptive metadata about
+    # WHICH curated partition a KB hit came from and was never meant to
+    # carry that decision alone. A web-fallback chunk gets no evidence_id
+    # even if some future/malformed caller reports it with a non-3 box.
     retrieved_knowledge: list[KBChunk] = []
     evidence_id_by_index: dict[int, str] = {}
     counter = 0
-    for index, chunk in enumerate(bounded_pool):
+    for index, (chunk, origin) in enumerate(zip(pool, pool_origins)):
         evidence_id = ""
-        if chunk.get("box", 1) != 3:
+        if origin == "kb":
             counter += 1
             evidence_id = f"KB-E{counter:03d}"
             evidence_id_by_index[index] = evidence_id
         retrieved_knowledge.append(KBChunk(**chunk, evidence_id=evidence_id))
 
     decision_topics: list[DecisionTopic] = []
+    gaps: list[str] = []
     for topic_number, (topic, indices) in enumerate(zip(topics, topic_chunk_indices), start=1):
         evidence_ids = [
             evidence_id_by_index[index]
             for index in indices
-            if index in kept_indices and index in evidence_id_by_index
+            if index in evidence_id_by_index
         ]
+        if not evidence_ids:
+            gaps.append(topic)
         decision_topics.append(
             DecisionTopic(
                 id=f"TOPIC-{topic_number}",
