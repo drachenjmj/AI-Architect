@@ -17,7 +17,7 @@ import google.generativeai as genai
 from langchain_community.vectorstores import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-from rag_logger import RagLogger
+from tools.rag_logger import RagLogger
 
 _REPO_ROOT = Path(__file__).resolve().parent
 

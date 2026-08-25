@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from rag_logger import RagLogger
+from tools.rag_logger import RagLogger
 
 EXPECTED_FIELDS = {
     "timestamp", "query", "duration_ms", "chunks_returned",
