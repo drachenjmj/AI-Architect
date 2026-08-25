@@ -30,10 +30,11 @@ time.
 The public entry point `run_pipeline(state, max_steps)` keeps its old signature,
 so run.py, the UI, and tests call it exactly as before.
 
-WHY LangGraph: it hands us — for free and as industry-standard primitives — the
-two things still on Kati's roadmap: human-in-the-loop PAUSE (`interrupt`) for the
-clarifier, and state-on-disk recovery (`checkpointer`). We build on the standard
-container instead of extending bespoke loop code.
+WHY LangGraph: it gave us — for free and as industry-standard primitives — the
+two things this rewrite needed: human-in-the-loop PAUSE (the `AWAITING_HUMAN`
+stage, below) for the clarifier, and state-on-disk recovery (`checkpointer`,
+see below). We build on the standard container instead of extending bespoke
+loop code.
 
 STATE ON DISK (added)
 ---------------------

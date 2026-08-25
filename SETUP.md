@@ -49,6 +49,12 @@ cp .env.example .env        # Windows: copy .env.example .env
 Then edit `.env` so it reads `GEMINI_API_KEY=<your key>`.
 (`.env` is gitignored — never commit it.)
 
+**Optional: University of Cologne KI Connect.** If you have KI Connect
+access, you can redirect the Architect and/or Reviewer to it instead of
+Gemini — see the commented block in `.env.example` and the "KI Connect A/B
+routing" section of [pipeline/LLM_MODULE.md](pipeline/LLM_MODULE.md) for the
+environment variables. Not required for a standard setup.
+
 **5. Run**
 ```bash
 python -m pipeline.run      # run the pipeline end to end

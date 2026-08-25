@@ -223,7 +223,7 @@ __marimo__/
 rag_log.jsonl
 architect.db
 
-# Kush-local E2E analysis artifacts (kept on disk for the report, never committed)
+# Local E2E analysis artifacts (kept on disk for the report, never committed)
 /final_run.json
 /final_contract_diff.txt
 /optional_context_diff.txt

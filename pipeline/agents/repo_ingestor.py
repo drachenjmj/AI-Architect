@@ -4,8 +4,9 @@ WHAT IT DOES (in order)
 -----------------------
   1. Find a repo URL — DETERMINISTICALLY (regex over the raw prompt + any
      clarification answers). No URL -> greenfield run: write nothing, advance.
-     Deliberately NOT read from the ContextRecord: its schema is still a
-     placeholder, and the raw prompt is the ground truth anyway.
+     Deliberately NOT read from the ContextRecord: repo_ingestor runs BEFORE
+     the clarifier produces one (see the orchestrator's stage table), and the
+     raw prompt is the ground truth anyway.
   2. Shallow-clone it into .cache/repos/ (reused across runs).
   3. Build the STRUCTURE layer — plain code, 0 LLM tokens
      (pipeline/repo_analysis.py). Each part is best-effort: one failing

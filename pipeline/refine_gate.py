@@ -89,9 +89,8 @@ from pipeline.state import (
 # ── Cost-cap policy ───────────────────────────────────────────────────────
 # Tunable. The iteration cap is what realistically trips; the token budget is a
 # safety net for a run that burns tokens abnormally fast.
-# Raised 2 -> 3 for the Claude/Gemini A/B formal
-# evaluation (Opus rounds converge with more headroom); revisit only as part
-# of the evaluation plan, not ad hoc.
+# Raised from 2 to 3 to allow one additional refinement round in controlled
+# evaluation; revisit only as part of the evaluation plan, not ad hoc.
 MAX_REFINE_ITERATIONS = 3
 # STILL UNTUNED, but no longer unmeasured — deliberately left as-is pending a
 # decision, not an oversight.

@@ -12,17 +12,16 @@ HOW TO READ THIS FILE
 ---------------------
 The model is split into four layers, top to bottom:
   1. INPUT           — what the user gives us (owned by Kati).
-  2. ARTIFACTS       — the things the agents produce. These are PLACEHOLDERS for
-                       contracts other people own (Maheen's schemas, Kush's KB
-                       chunk, Malte's repo representation). Marked  # TODO(owner
+  2. ARTIFACTS       — the schemas the agents produce (Maheen's Context
+                       Record/Blueprint/ADR/Component schemas, Kush's KB
+                       chunk, Malte's repo representation), each frozen by its
+                       owning agent.
   3. WORKING FIELDS  — intermediate results agents pass to each other.
   4. CONTROL / META  — orchestration bookkeeping (owned entirely by Kati):
                        status, routing, trace history, retries, token usage.
 
-This is v0.1 — a *strawman* for the team's contract-freezing session. The
-placeholder classes exist so the skeleton runs today; each owner replaces the
-body of their class with the real schema once frozen. Because everyone imports
-from THIS file, tightening a placeholder later does not change the pipeline wiring.
+Everyone imports from THIS file, so the state object is the single contract
+every agent builds against.
 """
 from __future__ import annotations
 
@@ -57,9 +56,8 @@ class InitialRequest(BaseModel):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 2. ARTIFACT PLACEHOLDERS  (owned by others — TODO markers, not final schemas)
+# 2. ARTIFACTS  (each schema frozen and owned by its agent)
 # ══════════════════════════════════════════════════════════════════════════
-# Each class below is a stand-in. The owner replaces the body with the real, validated schema.
 
 # ── Repo representation (Malte owns) ──────────────────────────────────────
 # Repository Representation is intended to systematically provide information on the
@@ -188,8 +186,7 @@ class DecisionTopic(BaseModel):
 
 class ContextRecord(BaseModel):
     """Frozen snapshot of all constraints + clarification answers before design."""
-    # TODO(Maheen): real Context Record schema.
-    
+
     project_name: str = Field(
         default="",
         description="Short name identifying the architecture project.",
@@ -261,7 +258,7 @@ class ContextRecord(BaseModel):
 
 class Feature(BaseModel):
     """One functional requirement, with a concrete scenario (p.9 feature-first)."""
-    # TODO(Maheen): confirm final schema.
+
     id: str = Field(
         ...,
         description="Stable feature identifier, for example FEAT-001.",
@@ -335,7 +332,6 @@ class MigrationStep(BaseModel):
 
 class Blueprint(BaseModel):
     """Architecture Blueprint — stakeholder view + technical view."""
-    # TODO(Maheen): real Blueprint schema (two views).
 
     blueprint_id: str = Field(
         default="BP-001",
@@ -411,7 +407,6 @@ class Blueprint(BaseModel):
 
 class ADR(BaseModel):
     """One Architecture Decision Record."""
-    # TODO(Maheen): real ADR schema (title, context, options, decision, trade-offs).
 
     id: str = Field(
         default="ADR-001",
@@ -488,7 +483,6 @@ class ADR(BaseModel):
 
 class ComponentDescription(BaseModel):
     """One component's justified description."""
-    # TODO(Maheen): real Component Description schema.
 
     id: str = Field(
         default="COMP-001",
