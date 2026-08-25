@@ -284,6 +284,172 @@ def test_qualified_component_name_satisfies_the_step_reference():
 
 
 # ═════════════════════════════════════════════════════════════════════════
+# Regression — compound-name enumeration references
+#
+# A real E2E run's final component catalog held "Order Management Service"
+# and "Shipping and Fulfilment Service"; a migration step read "Extract
+# Order Management and Fulfillment Services". The old word-by-word list
+# split flattened the enumeration to three unrelated one-word candidates
+# ("Order", "Management", "Fulfillment"), and "Order Service" / "Fulfillment
+# Service" were reported missing even though the step plainly names the two
+# existing components. Fixed by keeping a comma/'and'-delimited enumeration
+# segment ("Order Management") as ONE candidate phrase instead of splitting
+# it on every bare space, plus the one spelling tolerance the real case
+# needs ('fulfillment' vs 'fulfilment'). Both real missing services and
+# genuinely ambiguous shortened references must still block — that half is
+# `_resolve_unambiguous_component`, exercised below too.
+# ═════════════════════════════════════════════════════════════════════════
+
+
+def test_real_regression_order_management_and_fulfilment_resolve():
+    """THE real failure, verbatim: both catalog components resolve, and
+    neither the short-lived synthetic 'Order Service' nor 'Fulfillment
+    Service' (spelled the way the migration step spelled it) is flagged."""
+    state = _base_state(
+        components=["API Gateway", "Order Management Service",
+                    "Shipping and Fulfilment Service"],
+        flows=["API Gateway → Order Management Service: checkout"],
+        steps=[
+            MigrationStep(
+                title="Extract Order Management and Fulfillment Services",
+                objective="The two customer-order domains scale independently.",
+            ),
+        ],
+    )
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.unresolved_migration_targets == {}
+    assert "Order Service" not in checks.unresolved_migration_targets
+    assert "Fulfillment Service" not in checks.unresolved_migration_targets
+
+
+def test_ampersand_compound_names_remain_exact():
+    """'&'-joined compound names, already resolvable via the existing
+    trailing-word suffix rule, are unaffected by this pass."""
+    state = _base_state(
+        components=["API Gateway", "Order & Checkout Service",
+                    "Fulfillment & Inventory Service"],
+        flows=["API Gateway → Order & Checkout Service: checkout"],
+        steps=[
+            MigrationStep(
+                title="Extract Order & Checkout Service",
+                objective="Checkout scales independently.",
+            ),
+            MigrationStep(
+                title="Extract Fulfillment & Inventory Service",
+                objective="Fulfillment scales independently.",
+            ),
+        ],
+    )
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.unresolved_migration_targets == {}
+
+
+def test_safe_formatting_variations_resolve_to_the_same_component():
+    """'Service' vs 'Services', a different introduction verb, and the
+    'fulfillment'/'fulfilment' spelling split all fold to the same
+    component identity — none may produce a false missing-component
+    finding when exactly one component matches."""
+    for wording in (
+        "Extract the Fulfillment Service",   # American spelling, singular
+        "Introduce the Fulfilment Service",  # British spelling, different verb
+    ):
+        state = _base_state(
+            components=["API Gateway", "Shipping and Fulfilment Service"],
+            flows=["API Gateway → Shipping and Fulfilment Service: dispatch"],
+            steps=[MigrationStep(title=wording, objective="Ship independently.")],
+        )
+
+        checks = run_deterministic_checks(state)
+
+        assert checks.unresolved_migration_targets == {}, wording
+
+
+def test_genuinely_missing_service_still_blocks():
+    """The fix must not blunt the check: a service the catalog truly never
+    describes stays a blocking finding."""
+    state = _base_state(
+        components=["API Gateway", "Order Management Service"],
+        flows=["API Gateway → Order Management Service: checkout"],
+        steps=[
+            MigrationStep(
+                title="Extract Notification Service",
+                objective="Notify customers of order status changes.",
+            ),
+        ],
+    )
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.unresolved_migration_targets == {
+        "Notification Service": ["Extract Notification Service"],
+    }
+
+
+def test_ambiguous_shortened_order_reference_is_not_guessed():
+    """Two components could plausibly own a bare 'Order Service' mention —
+    the check must not arbitrarily pick one; the reference stays a
+    blocking finding, same as a genuinely missing service."""
+    state = _base_state(
+        components=["API Gateway", "Order Management Service",
+                    "Order Analytics Service"],
+        flows=["API Gateway → Order Management Service: checkout"],
+        steps=[
+            MigrationStep(
+                title="Extract the Order Service",
+                objective="Order processing scales independently.",
+            ),
+        ],
+    )
+
+    checks = run_deterministic_checks(state)
+
+    assert "Order Service" in checks.unresolved_migration_targets
+
+
+def test_ambiguous_fulfilment_reference_is_not_guessed():
+    """Two components both end in 'Fulfilment' — a bare 'Fulfillment
+    Service' mention (American spelling) must not silently resolve to
+    either one."""
+    state = _base_state(
+        components=["API Gateway", "Shipping and Fulfilment Service",
+                    "Warehouse Fulfilment Service"],
+        flows=["API Gateway → Shipping and Fulfilment Service: dispatch"],
+        steps=[
+            MigrationStep(
+                title="Extract the Fulfillment Service",
+                objective="Fulfillment scales independently.",
+            ),
+        ],
+    )
+
+    checks = run_deterministic_checks(state)
+
+    assert "Fulfillment Service" in checks.unresolved_migration_targets
+
+
+def test_compound_enumeration_phrase_extractor_preserves_adjacency():
+    """The extractor this fix adds keeps a bare-space-joined run of words
+    ('Order Management') as ONE candidate phrase, splitting an enumeration
+    only on its explicit ',' / 'and' separators — unlike
+    `_extract_service_bases`, which still flattens to independent words
+    (see `test_parser_never_yields_an_action_verb_as_a_service_base`)."""
+    from pipeline.review_checks import _extract_migration_service_phrases
+
+    for text, expected in (
+        ("Extract Order Management and Fulfillment Services",
+         ["Fulfillment", "Order Management"]),
+        ("Extract Order, Inventory, and Shipping Services",
+         ["Inventory", "Order", "Shipping"]),
+        ("Decompose Catalog and Review Services", ["Catalog", "Review"]),
+    ):
+        assert _extract_migration_service_phrases(text) == expected, text
+
+
+# ═════════════════════════════════════════════════════════════════════════
 # Invariant 2 — every non-empty flow must be directionally renderable
 # ═════════════════════════════════════════════════════════════════════════
 

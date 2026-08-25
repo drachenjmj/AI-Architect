@@ -963,12 +963,33 @@ def _singularise(token: str) -> str:
     return token
 
 
-def _name_tokens(name: str) -> tuple[str, ...]:
-    """Normalise a display name to comparable lowercase tokens."""
+# The one British/American spelling split a real E2E run needed tolerated:
+# a component catalog named "Shipping and Fulfilment Service" (British) while
+# a migration step said "...Fulfillment Services" (American) — same word,
+# different orthography, and generic case/punctuation folding cannot bridge
+# a spelling difference. Narrow and explicit on purpose: this is presentation
+# normalization for one real, named variant, not a spelling corrector — the
+# vocabulary this check must never become (see `_check_migration_targets`).
+_SPELLING_VARIANTS: dict[str, str] = {"fulfillment": "fulfilment"}
 
+
+def _fold_spelling_variant(token: str) -> str:
+    return _SPELLING_VARIANTS.get(token, token)
+
+
+def _name_tokens(name: str) -> tuple[str, ...]:
+    """Normalise a display name to comparable lowercase tokens.
+
+    '&' folds to 'and' before tokenizing (rather than vanishing, which the
+    bare alphanumeric regex would otherwise do) so "Order & Checkout" and
+    "Order and Checkout" compare equal — the same presentation-only
+    tolerance case already covers for spacing, case and punctuation.
+    """
+
+    normalized = name.lower().replace("&", " and ")
     return tuple(
-        _singularise(token)
-        for token in re.findall(r"[a-z0-9]+", name.lower())
+        _fold_spelling_variant(_singularise(token))
+        for token in re.findall(r"[a-z0-9]+", normalized)
     )
 
 
@@ -2344,6 +2365,83 @@ _MIGRATION_INTRODUCTION_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ─────────────────────────────────────────────────────────────────────────
+# Compound-name enumeration references (regression, real E2E run)
+#
+# `_extract_service_bases`'s list grammar splits an enumeration on ANY
+# whitespace, which is right for a run of genuinely separate one-word names
+# ("Order, Payment, and Notification services") but wrong for a multi-word
+# compound name enumerated alongside another: "Extract Order Management and
+# Fulfillment Services" — against a catalog holding "Order Management
+# Service" and "Shipping and Fulfilment Service" — flattened to THREE
+# one-word candidates ("Order", "Management", "Fulfillment"), and "Order
+# Service" / "Fulfillment Service" were then reported missing even though
+# the migration text plainly names the two existing components.
+#
+# The fix is structural, not a name lookup: split the enumeration ONLY on
+# its explicit ',' / 'and' separators, so a bare space between two
+# TitleCase words ("Order Management") stays part of ONE candidate phrase
+# instead of being torn into two independent ones. This is the same
+# "compare the extraction against the existing catalog" principle
+# `canonicalize_data_flow_endpoints` already uses for flow endpoints —
+# applied here at the extraction step, not as a second matching pass.
+# `_extract_service_bases` itself is untouched (its other caller,
+# `_target_service_references`, keeps its existing per-word behavior).
+# ─────────────────────────────────────────────────────────────────────────
+_MIGRATION_LIST_DELIM_RE = re.compile(r"\s*,\s*(?:and\s+)?|\s+and\s+")
+
+
+def _extract_migration_service_phrases(text: str) -> list[str]:
+    """Like `_extract_service_bases`, but an enumeration's comma/'and'
+    segments are kept as whole (possibly multi-word) candidate phrases
+    instead of being flattened word by word. Migration-check only.
+    """
+    phrases: set[str] = set()
+    for match in _TARGET_SINGULAR_RE.finditer(text):
+        base = match.group(1)
+        if base.lower() not in _NON_NAME_WORDS and base.lower() != "service":
+            phrases.add(base)
+    for match in _TARGET_LIST_RE.finditer(text):
+        enumeration = match.group(1)
+        is_explicit_list = ("," in enumeration) or (
+            re.search(r"\s+and\s+", enumeration) is not None
+        )
+        if not is_explicit_list:
+            continue
+        segments: list[str] = []
+        for chunk in _MIGRATION_LIST_DELIM_RE.split(enumeration):
+            words = [
+                word for word in chunk.split()
+                if word.lower() not in _NON_NAME_WORDS
+            ]
+            if words:
+                segments.append(" ".join(words))
+        if len(segments) >= 2:
+            phrases.update(segments)
+    return sorted(phrases)
+
+
+def _resolve_unambiguous_component(
+    key: tuple[str, ...],
+    component_entries: list[tuple[tuple[str, ...], bool]],
+) -> bool:
+    """True when `key` resolves to EXACTLY ONE existing component — by
+    exact identity, or as the trailing tokens of a non-composite
+    component's identity (the same rule the ownership check uses).
+
+    Counting matters as much as matching: two components that both end in
+    'Fulfilment' (e.g. 'Shipping and Fulfilment Service' and 'Warehouse
+    Fulfilment Service') must NOT let a bare 'Fulfillment Service' mention
+    silently pick one — zero matches (nothing declares it) and multiple
+    matches (which one is meant is genuinely unclear) are both unresolved.
+    """
+    matches = sum(
+        1
+        for existing, composite in component_entries
+        if existing == key or (not composite and existing[-len(key):] == key)
+    )
+    return matches == 1
+
 
 def _check_migration_targets(
     state: ArchitectState,
@@ -2352,16 +2450,20 @@ def _check_migration_targets(
     Component Description, mapped to the step titles naming them. Pure.
 
     Extraction is NARROW by construction: only sentences carrying an
-    introduction verb are scanned, and only names the existing
-    `_extract_service_bases` grammar accepts — an explicit
+    introduction verb are scanned, and only names
+    `_extract_migration_service_phrases` accepts — an explicit
     "<Name> Service" or an enumeration like "Order, Inventory, and Shipping
-    Services". Incidental prose ("the shipping module") carries no Service
-    suffix and is never a candidate. A candidate is excused when it
-    resolves to a described component under the SAME canonical identity as
-    the ownership check (including the composite exactness rule), or when
-    the design gives it an explicit disposition — legacy retention,
-    external, ownership, or deferred to a later phase — under the SAME
-    disposition vocabulary the other migration checks use.
+    Services" (a multi-word segment inside an enumeration, e.g. "Order
+    Management", stays one candidate phrase — see the note above). Incidental
+    prose ("the shipping module") carries no Service suffix and is never a
+    candidate. A candidate is excused when it resolves to EXACTLY ONE
+    described component under the SAME canonical identity as the ownership
+    check (including the composite exactness rule; an ambiguous match
+    between two or more components is NOT excused — see
+    `_resolve_unambiguous_component`), or when the design gives it an
+    explicit disposition — legacy retention, external, ownership, or
+    deferred to a later phase — under the SAME disposition vocabulary the
+    other migration checks use.
     """
     if state.blueprint is None:
         return {}
@@ -2400,17 +2502,13 @@ def _check_migration_targets(
         for sentence in _sentence_spans(" ".join(step_fields)):
             if not _MIGRATION_INTRODUCTION_RE.search(sentence):
                 continue
-            for base in _extract_service_bases(sentence):
+            for base in _extract_migration_service_phrases(sentence):
                 display = f"{base} Service"
                 key = _component_key(display)
                 if not key:
                     continue
-                if any(
-                    existing == key
-                    or (not composite and existing[-len(key):] == key)
-                    for existing, composite in component_entries
-                ):
-                    continue  # the target exists in the catalog
+                if _resolve_unambiguous_component(key, component_entries):
+                    continue  # the target exists in the catalog, unambiguously
                 if _has_explicit_disposition(key, sentences, owner_word_sets):
                     continue  # legacy/external/ownership, same rule as ownership
                 if any(
