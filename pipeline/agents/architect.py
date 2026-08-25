@@ -105,10 +105,10 @@ from pipeline.state import (
 # Claude for the A/B experiment and NOTHING else changes.
 ARCHITECT_MODEL = "flash-lite"
 
-# Integration note (Kush): the arrow grammar below is `pipeline.flow_syntax`'s
-# ONE shared pattern — the same spellings the UI renderer and the Reviewer
-# accept — imported rather than redefined so canonicalization cannot drift
-# from what the diagram will draw.
+# The arrow grammar below is `pipeline.flow_syntax`'s ONE shared pattern —
+# the same spellings the UI renderer and the Reviewer accept — imported
+# rather than redefined so canonicalization cannot drift from what the
+# diagram will draw.
 
 
 class FeatureDesign(BaseModel):
@@ -853,7 +853,7 @@ def _format_current_design(state: ArchitectState) -> str:
     )
 
 
-# Integration note (Kush): the COMPONENT IDENTITY CONSISTENCY rule in the
+# The COMPONENT IDENTITY CONSISTENCY rule in the
 # system prompt (added after run 20260823T145925Z-60fb9310 wrote
 # "Extract User Identity, Order, and Review Services" against three
 # separately-named components) is deliberately the ONLY name-freeze

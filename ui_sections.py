@@ -2207,7 +2207,7 @@ def render_adrs(state: ArchitectState) -> None:
         )
         return
 
-    # Integration note (Kush): evidence lookup for `_render_adr`'s "Literature
+    # Evidence lookup for `_render_adr`'s "Literature
     # evidence" block, built once here rather than per-ADR.
     evidence_by_id = {
         chunk.evidence_id: chunk
@@ -2598,7 +2598,7 @@ def architecture_flow_dot(
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# Integration note (Kush): Overview graph + Detailed flow filters.
+# Overview graph + Detailed flow filters.
 #
 # A real holdout run's diagram carried ~15 components and ~44 data flows —
 # every edge was real information, but one undifferentiated graph that size

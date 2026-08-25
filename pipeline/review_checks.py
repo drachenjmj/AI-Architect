@@ -86,7 +86,7 @@ class DeterministicChecks(BaseModel):
     repository_available: bool = False
     invalid_source_references: dict[str, list[str]] = Field(default_factory=dict)
 
-    # Integration note (Kush): decision-level literature grounding (see
+    # Decision-level literature grounding (see
     # `_check_kb_evidence_grounding`). ADR ids with no `evidence_ids` at all,
     # despite qualifying evidence existing this run to cite.
     adrs_without_kb_evidence: list[str] = Field(default_factory=list)
@@ -98,7 +98,7 @@ class DeterministicChecks(BaseModel):
     # `_check_kb_evidence_grounding` for why this does not block the verdict.
     kb_evidence_gap: bool = False
 
-    # Integration note (Kush): material-decision coverage (see
+    # Material-decision coverage (see
     # `_check_material_decision_coverage`). ADR id -> related_decision_topic_ids
     # values that do not resolve to any DecisionTopic retrieved this run.
     invalid_adr_decision_topic_ids: dict[str, list[str]] = Field(default_factory=dict)
@@ -881,7 +881,7 @@ _TARGET_LIST_RE = re.compile(
     r"\s+[Ss]ervices\b"
 )
 
-# Integration note (Kush): this verb vocabulary is the one shared knob of
+# This verb vocabulary is the one shared knob of
 # the migration checks — it feeds BOTH the introduction matcher and the
 # never-a-name blocklist below, so extend the tuple only, never one side.
 #

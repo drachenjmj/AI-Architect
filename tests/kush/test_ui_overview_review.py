@@ -129,7 +129,7 @@ def test_overview_target_architecture_sits_at_the_bottom_expanded():
     at = _finished_app()
 
     assert "Target architecture" in _md(at)
-    # Integration note (Kush): the diagram view defaults to "Overview" (the
+    # The diagram view defaults to "Overview" (the
     # calm, deduplicated graph); its accordion exists and is EXPANDED the
     # moment the page opens — see `render_target_architecture`.
     diagram = _expander(at, "Architecture overview")

@@ -22,7 +22,7 @@ FLOW_ARROW_RE = re.compile(r"\s*(?:→|->)\s*")
 FlowCategory = str  # "business" | "events" | "data" | "observability"
 
 # ─────────────────────────────────────────────────────────────────────────
-# Integration note (Kush): display-only flow classification, for the
+# Display-only flow classification, for the
 # Architecture diagram's Detailed-view filter (see ui_sections.py
 # render_target_architecture). ONE central, generic, deterministic rule —
 # never a second parsing grammar: classification runs on the ALREADY-PARSED

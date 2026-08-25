@@ -202,7 +202,7 @@ CRITICAL_RECORD_FIELDS: tuple[str, ...] = (
     "existing_systems",             # brownfield vs greenfield
 )
 
-# Integration note (Kush): the slot helpers, signal-term tables and
+# The slot helpers, signal-term tables and
 # safe-assumption machinery from here through `_can_ask` were added during
 # E2E hardening to make the assume-vs-ask boundary deterministic — code
 # decides which gaps are worth a question and which become labelled

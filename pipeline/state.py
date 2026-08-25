@@ -156,7 +156,7 @@ class KBChunk(BaseModel):
     page: int = 0
     box: int = 1          # 1=patterns, 2=domain, 3=web fallback
     distance: float | None = None   # Chroma distance, lower = better; None for web results
-    # Integration note (Kush): stable per-run identifier ("KB-E001", ...),
+    # Stable per-run identifier ("KB-E001", ...),
     # assigned deterministically by the researcher AFTER retrieval/dedup —
     # see pipeline/agents/researcher.py. Assigned ONLY to curated-KB chunks
     # (box != 3); a web-fallback chunk (box == 3) keeps this empty, which is
@@ -169,7 +169,7 @@ class KBChunk(BaseModel):
 
 class DecisionTopic(BaseModel):
     """One bounded decision/topic query the researcher planned this run, and
-    which KB evidence it actually surfaced. Integration note (Kush): this is
+    which KB evidence it actually surfaced. This is
     the per-run record of decision-level retrieval — see
     pipeline/agents/researcher.py `plan_decision_topics`. `evidence_ids` lists
     only QUALIFYING (curated-KB) evidence; an empty list is an explicit
@@ -295,7 +295,7 @@ class Feature(BaseModel):
 class MigrationStep(BaseModel):
     """One ordered step of a brownfield modernization sequence.
 
-    Integration note (Kush): added during brownfield hardening; its text
+    Added during brownfield hardening; its text
     fields are read by the deterministic migration-disposition/target
     checks in review_checks.py, so renaming them changes Reviewer behavior.
 
@@ -461,7 +461,7 @@ class ADR(BaseModel):
         default_factory=list,
         description="Knowledge-base or repository sources supporting the decision.",
     )
-    # Integration note (Kush): EXACT stable evidence identity, distinct from
+    # EXACT stable evidence identity, distinct from
     # `source_references` (fuzzy source-title text, may be repo OR KB
     # provenance). `evidence_ids` names ONLY curated-KB evidence this run
     # actually retrieved (see KBChunk.evidence_id / ArchitectState.decision_topics)
@@ -472,7 +472,7 @@ class ADR(BaseModel):
         default_factory=list,
         description="Stable KB-Exxx evidence identifiers actually retrieved this run that support this decision.",
     )
-    # Integration note (Kush): additive — extends "every ADR is grounded" to
+    # Additive — extends "every ADR is grounded" to
     # "every MATERIAL architecture decision is grounded" (see
     # review_checks.MATERIAL_DECISION_TOPICS / _check_material_decision_coverage).
     # EXACT DecisionTopic.id values (e.g. "TOPIC-1") this ADR's decision maps
@@ -550,7 +550,7 @@ REVIEW_CODE_SCORE_FIELDS = (
     "traceability",
     "adr_presence",
     "source_integrity",
-    # Integration note (Kush): decision-level literature grounding — does
+    # Decision-level literature grounding — does
     # every ADR cite retrieved-this-run curated-KB evidence? See
     # review_checks._check_kb_evidence_grounding.
     "kb_evidence_grounding",
@@ -618,7 +618,7 @@ class ReviewIssue(BaseModel):
     evidence: str = ""
     suggested_fix: str = ""
     requires_refinement: bool = False
-    # Integration note (Kush): True ONLY for a finding that another Architect
+    # True ONLY for a finding that another Architect
     # pass cannot possibly close within THIS run — e.g. "the curated KB
     # retrieved no evidence for any decision topic": research runs once,
     # before the refine loop exists, so no redesign can manufacture evidence
@@ -1163,7 +1163,7 @@ class ArchitectState(BaseModel):
     accepted_at: str = ""
     waiver: Optional[Waiver] = None
     retrieved_knowledge: list[KBChunk] = Field(default_factory=list)
-    # Integration note (Kush): this run's bounded decision-topic retrieval
+    # This run's bounded decision-topic retrieval
     # plan and what each topic actually surfaced — see
     # pipeline/agents/researcher.py `plan_decision_topics`. A plain
     # (LastValue) field: the researcher is the only writer, once per run.
