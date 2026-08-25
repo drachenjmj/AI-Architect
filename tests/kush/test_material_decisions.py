@@ -39,7 +39,9 @@ All offline; no LLM calls.
 from __future__ import annotations
 
 import inspect
+import re
 
+from pipeline.agents import architect as arch
 from pipeline.agents import reviewer as rev
 from pipeline.agents.researcher import _BASELINE_TOPICS
 from pipeline.refine_gate import evaluate_caps
@@ -333,6 +335,126 @@ def test_reviewer_system_prompt_asks_about_material_decision_topic_mapping():
     system = rev.REVIEWER_SYSTEM
     assert "related_decision_topic_ids" in system
     assert "hiding outside the ADR trail" in system or "outside the ADR trail" in system
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# ADR granularity — materially independent decisions should not be
+# compressed into one ADR merely to reduce ADR count
+#
+# A real Gemini 3.1 Flash-Lite HIGH run identified seven distinct decision
+# topics (decomposition, data ownership, integration style, scaling,
+# migration, technology conservation, observability) but bundled several
+# materially independent ones into a single ADR with one generic rationale.
+# The existing deterministic checks only require that every material topic
+# resolve to SOME ADR and never forbid one ADR mapping to several topics —
+# see `test_one_adr_covering_two_related_topics_is_supported` and
+# `test_one_adr_may_cover_integration_and_scaling_together` above, both of
+# which must keep passing unmodified. Over-bundling is a JUDGMENT call
+# (are the decisions genuinely coupled? does the ADR actually address each
+# one's alternatives and consequences?) that a brittle
+# `len(related_decision_topic_ids) > 1` rule cannot make — so the fix lives
+# entirely in the Architect's and Reviewer's prompt text, not in
+# `review_checks.py`. These tests are pure string-content checks; no LLM
+# call is made anywhere in this file.
+# ═════════════════════════════════════════════════════════════════════════
+
+
+def _flat(text: str) -> str:
+    """Collapse prompt line-wrapping so a phrase check does not depend on
+    exactly where a triple-quoted string happens to wrap."""
+    return " ".join(text.split())
+
+
+def test_architect_instructions_discourage_bundling_independent_decisions():
+    prompt = _flat(arch.ARCHITECTURE_SYSTEM_PROMPT)
+    assert "ADR GRANULARITY" in prompt
+    assert "materially independent" in prompt.lower()
+    assert "genuinely inseparable" in prompt.lower()
+
+
+def test_architect_instructions_have_no_minimum_adr_count():
+    prompt = _flat(arch.ARCHITECTURE_SYSTEM_PROMPT).lower()
+    assert "no target or minimum adr count" in prompt
+    # No "at least N ADRs" / "minimum of N ADRs" style phrasing anywhere.
+    assert not re.search(r"(?:at least|minimum of)\s+\w+\s+adrs?\b", prompt)
+    assert "one adr per topic" not in prompt
+    assert "one adr for each" not in prompt
+
+
+def test_architect_instructions_do_not_require_one_adr_per_topic():
+    """The permissive multi-topic-per-ADR rule (line: 'One ADR may map to
+    several topics when one decision legitimately spans them') must remain
+    exactly as permissive — the new guidance discourages UNJUSTIFIED
+    bundling without mandating a one-to-one topic-to-ADR mapping."""
+    prompt = _flat(arch.ARCHITECTURE_SYSTEM_PROMPT)
+    assert "One ADR may map to several topics" in prompt
+    assert "One ADR may still legitimately" in prompt
+
+
+def test_reviewer_instructions_check_for_over_bundled_decisions():
+    system = _flat(rev.REVIEWER_SYSTEM)
+    assert "ADR GRANULARITY" in system
+    assert "materially independent decision topics" in system
+    assert "genuinely coupled" in system
+
+
+def test_reviewer_instructions_still_allow_justified_multi_topic_adrs():
+    system = _flat(rev.REVIEWER_SYSTEM)
+    assert "not a failure on this ground" in system
+    assert "no minimum ADR count" in system
+
+
+def test_adr_granularity_check_lives_under_adr_soundness_not_a_new_criterion():
+    """The fix reuses the existing `adr_soundness` criterion and its
+    existing high-severity/'adr' category — no new CriterionJudgment field,
+    no new severity, no new category, matching the project's existing
+    severity conventions."""
+    assert set(rev.LLMJudgments.model_fields) == {
+        "repo_grounding", "flaw_detection", "adr_soundness",
+        "best_practice_grounding", "refinement_readiness",
+    }
+    severity, category, _finding, _fix = rev._CRITERION_ISSUES["adr_soundness"]
+    assert severity == "high"
+    assert category == "adr"
+    # The granularity guidance sits inside question 3 (adr_soundness).
+    system = rev.REVIEWER_SYSTEM
+    q3_start = system.index("3. adr_soundness")
+    q4_start = system.index("4. best_practice_grounding")
+    assert q3_start < system.index("ADR GRANULARITY") < q4_start
+
+
+def test_adr_granularity_finding_is_not_a_brittle_topic_count_rule():
+    """The forbidden implementation shape must not appear anywhere in the
+    deterministic checks — this stays a semantic LLM judgment, not
+    `if len(related_decision_topic_ids) > 1: fail`."""
+    import pipeline.review_checks as rc
+
+    source = inspect.getsource(rc)
+    assert "len(related_decision_topic_ids)" not in source
+    assert "len(adr.related_decision_topic_ids)" not in source
+
+
+def test_multi_topic_adr_deterministic_checks_are_unaffected_by_the_prompt_change():
+    """Belt-and-suspenders: the deterministic layer (which the prompt
+    changes never touch) still supports a legitimately bundled multi-topic
+    ADR exactly as before — re-proving the existing invariant this task
+    must not weaken."""
+    topics = [
+        _topic("TOPIC-1", DECOMPOSITION, ["KB-E001"]),
+        _topic("TOPIC-2", SCALING, ["KB-E001"]),
+    ]
+    adrs = [
+        _adr("ADR-001", "ADR-1: Extract and scale the checkout path",
+             ["TOPIC-1", "TOPIC-2"], ["KB-E001"]),
+    ]
+    kb_chunks = [_chunk("KB-E001", "s1.pdf")]
+    state = _state(topics=topics, adrs=adrs, kb_chunks=kb_chunks)
+
+    checks = run_deterministic_checks(state)
+
+    assert DECOMPOSITION not in checks.material_decisions_without_adr
+    assert SCALING not in checks.material_decisions_without_adr
+    assert checks.adrs_without_decision_topic_mapping == []
 
 
 # ── generic, no hard-coding, no catalog drift ────────────────────────────
