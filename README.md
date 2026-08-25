@@ -138,7 +138,7 @@ metadata). Acceptable for the prototype.
 
 2. **Review the prepared `.md` by hand** — nothing becomes permanent KB
    content unseen.
-3. **Rebuild the index** by rerunning `Rag_Setup.ipynb` (chunks at
+3. **Rebuild the index** by rerunning `notebooks/Rag_Setup.ipynb` (chunks at
    1000/200, embeds with the configured model, persists to `chroma_db/`).
 
 When Box 1/2 cannot answer a query, Box 3 performs a grounded web search and

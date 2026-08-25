@@ -273,15 +273,15 @@ def test_single_bad_page_does_not_drop_the_document(tmp_path):
 
 
 def test_ingestion_constants_are_pinned():
-    """The accepted chunking/retrieval design lives in Rag_Setup.ipynb. This
-    parses the notebook source (offline, no execution) and pins the values
-    this workflow must NOT change: chunk size/overlap and the Box folder
-    mapping."""
+    """The accepted chunking/retrieval design lives in
+    notebooks/Rag_Setup.ipynb. This parses the notebook source (offline, no
+    execution) and pins the values this workflow must NOT change: chunk
+    size/overlap and the Box folder mapping."""
     import json
     from pathlib import Path
 
     nb = json.loads(
-        (Path(__file__).resolve().parents[1] / "Rag_Setup.ipynb")
+        (Path(__file__).resolve().parents[1] / "notebooks" / "Rag_Setup.ipynb")
         .read_text(encoding="utf-8")
     )
     src = "\n".join("".join(c["source"]) for c in nb["cells"])

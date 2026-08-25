@@ -8,8 +8,8 @@ the standalone ingestion workflow:
     -> python pdf_to_md.py input.pdf -o "Rag Database/<box folder>"
     -> clean Markdown with page boundaries preserved as "---" separators
     -> REVIEW the .md by hand (nothing becomes permanent KB content unseen)
-    -> rerun Rag_Setup.ipynb, which chunks (1000/200), embeds, and persists
-       to chroma_db/ via the existing pipeline.
+    -> rerun notebooks/Rag_Setup.ipynb, which chunks (1000/200), embeds, and
+       persists to chroma_db/ via the existing pipeline.
 
 Box selection is purely the output DIRECTORY:
     - "Rag Database/box1_patterns/"  -> box 1 (general architecture patterns)
@@ -24,7 +24,7 @@ Page provenance: each PDF page becomes one block separated by a horizontal
 rule ("---"), so the ORIGINAL page boundaries stay visible inline in the
 prepared Markdown and in the chunks built from it. Chunk metadata is
 assigned by the ingestion loader, NOT here, and differs by source type:
-direct PDFs (PyPDFLoader in Rag_Setup.ipynb) get real per-page `source` +
+direct PDFs (PyPDFLoader in notebooks/Rag_Setup.ipynb) get real per-page `source` +
 `page` metadata; prepared Markdown (TextLoader) keeps `source=<filename>`
 but sets `page=0` — exact original PDF page numbers are NOT reconstructed
 as chunk metadata. That limitation is acceptable for this prototype and can
