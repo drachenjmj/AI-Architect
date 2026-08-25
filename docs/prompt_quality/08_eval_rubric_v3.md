@@ -12,7 +12,7 @@ Every item retains a `0-2` diagnostic score and must equal `2` to pass.
 | Item | Full-score rule |
 |---|---|
 | Artifact completeness | Context, Features, Blueprint, ADRs, and Components contain required decision information |
-| Constraint coverage | Every structured applicable constraint has evidence in generated design artifacts |
+| Constraint coverage | Every stated cloud, budget, and compliance constraint has evidence in generated design artifacts |
 | Structured traceability | All Feature, Blueprint, Component, and ADR links are present and resolve |
 | ADR completeness | ADRs are uniquely numbered and contain context, rationale, alternatives, and positive and negative consequences |
 | Source integrity | Every ADR citation resolves to supplied KB or repository evidence |
@@ -21,6 +21,13 @@ Every item retains a `0-2` diagnostic score and must equal `2` to pass.
 Python also raises a high-severity issue when a repository was requested but no
 repository representation is available. Input constraints are never counted as
 proof that the generated design addressed them.
+
+Functional and non-functional requirements are checked through their stable
+requirement IDs and the Requirement -> Feature -> Component/ADR traceability
+chain, not by keyword overlap. Existing-system alignment is checked through
+repository grounding, technology-drift, component-identity, and migration
+rules. This prevents a design from passing merely because it repeats a user
+sentence or names every detected technology.
 
 ## LLM-owned questions
 
@@ -45,7 +52,7 @@ should include a correction, with deterministic fallback text if omitted.
 
 Python passes only when:
 
-- all five code-owned scores equal `2`;
+- all code-owned scores equal `2`;
 - all verdict-bearing LLM judgments pass, excluding explicitly not-applicable
   criteria and advisory `refinement_readiness`; and
 - no high-severity issue remains.

@@ -1730,14 +1730,23 @@ def _actionable_adrs_without_kb_evidence(
 def _check_constraints(
     state: ArchitectState,
 ) -> tuple[dict[str, bool], dict[str, bool], dict[str, list[str]]]:
-    """Identify stated constraints and check only design artifacts for evidence.
+    """Check explicit context constraints against generated design artifacts.
 
     Returns (applicable, covered, uncovered). `uncovered` maps each group to
-    the EXACT requirement strings that failed the evidence match — the
-    actionable form of the diagnosis. The architect's refinement pass gets
-    these strings verbatim (via the issue evidence/suggested fix), so it can
-    close the gap in one round instead of re-paraphrasing a group label.
-    Pass/fail semantics are exactly the previous two-value behaviour.
+    the exact constraint strings that failed the evidence match.
+
+    Functional and non-functional requirements are deliberately not judged by
+    prose overlap here. Their deterministic contract is structural:
+    requirement_catalog -> Feature.related_requirement_ids -> Components/ADRs.
+    Existing-system alignment is likewise owned by repository grounding,
+    technology-drift, component-identity, and migration checks. Treating these
+    fields as bags of words caused semantically valid designs to fail until
+    they copied phrases such as "SQL" or an entire NFR verbatim.
+
+    This check therefore owns only the explicit context constraints whose
+    presence can be verified honestly in text: cloud, budget, and compliance.
+    The Reviewer's qualitative flaw-detection judgment still decides whether
+    the resulting architecture substantively satisfies the requirements.
     """
 
     context = state.context_record
@@ -1747,16 +1756,11 @@ def _check_constraints(
         group: [] for group in CONSTRAINT_GROUPS
     }
     if context is not None:
-        requirements["functional"] = _non_empty(context.functional_requirements)
         requirements["cloud"] = _non_empty([context.cloud_provider])
         requirements["budget"] = _non_empty([context.budget])
-        requirements["non_functional"] = _non_empty(
-            context.non_functional_requirements
-        )
         requirements["compliance"] = _non_empty(
             context.compliance_requirements
         )
-        requirements["existing_system"] = _non_empty(context.existing_systems)
 
     stopwords = {
         "and", "the", "for", "with", "must", "should", "system", "support",
@@ -2748,20 +2752,22 @@ def run_deterministic_checks(
             "high",
             "constraint",
             (
-                "Constraint group(s) not addressed in the design: "
+                "Context constraint group(s) not addressed in the design: "
                 f"{', '.join(uncovered)}."
             ),
             (
-                f"Uncovered requirement(s): {uncovered_detail}"
+                f"Unaddressed context constraint(s): {uncovered_detail}"
                 if uncovered_detail
                 else "No matching structured value or design text found for: "
                 f"{', '.join(uncovered)}"
             ),
             (
-                "Name every uncovered requirement verbatim in the design "
-                "text (Blueprint, ADRs, or Components): "
+                "Explain how the design satisfies each context constraint in "
+                "a relevant Blueprint, ADR, or Component field; use these "
+                "constraints as the repair targets, but do not merely copy "
+                "them verbatim: "
                 + (uncovered_detail if uncovered_detail else
-                   "each requirement the Context Record states.")
+                   "each applicable context constraint.")
             ),
         )
 

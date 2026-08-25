@@ -2,7 +2,7 @@
 the forensic audit of run 20260822T160643Z-8e49d732, without raising the
 refinement cap.
 
-  1. Constraint findings carry the EXACT uncovered requirement strings
+  1. Context-constraint findings carry the exact uncovered values
      (group labels alone left the architect re-paraphrasing).
   2. The REFINEMENT-turn prompt carries blocker-by-blocker repair
      discipline; the initial-design prompt does not.
@@ -35,7 +35,7 @@ from pipeline.state import (
 # ── shared fixtures ────────────────────────────────────────────────────────
 
 
-def _constraint_state(functional, existing, design_text_additions):
+def _constraint_state(cloud, budget, compliance, design_text_additions):
     """A state whose design text mentions everything in
     `design_text_additions` (plus fixed filler) but nothing else."""
     state = new_run("Modernize a monolithic shop.")
@@ -43,8 +43,9 @@ def _constraint_state(functional, existing, design_text_additions):
         project_name="Shop",
         business_goal="Survive peaks.",
         problem_statement="The monolith saturates.",
-        functional_requirements=functional,
-        existing_systems=existing,
+        cloud_provider=cloud,
+        budget=budget,
+        compliance_requirements=compliance,
     )
     filler = " ".join(design_text_additions)
     state.features = [
@@ -82,37 +83,31 @@ def _constraint_state(functional, existing, design_text_additions):
 # ── 1. exact constraint diagnostics ───────────────────────────────────────
 
 
-def test_uncovered_requirements_reported_individually_not_as_group_only():
+def test_uncovered_context_constraints_reported_individually_not_as_group_only():
     state = _constraint_state(
-        functional=[
-            "browsing products",          # covered below
-            "executing checkouts",        # NOT covered
-            "viewing order history",      # NOT covered
-        ],
-        existing=["Django-based monolithic backend", "React frontend"],
+        cloud="AWS",                     # covered below
+        budget="strict budget",          # NOT covered
+        compliance=["GDPR", "PCI DSS"], # GDPR covered, PCI DSS not covered
         design_text_additions=[
-            "browsing products", "Django-based monolithic backend",
-            "order management",  # not 'order history'
+            "AWS", "GDPR data processing",
         ],
     )
 
     checks = run_deterministic_checks(state)
 
     # The exact strings, per group…
-    assert "executing checkouts" in checks.constraints_uncovered["functional"]
-    assert "viewing order history" in checks.constraints_uncovered["functional"]
-    assert "React frontend" in checks.constraints_uncovered["existing_system"]
+    assert "strict budget" in checks.constraints_uncovered["budget"]
+    assert "PCI DSS" in checks.constraints_uncovered["compliance"]
     # …covered requirements are NOT listed.
-    assert "browsing products" not in checks.constraints_uncovered["functional"]
-    assert "Django-based monolithic backend" not in (
-        checks.constraints_uncovered["existing_system"]
-    )
+    assert checks.constraints_uncovered["cloud"] == []
+    assert "GDPR" not in checks.constraints_uncovered["compliance"]
 
 
 def test_constraint_issue_evidence_and_fix_carry_the_exact_strings():
     state = _constraint_state(
-        functional=["executing checkouts"],
-        existing=["React frontend"],
+        cloud="AWS",
+        budget="strict budget",
+        compliance=["GDPR"],
         design_text_additions=["nothing relevant"],
     )
 
@@ -124,47 +119,49 @@ def test_constraint_issue_evidence_and_fix_carry_the_exact_strings():
     # The strings LEAD both fields, so the refinement instruction's tail
     # clipping cannot cut them.
     assert issue.evidence.startswith(
-        "Uncovered requirement(s): functional: 'executing checkouts'"
+        "Unaddressed context constraint(s): cloud: 'AWS'"
     )
-    assert "'React frontend'" in issue.evidence
-    assert issue.suggested_fix.startswith("Name every uncovered requirement")
-    assert "'executing checkouts'" in issue.suggested_fix
-    assert "'React frontend'" in issue.suggested_fix
+    assert "'strict budget'" in issue.evidence
+    assert "'GDPR'" in issue.evidence
+    assert issue.suggested_fix.startswith("Explain how the design satisfies")
+    assert "do not merely copy them verbatim" in issue.suggested_fix
 
 
 def test_constraint_scoring_and_verdict_semantics_unchanged():
     """Same pass/fail and same score as before the enrichment: a partially
     covered group set still scores 1, a fully covered one scores 2."""
     partial = _constraint_state(
-        functional=["executing checkouts"],         # uncovered
-        existing=["Django-based monolithic backend"],  # covered below
-        design_text_additions=["Django-based monolithic backend"],
+        cloud="AWS",                  # covered below
+        budget="strict budget",       # uncovered
+        compliance=[],
+        design_text_additions=["AWS"],
     )
     assert run_deterministic_checks(partial).score_constraint_coverage == 1
 
     full = _constraint_state(
-        functional=["executing checkouts"],
-        existing=["Django-based monolithic backend"],
-        design_text_additions=["executing checkouts",
-                               "Django-based monolithic backend"],
+        cloud="AWS",
+        budget="strict budget",
+        compliance=[],
+        design_text_additions=["AWS", "strict budget"],
     )
     checks = run_deterministic_checks(full)
     assert checks.score_constraint_coverage == 2
-    assert checks.constraints_uncovered["functional"] == []
+    assert checks.constraints_uncovered["cloud"] == []
+    assert checks.constraints_uncovered["budget"] == []
     assert not any(i.category == "constraint" for i in checks.issues)
 
 
-def test_wording_variants_that_already_pass_still_pass():
-    """Token-overlap matching is untouched: 'shopping cart' evidence still
-    covers 'managing shopping cart' (2/3 tokens)."""
+def test_cloud_aliases_still_pass():
+    """The deterministic context check still accepts known cloud aliases."""
     state = _constraint_state(
-        functional=["managing shopping cart"],
-        existing=[],
-        design_text_additions=["the shopping cart is durable"],
+        cloud="Amazon Web Services",
+        budget="",
+        compliance=[],
+        design_text_additions=["The deployment runs on AWS."],
     )
     checks = run_deterministic_checks(state)
-    assert checks.constraints_covered["functional"] is True
-    assert checks.constraints_uncovered["functional"] == []
+    assert checks.constraints_covered["cloud"] is True
+    assert checks.constraints_uncovered["cloud"] == []
 
 
 # ── 2. refinement prompt discipline ───────────────────────────────────────
