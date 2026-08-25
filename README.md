@@ -110,7 +110,7 @@ Rag Database/      curated knowledge base: box1_patterns/ (general architecture)
                    box2_domain/ (8 curated e-commerce sources), raw_source_archive/
                    (unindexed raw upstream material), plus 2 AWS whitepapers in the
                    root (box 1). Web-search grounding (box 3) is the live fallback in
-                   architect.py when the KB has no usable match. See setup_report.md.
+                   architect.py when the KB has no usable match. See docs/setup_report.md.
 ```
 
 ### KB maintenance workflow (PDF → Markdown → KB)
