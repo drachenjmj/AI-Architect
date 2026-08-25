@@ -102,7 +102,8 @@ from pipeline.state import (
 # The frozen Gemini default. Per-call routing goes through
 # `role_model_override("architect", ...)` at each llm_call site, so
 # ARCHITECT_LLM_PROVIDER/ARCHITECT_LLM_MODEL redirect the Architect to
-# Claude for the A/B experiment and NOTHING else changes.
+# another configured provider (e.g. KI Connect) for an A/B evaluation and
+# NOTHING else changes.
 ARCHITECT_MODEL = "flash-lite"
 
 # The arrow grammar below is `pipeline.flow_syntax`'s ONE shared pattern —

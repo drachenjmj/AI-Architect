@@ -60,18 +60,19 @@ Returns `(reply, usage)`. `system`, `model` and `response_schema` are keyword-on
 Pick by cost/quality per call. `gemini-2.5-pro` is intentionally excluded
 (zero free-tier quota; no billing on this project).
 
-## Claude A/B routing (experiment)
+## KI Connect A/B routing (experiment)
 
-The Architect and the Reviewer can each be redirected to Claude independently,
-for a controlled A/B comparison against the Gemini baseline. Nothing changes
-unless you set environment variables — see `.env.example`:
+The Architect and the Reviewer can each be redirected to the University of
+Cologne's KI Connect endpoint independently, for a controlled A/B comparison
+against the Gemini baseline. Nothing changes unless you set environment
+variables — see `.env.example`:
 
 ```
-ANTHROPIC_API_KEY=
-ARCHITECT_LLM_PROVIDER=anthropic
-ARCHITECT_LLM_MODEL=claude-opus-5
-REVIEWER_LLM_PROVIDER=anthropic
-REVIEWER_LLM_MODEL=claude-opus-5
+KICONNECT_API_KEY=
+ARCHITECT_LLM_PROVIDER=kiconnect
+ARCHITECT_LLM_MODEL=OpenAI GPT OSS 120b KI:Inferenz.nrw
+REVIEWER_LLM_PROVIDER=kiconnect
+REVIEWER_LLM_MODEL=OpenAI GPT OSS 120b KI:Inferenz.nrw
 ```
 
 Both roles read their own `{ROLE}_LLM_PROVIDER`/`{ROLE}_LLM_MODEL` per call via
@@ -166,6 +167,7 @@ On any failure `llm_call` raises `LLMError`. You don't need to catch it: the
 
 ## Adding a model / provider later
 
-Add a line to `MODELS` in `llm.py` (name → model ID). To add Claude/GPT,
-the map becomes name → (provider, id) and `llm_call` branches on provider —
-**no agent changes needed**. Contact Kati before editing the registry.
+Add a line to `MODELS` in `llm.py` (name → model ID). To add another
+provider, the map becomes name → (provider, id) and `llm_call` branches on
+provider — **no agent changes needed**. Contact Kati before editing the
+registry.

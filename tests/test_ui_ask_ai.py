@@ -6,8 +6,8 @@ Offline throughout: `pipeline.agents.clarifier.discuss_field` is stubbed
 with a fake that records every call and returns a canned structured
 response. Real pipeline/persistence paths are booby-trapped so a bug that
 accidentally triggers a run, a save, or a stage transition from an Ask AI
-interaction fails loudly instead of passing quietly. NO LIVE Gemini/Claude
-calls occur anywhere in this file.
+interaction fails loudly instead of passing quietly. NO LIVE Gemini calls
+occur anywhere in this file.
 
 Never `import ui` (module-level st calls — see test_ui_workspace.py).
 """

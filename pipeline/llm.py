@@ -48,8 +48,8 @@ from pipeline.state import ArchitectState
 
 # ── Model registry: friendly NAME -> real model ID ───────────────────────
 # This is the cheap/strong lever. Agents say model="flash"; only this line
-# changes if we swap the underlying model. To add Claude/GPT later, this
-# maps to (provider, model_id) and llm_call dispatches on provider.
+# changes if we swap the underlying model. Adding another provider maps this
+# to (provider, model_id) and llm_call dispatches on provider.
 MODELS: dict[str, str] = {
     "flash-lite": "gemini-3.1-flash-lite",  # cheapest / fastest — default
     "flash":      "gemini-3.5-flash",       # stronger — for harder tasks
@@ -65,17 +65,15 @@ DEFAULT_MODEL = "flash-lite"
 #   * a friendly NAME from MODELS          -> the Google path, exactly as
 #                                              before the seam existed;
 #   * "provider/model-id" (e.g.            -> that provider explicitly;
-#     "anthropic/claude-opus-5")
-#   * a bare real model ID whose family     -> that provider (a claude-*
-#     prefix is known ("claude-opus-5")        id is Anthropic, a gemini-*
-#                                              id is Google).
+#     "kiconnect/OpenAI GPT OSS 120b ...")
+#   * a bare real model ID whose family     -> that provider (a gemini-*
+#     prefix is known                          id is Google).
 # Roles pick their routing per call via `role_model_override`, so the
-# Architect and the Reviewer can be pointed at Claude by environment while
-# the Clarifier, the advisor, RAG and the web fallback stay on Gemini.
-PROVIDERS: tuple[str, ...] = ("google", "anthropic", "kiconnect")
+# Architect and the Reviewer can be pointed at KI Connect by environment
+# while the Clarifier, the advisor, RAG and the web fallback stay on Gemini.
+PROVIDERS: tuple[str, ...] = ("google", "kiconnect")
 _PROVIDER_BY_PREFIX: dict[str, str] = {
     "gemini": "google",
-    "claude": "anthropic",
 }
 
 
@@ -115,9 +113,8 @@ def role_model_override(role: str, default: str) -> str:
     environment on EVERY call, so a run can be redirected without code
     changes and tests can redirect without reloading modules:
 
-        ARCHITECT_LLM_PROVIDER=anthropic
-        ARCHITECT_LLM_MODEL=claude-opus-5     -> "anthropic/claude-opus-5"
-        ARCHITECT_LLM_MODEL=claude-opus-5     -> "claude-opus-5" (prefix-inferred)
+        ARCHITECT_LLM_PROVIDER=kiconnect
+        ARCHITECT_LLM_MODEL=<kiconnect model> -> "kiconnect/<kiconnect model>"
         neither set                           -> `default` (today's Gemini)
 
     A provider set without a model is ignored: a provider alone names no
@@ -197,10 +194,6 @@ class ModelPrice(NamedTuple):
 PRICING_USD_PER_MTOK: dict[str, ModelPrice | None] = {
     "gemini-3.1-flash-lite": ModelPrice(0.25, 1.50),
     "gemini-3.5-flash":      ModelPrice(1.50, 9.00),
-    # Standard API pricing for the Claude A/B experiment (Anthropic's
-    # published list prices at experiment time, USD per 1M tokens). Same
-    # honesty rule as the Gemini entries: list-price equivalent only.
-    "claude-opus-5":         ModelPrice(5.00, 25.00),
 }
 
 
@@ -237,7 +230,7 @@ class LLMUsage(BaseModel):
     cost_usd: float | None = None
     # The EFFECTIVE Gemini thinking level this call ran with (e.g. "high"),
     # or None when none was requested / this is not a Google call. Additive
-    # (default None): old checkpoints and Claude-path usages deserialize
+    # (default None): old checkpoints and other-provider usages deserialize
     # unchanged, and the final evaluation can PROVE what setting a run used
     # instead of re-deriving it from `.env`.
     thinking_level: str | None = None
@@ -352,32 +345,19 @@ def llm_call(
     (`GEMINI_THINKING_LEVELS`) at this chokepoint: an invalid value raises
     LLMError rather than silently running at default thinking — an
     evaluation run that believes it ran HIGH must never discover it did not.
-    On an Anthropic-routed call a Gemini thinking level is a misconfiguration
-    (Claude reasoning effort is `CLAUDE_EFFORT`, untouched) and raises LLMError.
     Model support for the requested level is the provider's own contract: a
     model that rejects it fails through the same LLMError wrapping below,
     never a silent fallback.
 
     PROVIDER ROUTING: `model` is resolved by `resolve_model_routing`; the
     Google path is byte-for-byte the behaviour that existed before the
-    seam. The Anthropic and KI Connect paths return the SAME downstream
-    types under the SAME contract — a validated Pydantic instance or a
-    plain str, plus an `LLMUsage`. There is NO cross-provider fallback: a
-    configured call either succeeds on that provider or fails there, so an
-    evaluation run can never silently mix providers.
+    seam. The KI Connect path returns the SAME downstream types under the
+    SAME contract — a validated Pydantic instance or a plain str, plus an
+    `LLMUsage`. There is NO cross-provider fallback: a configured call
+    either succeeds on that provider or fails there, so an evaluation run
+    can never silently mix providers.
     """
     provider, model_id = resolve_model_routing(model)
-    if provider == "anthropic":
-        if thinking_level is not None:
-            raise LLMError(
-                f"Gemini thinking_level={thinking_level!r} cannot be applied to "
-                f"anthropic/{model_id} — Claude reasoning effort is configured "
-                "separately via CLAUDE_EFFORT."
-            )
-        return _anthropic_call(
-            prompt, system=system, model_id=model_id,
-            response_schema=response_schema,
-        )
     if provider == "kiconnect":
         return _kiconnect_call(
             prompt, system=system, model_id=model_id,
@@ -435,71 +415,10 @@ def llm_call(
     return resp.text, usage
 
 
-# ── Anthropic provider (the A/B experiment path) ──────────────────────────
-# Claude Opus 5 for Architect + Reviewer, selected per role via
-# `role_model_override`. One client per process, key loaded once — the same
-# caching discipline as the Google client above.
-_anthropic_client: Any = None
-
-# Output budget: Opus 5 REQUIRES an explicit max_tokens and adaptive
-# thinking spends from it, so the ceiling must comfortably exceed the
-# largest schema output the agents request (Blueprint + ADRs + Components
-# round-trips measured at ~10k tokens in real runs). 32k sits well inside
-# Opus 5's supported range with headroom for thinking; overridable for
-# experiments without code changes.
-CLAUDE_MAX_TOKENS = int(os.environ.get("CLAUDE_MAX_TOKENS", "32000"))
-# Effort is explicit on purpose (never SDK-default): the A/B experiment
-# must be able to state exactly which reasoning effort produced a run.
-# Default is MEDIUM since 2026-08-23: the first high-effort Opus E2E failed
-# with "no schema-valid JSON for ArchitectureDesign" and the node-level
-# token totals alone could not distinguish truncation from a schema
-# mismatch. Medium lowers reasoning overhead and latency/cost and leaves
-# more of the 32k output budget for the actual JSON; quality is judged
-# empirically by the next run, not assumed.
-CLAUDE_EFFORT = os.environ.get("CLAUDE_EFFORT", "medium")
-
-
-# ── Prompted-JSON policy for the DEMONSTRATED oversized schema ────────────
-# A real full Architect run on claude-opus-5 failed BEFORE generation with
-# Anthropic 400 invalid_request_error: "The compiled grammar is too large,
-# which would cause performance issues." — the native `output_config.format`
-# grammar COMPILER chokes on the deeply nested `ArchitectureDesign` schema
-# (Blueprint + ADRs + Components + migration steps). This is grammar
-# complexity, not input size: the same prompt text sends fine, and a tiny
-# native-grammar smoke schema worked.
-#
-# The policy is deliberately EXPLICIT, not a heuristic: no byte/depth/
-# property threshold could predict Anthropic's undocumented compiler limit,
-# so we list exactly the schema that demonstrably exceeds it. Everything
-# else keeps native structured output (and its generation constraints).
-#
-# Identity is matched WITHOUT importing the class: `pipeline.agents.
-# architect` imports this module, so a top-level import here would be
-# circular. A module-QUALIFIED name check is the narrowest safe match —
-# an unrelated Pydantic class named "ArchitectureDesign" in any other
-# module never triggers this, and the module pin is asserted by tests.
-_PROMPTED_JSON_SCHEMAS: frozenset[tuple[str, str]] = frozenset({
-    ("pipeline.agents.architect", "ArchitectureDesign"),
-})
-
-
-def _anthropic_uses_prompted_json(response_schema: type | None) -> bool:
-    """Should this Anthropic call use prompt-embedded JSON instead of the
-    native `output_config.format` grammar? True ONLY for the schemas on the
-    explicit `_PROMPTED_JSON_SCHEMAS` list — the ones a real run has
-    demonstrated exceed Anthropic's grammar-compiler limit. Pure.
-    """
-    if response_schema is None:
-        return False
-    return (
-        getattr(response_schema, "__module__", ""),
-        getattr(response_schema, "__name__", ""),
-    ) in _PROMPTED_JSON_SCHEMAS
-
-
 def _prompted_json_contract(response_schema: type) -> str:
     """The provider-local output-format instruction appended to the prompt
-    when native structured output is not used for an oversized schema.
+    so the model returns schema-shaped JSON without native structured-output
+    support (KI Connect).
 
     The COMPLETE Pydantic JSON schema is embedded exactly once, serialized
     deterministically (`model_json_schema` + `json.dumps`), unmutated — the
@@ -659,24 +578,6 @@ def _kiconnect_call(
     return text, usage
 
 
-def _get_anthropic_client() -> Any:
-    global _anthropic_client
-    if _anthropic_client is None:
-        try:
-            import anthropic
-        except ImportError as exc:
-            raise LLMError(
-                "anthropic package is not installed — run "
-                "`pip install anthropic` to use the Claude routing."
-            ) from exc
-        load_dotenv()
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise LLMError("ANTHROPIC_API_KEY not found in .env!")
-        _anthropic_client = anthropic.Anthropic(api_key=api_key)
-    return _anthropic_client
-
-
 def _validation_summary(exc: BaseException) -> str:
     """Concise summary of a Pydantic/JSON validation failure, for an LLMError.
 
@@ -709,129 +610,6 @@ def _validation_summary(exc: BaseException) -> str:
                 return summary
     text = " ".join(str(exc).split())
     return text[:500] + "..." if len(text) > 500 else text
-
-
-def _anthropic_call(
-    prompt: str,
-    *,
-    system: str,
-    model_id: str,
-    response_schema: type | None = None,
-) -> tuple[Any, LLMUsage]:
-    """One Messages-API call to Claude; `(reply, LLMUsage)` like the Google path.
-
-    Structured output uses Claude's native JSON-schema enforcement
-    (`output_config.format`); the returned JSON text is validated into the
-    SAME Pydantic class the Google path returns (`model_validate_json`), so
-    no Claude-shaped object ever leaves this boundary. Transport errors and
-    schema-invalid output raise the same `LLMError` contract, with billed
-    tokens attached on the unusable-output path — no silent JSON repair, no
-    cross-provider fallback.
-
-    TRANSPORT: always goes through `messages.stream(...)` +
-    `get_final_message()`, never `messages.create(...)`. The SDK requires
-    streaming for requests that may run past its 10-minute non-streaming
-    timeout, and that boundary is the SDK's own internal heuristic — not
-    something this module should re-derive or hard-code a token threshold
-    for. `get_final_message()` blocks until the stream completes and hands
-    back the SAME accumulated `Message` shape `messages.create()` would have
-    returned (`.content`, `.usage`), so everything below this call is
-    unchanged by the transport.
-
-    The schema itself goes through Anthropic's OFFICIAL `transform_schema`
-    (not a hand-rolled sanitizer) before it is sent — a raw
-    `response_schema.model_json_schema()` omits API-required shape like
-    `additionalProperties: false` on objects, which is exactly what
-    `transform_schema` adds. `client.messages.parse()` applies this same
-    transform internally, but its own schema-validation failure raises
-    directly out of the SDK call with no response object recoverable — which
-    would silently drop the billed-usage-on-failure guarantee above. Calling
-    `transform_schema` explicitly and keeping our own `model_validate_json`
-    step keeps that guarantee intact.
-
-    OVERSIZED SCHEMAS (see `_PROMPTED_JSON_SCHEMAS`): for `ArchitectureDesign`
-    — demonstrated by a real run to exceed Anthropic's native
-    grammar-compiler limit with a 400 BEFORE generation — no
-    `output_config.format` is sent at all. The complete JSON Schema is
-    appended to the prompt as the output contract, and the SAME strict
-    `model_validate_json` validation (same class, same error path, same
-    billed-usage attachment) decides success. Streaming, max_tokens,
-    effort, and token/cost accounting are identical on both paths. NO
-    retries, NO fence stripping, NO JSON repair, NO cross-provider
-    fallback — an invalid reply fails loudly, exactly like a native
-    grammar violation would.
-    """
-    client = _get_anthropic_client()
-    from anthropic import transform_schema
-
-    # Oversized-schema policy (see `_PROMPTED_JSON_SCHEMAS`): for the
-    # schema a real run demonstrated exceeds Anthropic's grammar compiler,
-    # NO native `output_config.format` is sent — the complete JSON Schema
-    # rides in the prompt instead and the SAME Pydantic class validates the
-    # reply below. Every other schema keeps native structured output.
-    prompted_json = _anthropic_uses_prompted_json(response_schema)
-    request_prompt = (
-        prompt + _prompted_json_contract(response_schema)
-        if prompted_json else prompt
-    )
-
-    output_config: dict[str, Any] = {"effort": CLAUDE_EFFORT}
-    if response_schema is not None and not prompted_json:
-        output_config["format"] = {
-            "type": "json_schema",
-            "schema": transform_schema(response_schema),
-        }
-    request: dict[str, Any] = {
-        "model": model_id,
-        "max_tokens": CLAUDE_MAX_TOKENS,
-        "messages": [{"role": "user", "content": request_prompt}],
-        "output_config": output_config,
-    }
-    if system:
-        request["system"] = system
-    try:
-        with client.messages.stream(**request) as stream:
-            resp = stream.get_final_message()
-    except Exception as e:
-        raise LLMError(f"anthropic/{model_id} call failed: {e}") from e
-
-    meta = getattr(resp, "usage", None)
-    input_tokens = (getattr(meta, "input_tokens", 0) or 0) if meta else 0
-    output_tokens = (getattr(meta, "output_tokens", 0) or 0) if meta else 0
-    usage = LLMUsage(
-        model=model_id,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        cost_usd=estimate_cost_usd(model_id, input_tokens, output_tokens),
-    )
-    # The provider's final completion reason, straight off the final Message
-    # the SDK accumulated (`get_final_message()` preserves it). None when the
-    # SDK did not provide one — never invented: `stop_reason='max_tokens'`
-    # vs `'end_turn'` is exactly the truncation-vs-schema-mismatch fact a
-    # failed run must be able to report.
-    stop_reason = getattr(resp, "stop_reason", None)
-
-    text = "".join(
-        getattr(block, "text", "")
-        for block in (getattr(resp, "content", None) or [])
-        if getattr(block, "type", "") == "text"
-    )
-    if response_schema is not None:
-        try:
-            return response_schema.model_validate_json(text), usage
-        except Exception as e:
-            err = LLMError(
-                f"anthropic/{model_id} returned no schema-valid JSON "
-                f"for {response_schema.__name__} "
-                f"(stop_reason={stop_reason!r}, "
-                f"input_tokens={input_tokens}, "
-                f"output_tokens={output_tokens}, "
-                f"response_chars={len(text)}): "
-                f"{_validation_summary(e)}"
-            )
-            attach_usage(err, usage)  # billed but unusable — still real tokens
-            raise err from e
-    return text, usage
 
 
 # ── Self-test: `python -m pipeline.llm` ──────────────────────────────────

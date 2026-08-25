@@ -14,14 +14,10 @@ annotated-doc==0.0.5
     # via typer
 annotated-types==0.8.0
     # via pydantic
-anthropic==1.0.0
-    # via -r requirements.in
 anyio==4.14.2
     # via
-    #   anthropic
     #   google-genai
     #   httpx
-    #   httpx2
     #   langsmith
     #   starlette
     #   streamlit
@@ -67,8 +63,6 @@ distro==1.9.0
     # via
     #   google-genai
     #   langsmith
-docstring-parser==0.18.0
-    # via anthropic
 durationpy==0.10
     # via kubernetes
 filelock==3.32.3
@@ -126,14 +120,11 @@ grpcio-status==1.71.2
 h11==0.16.0
     # via
     #   httpcore
-    #   httpcore2
     #   uvicorn
 hf-xet==1.6.0
     # via huggingface-hub
 httpcore==1.0.9
     # via httpx
-httpcore2==2.12.0
-    # via httpx2
 httplib2==0.32.0
     # via
     #   google-api-python-client
@@ -152,15 +143,12 @@ httpx==0.28.1
     #   langsmith
 httpx-sse==0.4.3
     # via langchain-community
-httpx2==2.12.0
-    # via anthropic
 huggingface-hub==1.28.0
     # via tokenizers
 idna==3.19
     # via
     #   anyio
     #   httpx
-    #   httpx2
     #   requests
     #   yarl
 importlib-resources==7.1.0
@@ -173,8 +161,6 @@ jinja2==3.1.6
     # via
     #   altair
     #   pydeck
-jiter==0.16.0
-    # via anthropic
 jsonpatch==1.33
     # via langchain-core
 jsonpointer==3.1.1
@@ -330,7 +316,6 @@ pycparser==3.0
     # via cffi
 pydantic==2.13.4
     # via
-    #   anthropic
     #   chromadb
     #   google-genai
     #   google-generativeai
@@ -418,7 +403,6 @@ six==1.17.0
     #   python-dateutil
 sniffio==1.3.1
     # via
-    #   anthropic
     #   google-genai
     #   langsmith
 sqlalchemy==2.0.52
@@ -444,10 +428,6 @@ tqdm==4.70.0
     #   chromadb
     #   google-generativeai
     #   huggingface-hub
-truststore==0.10.4
-    # via
-    #   httpcore2
-    #   httpx2
 typer==0.27.1
     # via chromadb
 typing-extensions==4.16.0
@@ -455,13 +435,11 @@ typing-extensions==4.16.0
     #   aiohttp
     #   aiosignal
     #   altair
-    #   anthropic
     #   anyio
     #   chromadb
     #   google-genai
     #   google-generativeai
     #   grpcio
-    #   httpx2
     #   huggingface-hub
     #   langchain-core
     #   langchain-protocol

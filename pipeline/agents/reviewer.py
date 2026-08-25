@@ -587,9 +587,10 @@ def run_reviewer(
 
     `model=None` (the default) resolves through `role_model_override`, so
     `REVIEWER_LLM_PROVIDER`/`REVIEWER_LLM_MODEL` redirect the Reviewer to
-    Claude for the A/B experiment while eval callers passing an explicit
-    model keep full control. With no environment set, the routing is the
-    frozen Gemini default — byte-for-byte today's behaviour.
+    another configured provider (e.g. KI Connect) for an A/B evaluation
+    while eval callers passing an explicit model keep full control. With no
+    environment set, the routing is the frozen Gemini default — byte-for-byte
+    today's behaviour.
     """
 
     if model is None:

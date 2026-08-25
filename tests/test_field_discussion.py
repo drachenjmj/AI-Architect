@@ -8,7 +8,7 @@ behavior — bare-mode `st.session_state` outside a running app does not
 reliably function, so it is not unit-tested directly here).
 
 All offline: `pipeline.agents.clarifier.llm_call` is stubbed. No live
-Gemini/Claude calls anywhere in this file.
+Gemini calls anywhere in this file.
 """
 
 from __future__ import annotations
