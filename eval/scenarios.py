@@ -17,8 +17,10 @@ from pipeline.state import (
     Blueprint,
     ComponentDescription,
     ContextRecord,
+    DecisionTopic,
     Feature,
     KBChunk,
+    MigrationStep,
     RepoBehavior,
     RepoMeta,
     RepoRepresentation,
@@ -132,6 +134,7 @@ def _single_feature_state(
     component_name: str,
     component_purpose: str,
     component_description: str,
+    decision_topic: str,
     source: str,
     source_content: str,
     repo_url: str = "",
@@ -157,6 +160,14 @@ def _single_feature_state(
     state.retrieved_knowledge = [
         KBChunk(content=source_content, source=source, box=1, evidence_id="KB-E001")
     ]
+    state.decision_topics = [
+        DecisionTopic(
+            id="TOPIC-1",
+            topic=decision_topic,
+            query=decision_topic,
+            evidence_ids=["KB-E001"],
+        )
+    ]
     state.features = [
         Feature(
             id="FEAT-001",
@@ -179,7 +190,7 @@ def _single_feature_state(
         stakeholder_view=business_goal,
         technical_view=technical_view,
         components=[component_name],
-        data_flows=[f"Requests flow through {component_name}."],
+        data_flows=[f"User -> {component_name}: request"],
         addressed_feature_ids=["FEAT-001"],
         constraints_addressed=constraints_addressed,
     )
@@ -197,6 +208,7 @@ def _single_feature_state(
             related_component_names=[component_name],
             source_references=[source],
             evidence_ids=["KB-E001"],
+            related_decision_topic_ids=["TOPIC-1"],
         )
     ]
     state.components = [
@@ -241,7 +253,7 @@ def _shop_repo() -> RepoRepresentation:
 def sound_shop_state() -> ArchitectState:
     """Brownfield repair that removes the repository's peak-load bottleneck."""
 
-    return _single_feature_state(
+    state = _single_feature_state(
         prompt="Make the existing shop survive seasonal peaks without losing orders.",
         project_name="Seasonal Shop",
         business_goal="Customers can complete purchases during seasonal peaks.",
@@ -276,14 +288,45 @@ def sound_shop_state() -> ArchitectState:
         component_name="Checkout Service",
         component_purpose="Accept checkout requests without blocking on order processing.",
         component_description="Implements FEAT-001 under ADR-001 using an AWS queue.",
+        decision_topic="queue-buffered incremental checkout extraction for peak scaling",
         source="queue-pattern.md",
         source_content=(
             "A durable queue buffers burst traffic and decouples producers from "
-            "slower consumers; consumers must be idempotent."
+            "slower consumers; consumers must be idempotent. Incrementally "
+            "extracting an overloaded checkout boundary allows the legacy system "
+            "and the new consumer to coexist during migration."
         ),
         repo_url="https://example.invalid/seasonal-shop",
         repo_representation=_shop_repo(),
     )
+    return state
+
+
+def _sound_shop_eval_state() -> ArchitectState:
+    """Current-contract variant of the UI's backward-compatible demo state."""
+
+    state = sound_shop_state()
+    state.blueprint.migration_steps = [
+        MigrationStep(
+            title="Extract Checkout Service behind a queue",
+            objective=(
+                "Introduce Checkout Service incrementally without replacing "
+                "the legacy shop in one cutover."
+            ),
+            changes=[
+                "Deploy Checkout Service and route checkout requests to it.",
+                "Buffer accepted orders in SQS for legacy order processing.",
+            ],
+            coexistence_or_data_strategy=(
+                "Checkout Service and the legacy shop coexist while traffic is "
+                "shifted gradually; SQS carries accepted orders across the boundary."
+            ),
+            exit_condition=(
+                "Peak checkout traffic no longer saturates the legacy storefront."
+            ),
+        )
+    ]
+    return state
 
 
 def symptom_patch_shop_state() -> ArchitectState:
@@ -311,7 +354,8 @@ def symptom_patch_shop_state() -> ArchitectState:
     # Checkout Service, which this variant replaces with the monolith. It is
     # kept in sync so the scenario's labeled flaw stays the vertical-scaling
     # patch, not a dangling target-service reference.
-    state.blueprint.data_flows = ["Requests flow through the Shop Monolith."]
+    state.blueprint.data_flows = ["User -> Shop Monolith: request"]
+    state.blueprint.migration_steps = []
     state.adrs[0].related_component_names = ["Shop Monolith"]
     return state
 
@@ -424,10 +468,13 @@ def sound_healthcare_state() -> ArchitectState:
         component_name="Appointment Service",
         component_purpose="Own appointment availability and booking transactions.",
         component_description="Implements FEAT-001 and ADR-001 with EU data controls.",
+        decision_topic="appointment consistency and GDPR data architecture",
         source="healthcare-privacy.md",
         source_content=(
             "Appointment data should use access controls, encryption, retention "
-            "limits, and EU-region processing when GDPR applies."
+            "limits, and EU-region processing when GDPR applies. Transactional "
+            "uniqueness controls prevent concurrent requests from double-booking "
+            "the same appointment slot."
         ),
     )
 
@@ -465,7 +512,7 @@ def repo_mismatch_state() -> ArchitectState:
         ),
         behavior=RepoBehavior(overview="FastAPI warehouse API with PostgreSQL persistence."),
     )
-    return _single_feature_state(
+    state = _single_feature_state(
         prompt="Add tamper-evident audit logging to our warehouse API.",
         project_name="Warehouse API",
         business_goal="Operators can trace every inventory change.",
@@ -500,11 +547,26 @@ def repo_mismatch_state() -> ArchitectState:
         component_name="Inventory Event Service",
         component_purpose="Record inventory mutations as immutable events.",
         component_description="Implements FEAT-001 under ADR-001 through Kafka.",
+        decision_topic="tamper-evident audit logging strategy",
         source="audit-logging.md",
         source_content="Append-only audit records should capture actor, action, target, and timestamp.",
         repo_url="https://example.invalid/warehouse-api",
         repo_representation=repo,
     )
+    state.blueprint.migration_steps = [
+        MigrationStep(
+            title="Replace the API with Inventory Event Service",
+            objective="Cut over from the FastAPI API to the Java/Kafka service.",
+            changes=[
+                "Deploy Inventory Event Service and migrate inventory writes."
+            ],
+            coexistence_or_data_strategy=(
+                "Mirror writes during cutover, then retire the FastAPI API."
+            ),
+            exit_condition="All inventory writes use Inventory Event Service.",
+        )
+    ]
+    return state
 
 
 def fabricated_source_state() -> ArchitectState:
@@ -551,6 +613,7 @@ def sound_modular_monolith_state() -> ArchitectState:
         component_name="Inventory Application",
         component_purpose="Own transactional stock operations in separated modules.",
         component_description="Implements FEAT-001 under ADR-001 without distributed overhead.",
+        decision_topic="service decomposition and transaction boundaries at low scale",
         source="modular-monolith.md",
         source_content=(
             "A modular monolith can preserve clear boundaries and transactions when "
@@ -567,7 +630,7 @@ SCENARIOS = (
         expected_pass=True,
         expected_code_scores=_full_code_scores(),
         expected_judgments=_judgments(),
-        build_state=sound_shop_state,
+        build_state=_sound_shop_eval_state,
         label_rationale="The design removes synchronous peak-load coupling and addresses all stated constraints.",
     ),
     EvalScenario(
@@ -616,6 +679,7 @@ SCENARIOS = (
         expected_code_scores=_full_code_scores(),
         expected_judgments=_judgments(
             repo_grounding=False,
+            flaw_detection=False,
             adr_soundness=False,
             best_practice_grounding=False,
         ),
@@ -628,7 +692,10 @@ SCENARIOS = (
         description="Sound architecture containing a fabricated ADR citation.",
         expected_pass=False,
         expected_code_scores=_full_code_scores(source_integrity=0),
-        expected_judgments=_judgments(best_practice_grounding=False),
+        # Source-reference existence is code-owned. The cited evidence ID is
+        # real and semantically relevant, so the qualitative grounding answer
+        # should pass while source_integrity correctly fails the final verdict.
+        expected_judgments=_judgments(best_practice_grounding=True),
         build_state=fabricated_source_state,
         label_rationale="The cited source is absent from both retrieved knowledge and repository evidence.",
     ),

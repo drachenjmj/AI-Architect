@@ -240,11 +240,52 @@ def test_deterministic_checks_pass_structured_design():
 
 def test_context_record_does_not_count_as_constraint_evidence():
     checks = run_deterministic_checks(_context_only_constraints_state())
-    assert all(checks.constraints_applicable.values())
+    assert checks.constraints_applicable == {
+        "functional": False,
+        "cloud": True,
+        "budget": True,
+        "non_functional": False,
+        "compliance": True,
+        "existing_system": False,
+    }
     assert checks.score_constraint_coverage < 2
     assert checks.constraints_covered["cloud"] is False
     assert checks.constraints_covered["compliance"] is False
     assert any(issue.category == "constraint" for issue in checks.issues)
+
+
+def test_requirements_use_structured_traceability_not_verbatim_prose():
+    """Use Case 2 regression: semantic design text must not be forced to copy
+    full requirement sentences or generic repository technology names."""
+
+    state = _good_design_state()
+    state.context_record.functional_requirements = [
+        "Answer product-related questions",
+        "Summarize product reviews",
+    ]
+    state.context_record.non_functional_requirements = [
+        "Use an SLA-backed API and keep the chatbot at least 99% available",
+    ]
+    state.context_record.existing_systems = ["SQL", "Nginx"]
+    state.context_record.cloud_provider = ""
+    state.context_record.budget = ""
+    state.context_record.compliance_requirements = []
+    state.features[0].related_requirement_ids = ["FR-001", "NFR-001"]
+    state.features[1].related_requirement_ids = ["FR-002"]
+    state.blueprint.technical_view = (
+        "The assistant queries the product catalogue and synthesizes customer "
+        "review evidence. A resilient provider gateway protects availability."
+    )
+    state.blueprint.constraints_addressed = []
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.requirements_without_feature == []
+    assert checks.constraints_applicable["functional"] is False
+    assert checks.constraints_applicable["non_functional"] is False
+    assert checks.constraints_applicable["existing_system"] is False
+    assert checks.score_constraint_coverage == 2
+    assert not any(issue.category == "constraint" for issue in checks.issues)
 
 
 def test_dangling_references_fail_even_when_valid_references_exist():
@@ -1632,9 +1673,8 @@ def test_missing_responsive_interactions_nfr_is_blocking():
 def test_incidental_word_match_does_not_satisfy_structured_coverage():
     """Item 11: 'Product' turning up all over the design text must not
     satisfy the STRUCTURED invariant for the requirement 'Product reviews' —
-    only an exact `related_requirement_ids` entry does. (The loose
-    constraint-text matcher elsewhere IS satisfied by this fixture, which is
-    exactly the false-coverage gap this check exists to close.)"""
+    only an exact `related_requirement_ids` entry does. Functional prose is
+    no longer scored by the context-constraint matcher at all."""
     state = new_run("Modernize a monolith.")
     state.context_record = ContextRecord(
         project_name="P", business_goal="g",
@@ -1657,9 +1697,8 @@ def test_incidental_word_match_does_not_satisfy_structured_coverage():
     checks = run_deterministic_checks(state)
 
     assert checks.requirements_without_feature == ["FR-001 - Product reviews"]
-    # The loose token-overlap check DOES false-pass here — the reason this
-    # structural invariant is necessary, not redundant with it.
-    assert checks.constraints_covered.get("functional") is True
+    assert checks.constraints_applicable["functional"] is False
+    assert checks.constraints_covered["functional"] is False
 
 
 def test_cloud_budget_compliance_fields_are_not_required_as_feature_mappings():
@@ -2054,6 +2093,24 @@ def test_refinement_readiness_alone_no_longer_blocks():
     passed, blocking = rev.derive_verdict(_rubric(refinement_readiness=False), [])
     assert passed is True
     assert "refinement_readiness" not in blocking
+
+
+def test_refinement_readiness_prompt_defines_feedback_actionability():
+    """Prevent the judge from reading 'readiness' as near-approval."""
+
+    prompt = rev.REVIEWER_SYSTEM
+    assert "START a refinement pass" in prompt
+    assert "even if the current design has several" in prompt
+    assert "feedback itself is too vague" in prompt
+
+
+def test_flaw_detection_prompt_includes_material_locked_requirements():
+    """A working feature must not hide a compliance or reliability failure."""
+
+    prompt = rev.REVIEWER_SYSTEM
+    assert "functional, non-functional, and compliance requirements" in prompt
+    assert "headline capability works" in prompt
+    assert "contradicts a material locked" in prompt
 
 
 def test_a_high_severity_issue_still_blocks():
