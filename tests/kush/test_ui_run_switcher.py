@@ -244,7 +244,7 @@ def test_browsing_history_does_not_switch_the_current_run(saved_runs):
     at = _app(saved_runs)
     demo_id = at.session_state["state"].run_id
 
-    next(b for b in at.sidebar.button if b.label == "History").click()
+    next(b for b in at.sidebar.button if b.key == "nav_History").click()
     at.run()
     at.button(key=f"hist_open_{_RUN_B}").click()
     at.run()

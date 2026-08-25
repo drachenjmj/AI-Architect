@@ -33,7 +33,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from ui_demo import build_demo_state
-from ui_workspace import WORKSPACE_VIEWS
+from ui_workspace import WORKSPACE_VIEWS, _VIEW_LABELS
 
 _UI = str(Path(__file__).resolve().parents[2] / "ui.py")  # repo root
 
@@ -63,9 +63,15 @@ def _has_expander(at: AppTest, needle: str) -> bool:
 
 
 def _select_view(at: AppTest, view: str) -> AppTest:
-    """Navigate by clicking the sidebar's grouped view buttons."""
+    """Navigate by clicking the sidebar's grouped view buttons.
 
-    next(b for b in at.sidebar.button if b.label == view).click()
+    `view` is the INTERNAL identifier (e.g. "Architecture"), matched by the
+    button's stable `nav_{view}` key rather than its visible label — the
+    label is the human-facing rename (`_VIEW_LABELS` in ui_workspace.py) and
+    is deliberately NOT the same string as `view` for most destinations.
+    """
+
+    next(b for b in at.sidebar.button if b.key == f"nav_{view}").click()
     at.run()
     assert not at.exception
     return at
@@ -75,15 +81,19 @@ def _select_view(at: AppTest, view: str) -> AppTest:
 
 
 def test_sidebar_exposes_the_grouped_destinations():
+    """The VISIBLE labels are the human-readable rename; the underlying
+    identifiers (each button's stable `nav_{view}` key, and `WORKSPACE_VIEWS`
+    itself) stay exactly what `render_workspace_view` dispatches on."""
     at = _finished_app()
 
-    labels = [b.label for b in at.sidebar.button if b.label != "🔄 New run"]
-    assert labels == [
-        "Overview", "Architecture", "Review",
-        "Context", "Repository", "Knowledge",
-        "History", "Chat",
-        "Run details",
+    nav_buttons = [b for b in at.sidebar.button if b.label != "🔄 New run"]
+    assert [b.label for b in nav_buttons] == [
+        "Overview", "Recommended Architecture", "Validation & Findings",
+        "Requirements & Constraints", "Repository Analysis", "Literature Evidence",
+        "Run History", "Architecture Chat",
+        "Technical Details",
     ]
+    assert [b.key for b in nav_buttons] == [f"nav_{view}" for view in WORKSPACE_VIEWS]
 
 
 def test_old_design_navigation_label_is_gone():
@@ -91,7 +101,10 @@ def test_old_design_navigation_label_is_gone():
 
     labels = [b.label for b in at.sidebar.button]
     assert "Design" not in labels
-    assert "Architecture" in labels
+    # The pipeline-vocabulary label "Architecture" was itself replaced by
+    # the client-facing "Recommended Architecture" in this pass.
+    assert "Architecture" not in labels
+    assert "Recommended Architecture" in labels
 
 
 def test_sidebar_shows_a_compact_status_not_a_stage_checklist():
@@ -113,12 +126,13 @@ def test_every_destination_switches_cleanly():
 
 
 def _nav_types(at: AppTest) -> dict[str, str]:
-    """label -> button type ("primary"/"secondary") for the nav buttons."""
+    """internal view name -> button type ("primary"/"secondary"). Keyed by
+    the stable `nav_{view}` key, not the human-facing label."""
 
     return {
-        b.label: b.proto.type
+        b.key[len("nav_"):]: b.proto.type
         for b in at.sidebar.button
-        if b.label in WORKSPACE_VIEWS
+        if b.key and b.key.startswith("nav_")
     }
 
 
@@ -128,7 +142,7 @@ def test_click_updates_highlight_and_content_in_the_same_interaction():
     the NEXT interaction. Content and active styling must move together."""
 
     at = _finished_app()
-    next(b for b in at.sidebar.button if b.label == "Chat").click()
+    next(b for b in at.sidebar.button if b.key == "nav_Chat").click()
     at.run()
     assert not at.exception
 
@@ -139,7 +153,7 @@ def test_click_updates_highlight_and_content_in_the_same_interaction():
     assert any("Architecture Chat" in m.value for m in at.markdown)
 
     # A second click keeps exactly one active and moves it again.
-    next(b for b in at.sidebar.button if b.label == "Run details").click()
+    next(b for b in at.sidebar.button if b.key == "nav_Run details").click()
     at.run()
     assert not at.exception
     types = _nav_types(at)
@@ -716,6 +730,10 @@ def test_chat_stays_inert_with_pending_feedback(no_pipeline_actions, monkeypatch
 
 
 def test_workspace_header_anchors_every_view():
+    """The header shows the HUMAN-FACING label (`_VIEW_LABELS`), not the
+    internal identifier `_select_view` navigates by."""
+    import html as _html
+
     at = _finished_app()
     for view in WORKSPACE_VIEWS:
         _select_view(at, view)
@@ -723,7 +741,8 @@ def test_workspace_header_anchors_every_view():
             (m for m in at.markdown if "ws-header" in m.value), None
         )
         assert header is not None, view
-        assert f">{view}<" in header.value          # the view name
+        escaped_label = _html.escape(_VIEW_LABELS[view])
+        assert f">{escaped_label}<" in header.value  # the display label
         assert "Seasonal Shop" in header.value      # the project name
         assert "PASS" in header.value               # the verdict chip
 

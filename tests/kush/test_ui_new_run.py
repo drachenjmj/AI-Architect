@@ -190,7 +190,7 @@ def test_old_chat_does_not_leak_into_new_run(saved_runs):
 
 def test_navigation_state_does_not_keep_the_old_view(saved_runs):
     at = _finished_app()
-    next(b for b in at.sidebar.button if b.label == "Knowledge").click()
+    next(b for b in at.sidebar.button if b.key == "nav_Knowledge").click()
     at.run()
 
     at = _click_new_run(at)

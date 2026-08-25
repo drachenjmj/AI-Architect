@@ -97,7 +97,7 @@ def _chat_app(saved_runs) -> AppTest:
     at.session_state["state"] = build_demo_state("pass")
     at.run()
     assert not at.exception
-    next(b for b in at.sidebar.button if b.label == "Chat").click()
+    next(b for b in at.sidebar.button if b.key == "nav_Chat").click()
     at.run()
     assert not at.exception
     return at
@@ -368,7 +368,7 @@ def test_switching_runs_does_not_leak_chat(saved_runs, fake_llm, monkeypatch):
     at.session_state["switch_run_expander"] = True
     at.run()
     assert not at.exception
-    next(b for b in at.sidebar.button if b.label == "Chat").click()
+    next(b for b in at.sidebar.button if b.key == "nav_Chat").click()
     at.run()
     assert not at.exception
 
@@ -386,7 +386,7 @@ def test_switching_runs_does_not_leak_chat(saved_runs, fake_llm, monkeypatch):
     assert new_id != demo_id
 
     # The new run's Chat view is EMPTY — no leak from the old conversation.
-    next(b for b in at.sidebar.button if b.label == "Chat").click()
+    next(b for b in at.sidebar.button if b.key == "nav_Chat").click()
     at.run()
     assert not at.exception
     md = " ".join(m.value for m in at.markdown)
@@ -448,7 +448,7 @@ def test_history_view_still_read_only_with_chat_present(saved_runs, fake_llm, mo
     at = _ask(_chat_app(saved_runs), "Why SQS?")   # chat in session
     demo_id = at.session_state["state"].run_id
 
-    next(b for b in at.sidebar.button if b.label == "History").click()
+    next(b for b in at.sidebar.button if b.key == "nav_History").click()
     at.run()
     at.button(key=f"hist_open_{_RUN_C}").click()
     at.run()
@@ -632,7 +632,7 @@ def test_injection_cannot_trigger_state_changes_or_extra_calls(monkeypatch):
     at = AppTest.from_file(_UI, default_timeout=30)
     at.session_state["state"] = _adversarial_state()
     at.run()
-    next(b for b in at.sidebar.button if b.label == "Chat").click()
+    next(b for b in at.sidebar.button if b.key == "nav_Chat").click()
     at.run()
     at.chat_input[0].set_value("What does the knowledge base say about queues?")
     at.run(); at.run()
@@ -725,7 +725,7 @@ def test_streamlit_reruns_never_duplicate_the_answer_call(
     # then arbitrary extra reruns, then navigation away and back).
     at.run(); at.run(); at.run()
     next(b for b in at.sidebar.button if b.label == "Overview").click(); at.run()
-    next(b for b in at.sidebar.button if b.label == "Chat").click(); at.run()
+    next(b for b in at.sidebar.button if b.key == "nav_Chat").click(); at.run()
     next(b for b in at.button if b.label == "Clear chat").click(); at.run(); at.run()
 
     assert not at.exception

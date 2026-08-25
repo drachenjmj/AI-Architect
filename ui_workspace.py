@@ -93,6 +93,7 @@ from pipeline.state import ArchitectState, Stage
 from ui_sections import (
     clear_pending_feedback,
     get_pending_feedback,
+    pending_feedback_kinds,
     render_acceptance,
     render_adrs,
     render_architecture_summary,
@@ -149,6 +150,33 @@ _NAV_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
 WORKSPACE_VIEWS: tuple[str, ...] = tuple(
     view for _, views in _NAV_GROUPS for view in views
 )
+
+# The HUMAN-FACING word for each destination. This is presentation only: the
+# internal identifier (the string above, the `_NAV_KEY` value, the `nav_*`
+# widget keys, and every `view ==` dispatch in `render_workspace_view`) never
+# changes, so a saved `workspace_view` session value and every existing
+# `view` comparison keep working exactly as before. Only the words a reader
+# sees — the sidebar button text and the workspace header — are renamed here.
+#
+# "Architecture" -> "Recommended Architecture": it is the architecture
+# AI-Architect recommends for THIS project, not architecture in general.
+# "Review" -> "Validation & Findings": the results of checking the design
+# for problems — never "a review of the Reviewer".
+# "Context" -> "Requirements & Constraints": the human-approved record that
+# defines what the design must satisfy.
+# "Knowledge" -> "Literature Evidence": retrieved external/curated
+# architectural evidence, not raw knowledge-base internals.
+_VIEW_LABELS: dict[str, str] = {
+    "Overview": "Overview",
+    "Architecture": "Recommended Architecture",
+    "Review": "Validation & Findings",
+    "Context": "Requirements & Constraints",
+    "Repository": "Repository Analysis",
+    "Knowledge": "Literature Evidence",
+    "History": "Run History",
+    "Chat": "Architecture Chat",
+    "Run details": "Technical Details",
+}
 
 # The History view's whole copy for the empty case — one sentence, because
 # "no runs on this machine yet" is a state, not a problem.
@@ -272,7 +300,7 @@ def select_workspace_view() -> str:
         st.caption(f"**{title}**")
         for view in views:
             st.button(
-                view,
+                _VIEW_LABELS.get(view, view),
                 key=f"nav_{view}",
                 use_container_width=True,
                 type="primary" if view == current else "secondary",
@@ -354,6 +382,10 @@ def render_workspace_header(state: ArchitectState, view: str) -> None:
     id, repository). Nothing more: the header orients, the view below it
     carries the content. All values are escaped — they come from the run's
     own artifacts.
+
+    `view` is the HUMAN-FACING label (already translated by the caller via
+    `_VIEW_LABELS`) — this function draws exactly the string it is given and
+    holds no opinion on internal vs. display names.
     """
     record = state.context_record
     project = (
@@ -379,6 +411,64 @@ def render_workspace_header(state: ArchitectState, view: str) -> None:
     )
 
 
+def _go_to_view(view: str) -> None:
+    """on_click callback: jump the workspace navigation to `view` (the
+    internal identifier — the same one every `nav_*` button key and
+    `render_workspace_view` dispatch already use)."""
+    st.session_state[_NAV_KEY] = view
+
+
+def _nav_link(label: str, view: str, key: str) -> None:
+    """One small, low-emphasis link from Overview to another workspace view.
+
+    A `tertiary` button rather than a real link: this workspace has no
+    router and no query-string navigation (see the module docstring), so
+    "navigate" means "set `_NAV_KEY` and let Streamlit rerun" — exactly what
+    the sidebar's own buttons do. `on_click` (not a checked return value)
+    keeps this a one-line call at every site that needs a link.
+    """
+    st.button(label, key=key, on_click=_go_to_view, args=(view,), type="tertiary")
+
+
+def _render_needs_attention(state: ArchitectState) -> None:
+    """A compact, TOP-OF-OVERVIEW block for real pending actions only.
+
+    Renders NOTHING when there is nothing to do — no empty "all clear"
+    card. Both signals are existing state, read through the same helpers
+    the rest of the workspace already uses:
+
+      * staged feedback waiting in the sidebar's pending bundle, as long as
+        it could still be submitted (not once feedback has closed — a
+        closed bundle is shown in the sidebar as evidence, not as a task);
+      * a finished (DONE, not yet ACCEPTED) run waiting for sign-off.
+
+    This is the fix for the edit-here / submit-there disconnect: a person
+    who staged a change in Context or Architecture is told, right at the
+    top of the page they land back on, that the sidebar is where it goes.
+    """
+    items: list[str] = []
+
+    kinds = pending_feedback_kinds()
+    closed, _why = feedback_is_closed(state)
+    if kinds and not closed:
+        count = len(kinds)
+        items.append(
+            f"{count} staged change{'s' if count != 1 else ''} "
+            f"{'are' if count != 1 else 'is'} waiting — submit "
+            f"{'them' if count != 1 else 'it'} from the sidebar."
+        )
+    if state.stage is Stage.DONE:
+        items.append("Final architecture is ready for sign-off.")
+
+    if not items:
+        return
+
+    st.markdown("**Needs your attention**")
+    for item in items:
+        st.markdown(f"- {item}")
+    st.divider()
+
+
 def _render_overview_view(state: ArchitectState) -> tuple[str, str] | None:
     """The CLIENT-FACING ANSWER, scannable top to bottom.
 
@@ -402,13 +492,17 @@ def _render_overview_view(state: ArchitectState) -> tuple[str, str] | None:
     "incremental" work were never a sequence, and are not rendered as one.
     """
 
+    _render_needs_attention(state)           # real pending actions only, or nothing
     render_executive_recommendation(state)   # A. what we recommend, and why we're here
     render_why_architecture(state)           # C. grounded reasons, deduped, capped
     render_migration_approach(state)         # D. structured steps, compact — silent when none
     render_key_decisions(state)              # E. every ADR, one line each
+    _nav_link("View all decisions →", "Architecture", "ov_link_decisions")
     render_component_summary(state)          # F. name / type / purpose grid
-    render_risks_and_tradeoffs(state)        # G. risks, trade-offs, open findings
-    render_review_confidence(state)          # H. verdict + counts, compact
+    _nav_link("View components →", "Architecture", "ov_link_components")
+    render_risks_and_tradeoffs(state)        # G. risks and trade-offs — no finding list
+    render_review_confidence(state)          # H. verdict + open-finding count, compact
+    _nav_link("View validation & findings →", "Review", "ov_link_validation")
     render_target_architecture(state)        # B. the large visual, below the verdict
     render_acceptance(state)                 # I. the acceptance record, when it exists
     return render_sign_off(state)            # I. the client action, when still valid
@@ -878,9 +972,13 @@ def render_workspace_view(
     the selector is the only writer of the value and it cannot produce one,
     so the fallback is unreachable in practice — but a workspace that
     crashed over a navigation string would be a poor kind of failure.
+
+    `view` is always the INTERNAL identifier (what every `elif view ==`
+    below compares against, unchanged by the sidebar's relabeling); the
+    header is given the human-facing translation of it, via `_VIEW_LABELS`.
     """
 
-    render_workspace_header(state, view or "Overview")
+    render_workspace_header(state, _VIEW_LABELS.get(view or "Overview", view or "Overview"))
     intents = WorkspaceIntents()
 
     if view == "Context":

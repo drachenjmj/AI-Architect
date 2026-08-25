@@ -2750,16 +2750,9 @@ def render_target_architecture(state: ArchitectState) -> None:
 
     if unparsed:
         _bullets("Also recorded, without a direction to draw", unparsed)
-    if blueprint.data_flows:
-        with st.expander("All data flows (verbatim)", expanded=False):
-            st.markdown(
-                "\n".join(f"- {flow}" for flow in blueprint.data_flows)
-            )
-    if blueprint.technical_view.strip():
-        with st.expander("Technical view (full detail)", expanded=False):
-            st.markdown(blueprint.technical_view.strip())
-    if not blueprint.data_flows and not blueprint.technical_view.strip():
-        st.caption("The blueprint records no structure beyond its views.")
+    # The verbatim data-flow list and the full technical view are NOT
+    # duplicated here — both already render in full on the dedicated
+    # Recommended Architecture screen (`render_blueprint`).
 
 
 # C. is capped at a handful of reasons on purpose: a list of twelve is a
@@ -2809,11 +2802,13 @@ def render_why_architecture(state: ArchitectState) -> None:
 
 
 def render_risks_and_tradeoffs(state: ArchitectState) -> None:
-    """G. What the client is accepting, in three grounded groups: the
-    design's own open risks, the trade-off each decision explicitly
-    accepted (ADR negative consequences, attributed), and any finding the
-    review left open. Existing text only, and deduplicated ACROSS groups so
-    the same sentence never appears twice."""
+    """G. What the client is accepting, in two grounded groups: the
+    design's own open risks, and the trade-off each decision explicitly
+    accepted (ADR negative consequences, attributed). Existing text only,
+    and deduplicated ACROSS groups so the same sentence never appears
+    twice. Open review findings are NOT repeated here — they have their own
+    compact count in `render_review_confidence` and their full table on the
+    dedicated Validation & Findings screen."""
     blueprint = state.blueprint
     risks = [
         risk.strip()
@@ -2826,9 +2821,8 @@ def render_risks_and_tradeoffs(state: ArchitectState) -> None:
         for consequence in adr.negative_consequences
         if consequence.strip()
     ]
-    findings = list(state.review.issues) if state.review else []
 
-    if not risks and not tradeoffs and not findings:
+    if not risks and not tradeoffs:
         st.caption("No risks or trade-offs were recorded for this design.")
         return
 
@@ -2857,15 +2851,10 @@ def render_risks_and_tradeoffs(state: ArchitectState) -> None:
                 for adr_id, text in tradeoffs
             )
         )
-    if findings:
-        st.markdown("**Open review findings**")
-        for issue in findings:
-            color = _SEVERITY_COLORS.get(issue.severity, GREY)
-            st.markdown(
-                f"{_tag(issue.severity.upper(), color)} &nbsp; "
-                f"{html.escape(_clip_sentence(issue.finding, 130))}",
-                unsafe_allow_html=True,
-            )
+    # Individual findings are NOT listed here — that table already exists,
+    # in full, on the dedicated Validation & Findings screen. This section
+    # stays about the design's own risks and each decision's trade-offs;
+    # `render_review_confidence` carries the compact open-findings count.
 
 
 def render_migration_approach(state: ArchitectState) -> None:
@@ -2927,7 +2916,7 @@ def render_review_confidence(state: ArchitectState) -> None:
     Compact by design; the rubric that produced the verdict stays in the
     Review view. Same honesty rule as `render_run_status`: never a bare
     "passed" without the findings that are still open."""
-    st.markdown("#### Review confidence")
+    st.markdown("#### Validation status")
     review = state.review
     if review is None:
         st.markdown(

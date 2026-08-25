@@ -58,7 +58,9 @@ def _finished_app(variant: str = "pass") -> AppTest:
 
 
 def _select_view(at: AppTest, view: str) -> AppTest:
-    next(b for b in at.sidebar.button if b.label == view).click()
+    """`view` is the internal identifier, matched by the button's stable
+    `nav_{view}` key rather than its (renamed) human-facing label."""
+    next(b for b in at.sidebar.button if b.key == f"nav_{view}").click()
     at.run()
     assert not at.exception
     return at
@@ -112,14 +114,14 @@ def test_overview_section_order_is_the_accepted_sequence():
         "Key decisions": md.index("Key decisions"),
         "Key components": md.index("Key components"),
         "Risks and trade-offs": md.index("Risks and trade-offs"),
-        "Review confidence": md.index("Review confidence"),
+        "Validation status": md.index("Validation status"),
         "Target architecture": md.index("#### Target architecture"),
         "Take this design": md.index("Take this design"),
     }
     order = list(positions.values())
     assert order == sorted(order), positions   # strictly the accepted order
     # The explicit contracts of this pass, spelled out:
-    assert positions["Target architecture"] > positions["Review confidence"]
+    assert positions["Target architecture"] > positions["Validation status"]
     assert positions["Target architecture"] < positions["Take this design"]
 
 
@@ -132,13 +134,23 @@ def test_overview_target_architecture_sits_at_the_bottom_expanded():
     # moment the page opens — see `render_target_architecture`.
     diagram = _expander(at, "Architecture overview")
     assert diagram.proto.expanded is True
-    # The Blueprint's own data flows — the target topology — remain on the
-    # page verbatim (inside the accessible secondary expander), in EITHER
-    # diagram view.
-    assert "Checkout Service → SQS: order placement message (EU region)" in _md(at)
-    # Both detail accordions stay collapsed by default.
-    assert _expander(at, "All data flows").proto.expanded is False
-    assert _expander(at, "Technical view").proto.expanded is False
+    # The verbatim data-flow list and the full technical view are NOT
+    # duplicated on Overview any more — both live in full on the dedicated
+    # Recommended Architecture screen (see the next test). Neither detail
+    # accordion exists here.
+    assert not any("All data flows" in e.label for e in at.expander)
+    assert not any("Technical view" in e.label for e in at.expander)
+    assert "Checkout Service → SQS: order placement message (EU region)" not in _md(at)
+
+
+def test_architecture_view_still_carries_the_verbatim_data_flows():
+    """The full detail Overview no longer duplicates stays reachable, in
+    full, on the dedicated Recommended Architecture screen."""
+    at = _select_view(_finished_app(), "Architecture")
+    md = _md(at)
+
+    assert "Checkout Service → SQS: order placement message (EU region)" in md
+    assert "Technical view" in md
 
 
 def test_architecture_flow_dot_builds_from_the_saved_data_flows():
@@ -298,14 +310,18 @@ def test_key_decisions_cut_only_on_a_sentence_boundary():
 
 
 def test_overview_shows_no_migration_section_from_prose_mentions():
-    """The demo blueprint's rationale explicitly says "incrementally
+    """The demo blueprint's technical view explicitly says "incrementally
     migrating the legacy shop monolith" — prose, not a sequence. Rendering
     a Migration Approach from that would be inference, so the section must
-    stay absent."""
+    stay absent. The prose mention itself no longer renders verbatim on
+    Overview at all (that full-detail view moved to Architecture — see
+    `test_architecture_view_still_carries_the_verbatim_data_flows`'s
+    neighbourhood), so it is checked directly against the artifact."""
     at = _finished_app()
 
-    assert "incrementally migrating" in _md(at)  # the prose mention exists…
-    assert "Migration" not in _md(at)            # …and no section was inferred
+    state = at.session_state["state"]
+    assert "incrementally migrating" in state.blueprint.technical_view
+    assert "Migration" not in _md(at)            # no section was inferred
 
 
 # ── 5. Key decisions / components (sections E, F) ─────────────────────────
@@ -349,22 +365,36 @@ def test_overview_risks_and_tradeoffs_split_the_grounding_sources():
     assert "Regional operations overhead" in md
 
 
-def test_overview_lists_open_review_findings_when_present():
+def test_overview_no_longer_lists_individual_review_findings():
+    """The Risks and trade-offs section no longer repeats the browsable
+    findings list (that table lives, in full, on Validation & Findings —
+    see test_review_of_a_failed_run_shows_dimensions_and_findings). Section
+    H keeps the compact count, with a link to that screen.
+
+    NOTE: `render_sign_off`'s own pre-acceptance disclosure ("you would be
+    accepting N open findings") still lists each finding, further down —
+    that is not the browsing duplicate this section removed; it is the
+    thing a person must see immediately above the button that accepts it."""
     at = _finished_app("capped")  # the failing variant: 2 open issues
     md = _md(at)
 
-    assert "Open review findings" in md
-    assert "Retrieved best-practice knowledge was not applied." in md
+    assert "Open review findings" not in md
+    # The compact count is still here…
+    assert "2 open findings" in md
+    # …with a link to the screen that carries the full table.
+    assert any(
+        "validation & findings" in b.label.lower() for b in at.button
+    )
 
 
-# ── 7. Review confidence (section H) ──────────────────────────────────────
+# ── 7. Validation status (section H) ───────────────────────────────────────
 
 
 def test_overview_review_confidence_is_compact_and_honest():
     at = _finished_app()
     md = _md(at)
 
-    assert "Review confidence" in md
+    assert "Validation status" in md
     assert "REVIEW PASSED" in md
     assert "0 open findings" in md
     assert "1 refinement round" in md

@@ -39,8 +39,12 @@ _NEWER_PROJECT = "History Beta"
 
 
 def _select_view(at: AppTest, view: str) -> AppTest:
-    """Navigate by clicking the sidebar's grouped view buttons."""
-    next(b for b in at.sidebar.button if b.label == view).click()
+    """Navigate by clicking the sidebar's grouped view buttons.
+
+    `view` is the internal identifier; matched by the button's stable
+    `nav_{view}` key rather than its (human-facing, renamed) label.
+    """
+    next(b for b in at.sidebar.button if b.key == f"nav_{view}").click()
     at.run()
     assert not at.exception
     return at
