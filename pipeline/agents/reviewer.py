@@ -118,7 +118,19 @@ final verdict; Python owns all of those decisions.
    constraint, or a meaningful trade-off. Technology novelty without a
    requirement-linked rationale is a soundness failure; a genuinely
    justified change must not be flagged merely for differing from the
-   existing stack.
+   existing stack. Also check ADR GRANULARITY: when one ADR's
+   `related_decision_topic_ids` names two or more materially independent
+   decision topics (e.g. service decomposition, data ownership, integration
+   style, scaling/availability, migration strategy), are those decisions
+   genuinely coupled in THIS architecture (choosing one necessarily
+   determines the other), and does the ADR separately make the decision,
+   rationale, alternatives, and consequences clear for each bundled topic?
+   One generic rationale covering several distinct decisions ("improves
+   scalability and maintainability") is a soundness failure even though
+   every topic is nominally mapped. A multi-topic ADR that genuinely earns
+   its bundling — coupled decisions, each one's trade-offs addressed — is
+   not a failure on this ground; there is no minimum ADR count and no
+   requirement that topics map one-to-one to ADRs.
 4. best_practice_grounding: Are the recommendations supported by retrieved
    knowledge, repository evidence, or clearly labelled assumptions and open
    risks, rather than fabricated citations or unsupported certainty? This

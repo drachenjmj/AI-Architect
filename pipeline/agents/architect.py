@@ -255,6 +255,20 @@ DECISION-TOPIC MAPPING (strict):
   ADR with no topic mapping at all cannot have its cited evidence checked
   against the decision it actually supports.
 
+ADR GRANULARITY:
+- Treat materially independent architecture decisions as separate ADRs by
+  default. Do not combine multiple Decision Topics into one ADR merely to
+  reduce ADR count.
+- Bundling two or more topics into one ADR is acceptable only when the
+  decisions are genuinely inseparable in this architecture (choosing one
+  necessarily determines the other) AND that ADR explicitly covers the
+  alternatives, rationale, and consequences of EVERY bundled topic — a
+  single generic rationale ("improves scalability and maintainability")
+  covering several distinct decisions is not sufficient.
+- There is no target or minimum ADR count. One ADR may still legitimately
+  cover multiple tightly coupled topics; this only rules out compressing
+  independent ones together.
+
 QUANTITATIVE TARGETS (strict):
 - Do not invent numeric SLOs, throughput figures, latency budgets (e.g.
   "500ms", "sub-second"), availability percentages, or absolute guarantees
