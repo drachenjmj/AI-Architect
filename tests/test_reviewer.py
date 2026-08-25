@@ -213,7 +213,7 @@ def _as_llm_call(build):
 
 def test_state_model_matches_frozen_json_schema():
     schema = json.loads(
-        (Path(__file__).parent / "docs/prompt_quality/06_reviewer_report_schema.json")
+        (Path(__file__).resolve().parents[1] / "docs/prompt_quality/06_reviewer_report_schema.json")
         .read_text(encoding="utf-8")
     )
     assert set(schema["properties"]) == set(ReviewResult.model_fields)

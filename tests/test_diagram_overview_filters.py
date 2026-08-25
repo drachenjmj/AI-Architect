@@ -30,7 +30,7 @@ from webapp.ui_sections import (
     parse_data_flows,
 )
 
-_UI = str(Path(__file__).resolve().parents[2] / "ui.py")  # repo root
+_UI = str(Path(__file__).resolve().parents[1] / "ui.py")  # repo root
 
 
 # ── classify_flow ───────────────────────────────────────────────────────

@@ -28,7 +28,7 @@ import pytest
 import architect
 import test_rag_retrieval as rag_fakes
 
-SCHEMA_PATH = Path(__file__).resolve().parents[2] / "chunk_schema.json"  # repo root
+SCHEMA_PATH = Path(__file__).resolve().parents[1] / "chunk_schema.json"  # repo root
 SCHEMA = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
 
 # Draft-07 validators for the two contracts in the file.

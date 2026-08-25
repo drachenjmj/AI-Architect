@@ -25,7 +25,7 @@ from streamlit.testing.v1 import AppTest
 from pipeline import persistence
 from webapp.ui_demo import build_demo_state
 
-_UI = str(Path(__file__).resolve().parents[2] / "ui.py")  # repo root
+_UI = str(Path(__file__).resolve().parents[1] / "ui.py")  # repo root
 
 _RUN_B = "20260102T090000Z-switchb"   # the newer fixture run
 _RUN_C = "20260103T090000Z-switchc"   # a mid-flight run at AWAITING_HUMAN

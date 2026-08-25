@@ -22,7 +22,7 @@ from streamlit.testing.v1 import AppTest
 from pipeline.agents import clarifier as clar
 from pipeline.state import ContextRecord, PendingDecision, Stage, new_run
 
-_UI = str(Path(__file__).resolve().parents[2] / "ui.py")
+_UI = str(Path(__file__).resolve().parents[1] / "ui.py")
 
 
 class _FakeDiscuss:

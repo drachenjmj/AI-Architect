@@ -3,7 +3,7 @@
 call shape in pipeline/agents/clarifier.py.
 
 Session-state history keying/isolation and UI wiring are covered separately
-in tests/kush/test_ui_ask_ai.py (AppTest is required for real session_state
+in tests/test_ui_ask_ai.py (AppTest is required for real session_state
 behavior — bare-mode `st.session_state` outside a running app does not
 reliably function, so it is not unit-tested directly here).
 

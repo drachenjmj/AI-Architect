@@ -33,7 +33,7 @@ from pipeline import persistence
 from pipeline.state import Stage
 from webapp.ui_demo import build_demo_state
 
-_UI = str(Path(__file__).resolve().parents[2] / "ui.py")  # repo root
+_UI = str(Path(__file__).resolve().parents[1] / "ui.py")  # repo root
 
 
 @pytest.fixture()

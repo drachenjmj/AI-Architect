@@ -27,7 +27,7 @@ from webapp import run_history
 from pipeline import persistence
 from webapp.ui_demo import build_demo_state
 
-_UI = str(Path(__file__).resolve().parents[2] / "ui.py")  # repo root
+_UI = str(Path(__file__).resolve().parents[1] / "ui.py")  # repo root
 
 # Hex-suffixed like real run ids (uuid4().hex[:8]) — the historical-intent
 # rules match run ids by that exact shape.
