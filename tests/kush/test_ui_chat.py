@@ -22,10 +22,10 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
-import architecture_chat
-import run_history
+from webapp import architecture_chat
+from webapp import run_history
 from pipeline import persistence
-from ui_demo import build_demo_state
+from webapp.ui_demo import build_demo_state
 
 _UI = str(Path(__file__).resolve().parents[2] / "ui.py")  # repo root
 
@@ -182,8 +182,8 @@ def test_ordinary_question_never_touches_history(saved_runs, fake_llm, monkeypat
     def _boom(*args, **kwargs):  # noqa: ANN002, ANN003
         raise AssertionError("history was scanned for a non-historical query")
 
-    monkeypatch.setattr("run_history.list_history_runs", _boom)
-    monkeypatch.setattr("run_history.load_history_run", _boom)
+    monkeypatch.setattr("webapp.run_history.list_history_runs", _boom)
+    monkeypatch.setattr("webapp.run_history.load_history_run", _boom)
 
     state = build_demo_state("pass")
     answer, sources = architecture_chat.answer_chat_question(
@@ -200,7 +200,7 @@ def test_historical_query_loads_only_bounded_candidates(saved_runs, fake_llm, mo
         loads.append(run_id)
         return real_load(run_id)
 
-    monkeypatch.setattr("run_history.load_history_run", counting)
+    monkeypatch.setattr("webapp.run_history.load_history_run", counting)
 
     state = build_demo_state("pass")
     answer, sources = architecture_chat.answer_chat_question(
@@ -480,7 +480,7 @@ def test_citation_ids_are_compact_and_per_scope():
 
 
 def test_cited_sources_split_provided_by_what_the_answer_cites():
-    from architecture_chat import ChatSource, cited_sources
+    from webapp.architecture_chat import ChatSource, cited_sources
 
     provided = [
         ChatSource("C0", "current", "run", "Current · Run summary", "x"),
@@ -498,7 +498,7 @@ def test_cited_sources_split_provided_by_what_the_answer_cites():
 
 
 def test_citations_from_another_message_or_run_are_ignored():
-    from architecture_chat import ChatSource, cited_sources
+    from webapp.architecture_chat import ChatSource, cited_sources
 
     provided = [ChatSource("C1", "current", "adr", "Current · ADR-001", "x")]
     # Stale/hallucinated ids: wrong number, wrong prefix, malformed.
@@ -589,7 +589,7 @@ def test_injection_payloads_stay_delimited_evidence():
     """The prompt structure must fence every source and the question; a
     payload containing a forged END-SOURCE marker is neutralized and
     cannot close its block early."""
-    from architecture_chat import _build_prompt, build_current_run_sources
+    from webapp.architecture_chat import _build_prompt, build_current_run_sources
 
     state = _adversarial_state()
     sources = build_current_run_sources(state)
@@ -609,7 +609,7 @@ def test_injection_payloads_stay_delimited_evidence():
 def test_injection_cannot_trigger_state_changes_or_extra_calls(monkeypatch):
     boom = _booby_trap(monkeypatch)
     monkeypatch.setattr(
-        "run_history.load_history_run",
+        "webapp.run_history.load_history_run",
         lambda *_a: (_ for _ in ()).throw(
             AssertionError("injection triggered a history load/switch")
         ),
@@ -645,7 +645,7 @@ def test_injection_cannot_trigger_state_changes_or_extra_calls(monkeypatch):
 
 
 def test_oversized_artifact_is_visibly_clipped():
-    from architecture_chat import _CLIP_MARKER, build_current_run_sources
+    from webapp.architecture_chat import _CLIP_MARKER, build_current_run_sources
 
     state = build_demo_state("pass")
     state.blueprint.technical_view = "x" * 100_000
@@ -664,7 +664,7 @@ def test_oversized_artifact_is_visibly_clipped():
 
 
 def test_total_budget_keeps_exact_id_evidence_at_the_front():
-    from architecture_chat import _TOTAL_SOURCE_BUDGET, _bound_sources
+    from webapp.architecture_chat import _TOTAL_SOURCE_BUDGET, _bound_sources
 
     state = build_demo_state("pass")
     # Make every artifact source huge so the total budget must bite.
@@ -691,7 +691,7 @@ def test_total_budget_keeps_exact_id_evidence_at_the_front():
 
 
 def test_budget_never_drops_the_requested_history_run():
-    from architecture_chat import ChatSource, _TOTAL_SOURCE_BUDGET, _bound_sources
+    from webapp.architecture_chat import ChatSource, _TOTAL_SOURCE_BUDGET, _bound_sources
 
     history = [
         ChatSource("H1", "history", "history_summary",

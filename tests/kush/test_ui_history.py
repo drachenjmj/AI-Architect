@@ -23,8 +23,8 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from pipeline import persistence
-from ui_demo import build_demo_state
-from ui_workspace import HISTORY_EMPTY_MESSAGE
+from webapp.ui_demo import build_demo_state
+from webapp.ui_workspace import HISTORY_EMPTY_MESSAGE
 
 _UI = str(Path(__file__).resolve().parents[2] / "ui.py")  # repo root
 

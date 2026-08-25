@@ -32,8 +32,8 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from ui_demo import build_demo_state
-from ui_workspace import WORKSPACE_VIEWS, _VIEW_LABELS
+from webapp.ui_demo import build_demo_state
+from webapp.ui_workspace import WORKSPACE_VIEWS, _VIEW_LABELS
 
 _UI = str(Path(__file__).resolve().parents[2] / "ui.py")  # repo root
 

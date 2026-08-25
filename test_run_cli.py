@@ -540,7 +540,7 @@ def test_report_covers_every_section_and_says_when_empty(capsys):
 
 def test_report_prints_the_populated_artifacts(capsys):
     """Every field the task asked for actually reaches the page."""
-    demo = pytest.importorskip("ui_demo")
+    demo = pytest.importorskip("webapp.ui_demo")
     state = demo.build_demo_state("capped")
 
     cli.print_report(state)

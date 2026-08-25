@@ -165,8 +165,8 @@ import sys
 
 import streamlit as st
 
-import architecture_chat
-import field_discussion
+from webapp import architecture_chat
+from webapp import field_discussion
 from pipeline.agents import clarifier as clarifier_gate
 from pipeline.llm import LLMError
 from pipeline import orchestrator
@@ -175,7 +175,7 @@ from pipeline.refine_gate import begin_user_round
 from pipeline.repo_analysis import is_repo_url
 from pipeline.state import ArchitectState, PendingDecision, Stage, new_run
 from pipeline import sign_off, user_feedback
-from ui_sections import (
+from webapp.ui_sections import (
     BCG_DARK as _BCG_DARK,
     BCG_GREEN as _BCG_GREEN,
     GREY as _GREY,
@@ -188,7 +188,7 @@ from ui_sections import (
     render_optional_context,
     render_user_rounds,
 )
-from ui_workspace import (
+from webapp.ui_workspace import (
     render_pending_feedback_panel,
     render_workspace_view,
     select_workspace_view,
@@ -535,7 +535,7 @@ if (
     and st.session_state["state"] is None
     and not st.session_state.get(_NEW_RUN_KEY)
 ):
-    from ui_demo import build_demo_state
+    from webapp.ui_demo import build_demo_state
 
     st.session_state["state"] = build_demo_state(_DEMO)
 

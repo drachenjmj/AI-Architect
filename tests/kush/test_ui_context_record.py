@@ -16,7 +16,7 @@ to prove the DONE screen no longer throws on the checkpointed run's shape.
 from __future__ import annotations
 
 from pipeline.state import ArchitectState, ContextRecord, Stage, new_run
-import ui_sections
+from webapp import ui_sections
 
 
 def _record(version) -> ContextRecord:

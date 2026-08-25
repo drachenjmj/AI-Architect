@@ -22,7 +22,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from pipeline import persistence
-from ui_demo import build_demo_state
+from webapp.ui_demo import build_demo_state
 
 _UI = str(Path(__file__).resolve().parents[2] / "ui.py")  # repo root
 
@@ -133,7 +133,7 @@ def test_clicking_new_run_triggers_no_pipeline_or_api(saved_runs, booby_trap):
 
 
 def test_new_run_does_not_delete_saved_runs(saved_runs):
-    import run_history
+    from webapp import run_history
 
     before = [s.run_id for s in run_history.list_history_runs()]
     assert before == ["20260102T090000Z-00aa00b2"]
@@ -155,7 +155,7 @@ def test_history_remains_available_after_new_run(saved_runs):
     )
     assert picker is not None and picker.options
     # The authoritative check: discovery still finds the exact run.
-    import run_history
+    from webapp import run_history
 
     assert [s.run_id for s in run_history.list_history_runs()] == [
         "20260102T090000Z-00aa00b2"

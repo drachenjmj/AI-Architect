@@ -30,7 +30,7 @@ from pipeline.review_checks import (
     _target_service_references,
     run_deterministic_checks,
 )
-from ui_demo import DEMO_VARIANTS, build_demo_state
+from webapp.ui_demo import DEMO_VARIANTS, build_demo_state
 
 
 def test_demo_has_no_unowned_target_services():

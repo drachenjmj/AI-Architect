@@ -25,7 +25,7 @@ import pytest
 
 from pipeline import persistence
 from pipeline.state import ArchitectState, Stage, StepLog, new_run
-from run_history import HistoryError, list_history_runs, load_history_run
+from webapp.run_history import HistoryError, list_history_runs, load_history_run
 
 
 @pytest.fixture()
@@ -173,7 +173,7 @@ def test_run_with_only_corrupt_checkpoints_fails_to_load_loudly(runs_dir):
 
 
 def test_summary_extracts_saved_metadata(runs_dir, monkeypatch):
-    from ui_demo import build_demo_state
+    from webapp.ui_demo import build_demo_state
 
     state = build_demo_state("pass")  # real shapes: record, repo, review…
     state.run_id = "20260101T120000Z-full"

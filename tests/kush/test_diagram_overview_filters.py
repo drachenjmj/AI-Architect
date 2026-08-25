@@ -20,8 +20,8 @@ from streamlit.testing.v1 import AppTest
 
 from pipeline.flow_syntax import classify_flow, split_directional_flow
 from pipeline.state import ComponentDescription
-from ui_demo import build_demo_state
-from ui_sections import (
+from webapp.ui_demo import build_demo_state
+from webapp.ui_sections import (
     FLOW_FILTERS,
     architecture_flow_dot,
     build_overview_edges,
@@ -293,7 +293,7 @@ def test_overview_is_the_default_diagram_view():
 
 
 def test_switching_to_detailed_exposes_the_flow_filter_and_all_matches_full_set():
-    from ui_sections import parse_data_flows as _parse
+    from webapp.ui_sections import parse_data_flows as _parse
 
     at = _finished_app()
     state = at.session_state["state"]

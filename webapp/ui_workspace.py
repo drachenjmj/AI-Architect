@@ -86,11 +86,11 @@ from datetime import datetime
 
 import streamlit as st
 
-import architecture_chat
-import run_history
+from webapp import architecture_chat
+from webapp import run_history
 from pipeline.sign_off import feedback_is_closed
 from pipeline.state import ArchitectState, Stage
-from ui_sections import (
+from webapp.ui_sections import (
     clear_pending_feedback,
     get_pending_feedback,
     pending_feedback_kinds,

@@ -45,7 +45,7 @@ from typing import Any
 
 import streamlit as st
 
-import run_history
+from webapp import run_history
 from pipeline import llm
 from pipeline.state import ArchitectState
 

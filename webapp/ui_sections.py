@@ -64,7 +64,7 @@ from typing import Sequence
 import streamlit as st
 import streamlit.components.v1 as components
 
-import field_discussion
+from webapp import field_discussion
 from pipeline.agents.clarifier import (
     CLARIFIER_LABEL,
     EDITABLE_RECORD_FIELDS,

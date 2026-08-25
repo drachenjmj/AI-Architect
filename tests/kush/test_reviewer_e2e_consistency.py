@@ -550,7 +550,7 @@ def test_greenfield_without_migration_steps_is_untouched():
 
 
 def test_renderer_parse_data_flows_uses_the_shared_grammar():
-    from ui_sections import parse_data_flows
+    from webapp.ui_sections import parse_data_flows
 
     edges, unparsed = parse_data_flows(
         [

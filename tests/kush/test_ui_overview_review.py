@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from ui_demo import build_demo_state
+from webapp.ui_demo import build_demo_state
 
 _UI = str(Path(__file__).resolve().parents[2] / "ui.py")  # repo root
 
@@ -156,7 +156,7 @@ def test_architecture_view_still_carries_the_verbatim_data_flows():
 def test_architecture_flow_dot_builds_from_the_saved_data_flows():
     """The diagram's nodes and connections come from `blueprint.data_flows`
     and `components` — nothing else. Pure function, no state, no calls."""
-    from ui_sections import architecture_flow_dot, parse_data_flows
+    from webapp.ui_sections import architecture_flow_dot, parse_data_flows
 
     state = build_demo_state("pass")
     edges, unparsed = parse_data_flows(state.blueprint.data_flows)
@@ -187,7 +187,7 @@ def test_architecture_flow_dot_builds_from_the_saved_data_flows():
 
 
 def test_unparseable_flow_stays_visible_text_not_a_guess():
-    from ui_sections import parse_data_flows
+    from webapp.ui_sections import parse_data_flows
 
     edges, unparsed = parse_data_flows(
         [
