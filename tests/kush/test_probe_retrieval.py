@@ -9,7 +9,7 @@ fallback call path. Fakes only — no Chroma store, no API key, no network.
 from __future__ import annotations
 
 import architect
-import probe_retrieval
+from tools import probe_retrieval
 
 
 class FakeDoc:
