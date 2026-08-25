@@ -11,7 +11,7 @@ contract.
 
 from __future__ import annotations
 
-import pdf_to_md as p2m
+from tools import pdf_to_md as p2m
 
 HEADER = "Running Header Inc."
 FOOTER = "Page footer — confidential"

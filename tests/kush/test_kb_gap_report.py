@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 
-import kb_gap_report
+from tools import kb_gap_report
 
 
 def _record(query, status, ts="2026-08-20T10:00:00"):

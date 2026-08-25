@@ -121,8 +121,8 @@ ChatGPT/manual transformation, no LLM call:
 ```powershell
 # 1. Prepare: deterministic PDF → clean Markdown (pypdf; recurring
 #    headers/footers removed; page boundaries kept as '---' separators).
-python pdf_to_md.py path\to\source.pdf -o "Rag Database/box1_patterns/"   # box 1
-python pdf_to_md.py path\to\source.pdf -o "Rag Database/box2_domain/"     # box 2
+python tools/pdf_to_md.py path\to\source.pdf -o "Rag Database/box1_patterns/"   # box 1
+python tools/pdf_to_md.py path\to\source.pdf -o "Rag Database/box2_domain/"     # box 2
 ```
 
 The output **directory is the box selector** — nothing else. Box 2 keeps a
@@ -147,7 +147,7 @@ candidate sources are surfaced for human review — nothing from Box 3 is ever
 auto-ingested:
 
 ```powershell
-python kb_gap_report.py            # grouped gaps + candidate Box-3 sources
+python tools/kb_gap_report.py      # grouped gaps + candidate Box-3 sources
 ```
 
 ## Quick start
