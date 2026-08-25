@@ -2095,6 +2095,24 @@ def test_refinement_readiness_alone_no_longer_blocks():
     assert "refinement_readiness" not in blocking
 
 
+def test_refinement_readiness_prompt_defines_feedback_actionability():
+    """Prevent the judge from reading 'readiness' as near-approval."""
+
+    prompt = rev.REVIEWER_SYSTEM
+    assert "START a refinement pass" in prompt
+    assert "even if the current design has several" in prompt
+    assert "feedback itself is too vague" in prompt
+
+
+def test_flaw_detection_prompt_includes_material_locked_requirements():
+    """A working feature must not hide a compliance or reliability failure."""
+
+    prompt = rev.REVIEWER_SYSTEM
+    assert "functional, non-functional, and compliance requirements" in prompt
+    assert "headline capability works" in prompt
+    assert "contradicts a material locked" in prompt
+
+
 def test_a_high_severity_issue_still_blocks():
     passed, blocking = rev.derive_verdict(
         _rubric(), [_issue("high", "Structural problem.", "Fix it.")]

@@ -692,7 +692,10 @@ SCENARIOS = (
         description="Sound architecture containing a fabricated ADR citation.",
         expected_pass=False,
         expected_code_scores=_full_code_scores(source_integrity=0),
-        expected_judgments=_judgments(best_practice_grounding=False),
+        # Source-reference existence is code-owned. The cited evidence ID is
+        # real and semantically relevant, so the qualitative grounding answer
+        # should pass while source_integrity correctly fails the final verdict.
+        expected_judgments=_judgments(best_practice_grounding=True),
         build_state=fabricated_source_state,
         label_rationale="The cited source is absent from both retrieved knowledge and repository evidence.",
     ),

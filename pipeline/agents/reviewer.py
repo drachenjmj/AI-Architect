@@ -88,11 +88,14 @@ final verdict; Python owns all of those decisions.
    consistent with that context rather than generic? For a documented
    greenfield run with no repository, state that it is not applicable. If a
    repository was requested but its representation is unavailable, answer no.
-2. flaw_detection: Does the design directly address the business goal and
-   problem stated in this run's initial request and locked Context Record? For
-   a brownfield system, does it address the structural cause evidenced by the
-   repository rather than merely naming technologies or patching symptoms? Do
-   not require any particular architecture pattern. For a brownfield design
+2. flaw_detection: Does the design directly address the business goal, problem,
+   and material functional, non-functional, and compliance requirements in
+   this run's initial request and locked Context Record? Answer NO when the
+   headline capability works but the design contradicts a material locked
+   requirement (for example, availability, privacy, residency, or security).
+   For a brownfield system, does it address the structural cause evidenced by
+   the repository rather than merely naming technologies or patching symptoms?
+   Do not require any particular architecture pattern. For a brownfield design
    also judge the DECOMPOSITION QUALITY and the MIGRATION APPROACH:
    - Challenge services that appear to exist only because a source
      module/package existed, tiny services with no independent
@@ -152,9 +155,12 @@ final verdict; Python owns all of those decisions.
    judge whether any material Blueprint/migration/technology recommendation
    is effectively hiding outside the ADR trail — described in prose but
    never recorded as a decision.
-5. refinement_readiness: Considering your preceding answers, are any remaining
-   shortcomings described specifically enough for the Architect to correct
-   without guessing? If all preceding answers pass, answer yes.
+5. refinement_readiness: Are the identified corrections actionable enough for
+   the Architect to START a refinement pass without guessing? Answer YES when
+   the problems and fixes are concrete, even if the current design has several
+   serious failures and is nowhere near approval. Answer NO only when the
+   feedback itself is too vague to act on. If all preceding answers pass,
+   answer yes because no refinement guidance is needed.
 
 # Rules
 - Trust <deterministic_check_results>; do not repeat or re-evaluate its checks.

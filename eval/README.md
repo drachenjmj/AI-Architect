@@ -103,3 +103,5 @@ the UI and saved runs. Its current meaning is general: whether the design solves
 the problem stated in that run's request, Context Record, and repository. It no
 longer refers to a built-in shop flaw. `refinement_readiness` is recorded and
 evaluated for judge analysis, but remains advisory in the production verdict.
+It asks whether the feedback is concrete enough to begin refinement, not
+whether the current design is close to passing.
