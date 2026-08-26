@@ -77,6 +77,8 @@ does read makes that a live leak rather than a hypothetical one.
 
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, Field
 
 from pipeline.agents.base import make_step, node
@@ -354,6 +356,12 @@ DATA-FLOW FIDELITY (Blueprint `data_flows`):
 - `data_flows` is the target architecture's communication map and feeds a
   deterministic diagram: a reader of the flows must see the SAME
   architecture a reader of the full artifacts sees.
+- One flow entry is ONE edge with exactly one source and one target. Never
+  encode multiple targets or sources into a single endpoint string (e.g.
+  "Monitoring -> React Frontend, GraphQL Gateway, User Identity Service" is
+  not one edge — it is three). Expand any fan-out (one source, many
+  targets) or fan-in (many sources, one target) into separate flow entries,
+  one per component.
 - Use concrete Blueprint component names as flow participants whenever the
   participant is an architecture component — spelled EXACTLY as in the
   Blueprint's `components`, with no parenthetical descriptors or suffixes
@@ -801,6 +809,18 @@ def _format_detected_stack(state: ArchitectState) -> str:
 # scored WORSE, and the best-round restore discarded the attempted fixes.
 # Pydantic defaults absorb omitted fields silently, so this checklist makes
 # full re-emission an explicit instruction rather than an assumption.
+#
+# Task 20 addendum (real KI Connect/Mistral Small run): the model
+# ACKNOWLEDGED every deterministic finding and wrote a `revision_note`
+# claiming each was fixed, but three of them never changed the structured
+# field the deterministic check actually reads — an aggregated data-flow
+# endpoint stayed one string, a migration disposition landed in component
+# prose instead of `migration_steps`, and an unauthorized quantitative
+# target stayed in the architecture text. `revision_note` is never read by
+# `run_deterministic_checks` or by the Reviewer's own prompt (see
+# `_format_artifacts`'s `exclude={"revision_note"}` in agents/reviewer.py) —
+# it is a summary for a human, never evidence a finding was fixed. Points 6-9
+# make that explicit instead of assuming the model already infers it.
 _REFINEMENT_DISCIPLINE = """
 <refinement_discipline>
 This is a REFINEMENT pass. Work blocker by blocker:
@@ -809,6 +829,10 @@ This is a REFINEMENT pass. Work blocker by blocker:
 3. Before returning, verify each supplied blocker against your revised artifacts; if one cannot be resolved, say so in the relevant rationale rather than silently dropping it.
 4. Re-emit ALL required fields for EVERY ADR and Component Description in full — context, rationale, alternatives, consequences, inputs/outputs/dependencies, technology choices — even for parts you did not change. Never leave a required field blank merely because it was unchanged.
 5. Preserve existing technology choices, migration steps, and component details unless you are intentionally changing them to resolve a finding. Do not drop them due to response compression.
+6. A deterministic finding is resolved ONLY by changing the structured field it names in the RETURNED artifacts. `revision_note` is a descriptive summary for a human reader — the deterministic checks never read it, and stating a fix there while the offending field is unchanged does not resolve the finding; it will be reported again.
+7. A migration-disposition finding is resolved in `blueprint.migration_steps` — naming the disposition only in a Component Description's own text does not satisfy it.
+8. An unauthorized-quantitative-target finding is resolved by removing or replacing the exact literal in the field the finding names — not by summarizing the removal in `revision_note` while the literal remains anywhere in the returned artifacts.
+9. A data-flow finding is resolved in `blueprint.data_flows`: one flow entry is one edge with exactly one source and one target; represent fan-out/fan-in as separate entries, never as one endpoint listing several component names.
 </refinement_discipline>
 """.strip() + "\n\n"
 
@@ -969,14 +993,107 @@ def sanitize_adr_evidence_ids(
     return sanitized, removed
 
 
+# Explicit ','/'and' enumeration grammar — the SAME "keep multi-word phrases
+# whole, split only at an explicit separator" principle
+# `_extract_migration_service_phrases` (review_checks.py) already applies to
+# migration-step text, applied here at the flow-endpoint boundary instead —
+# never a per-word flatten, so "Order Management Service" stays one phrase
+# while "Order Management Service, and Fulfillment Service" splits in two.
+_ENDPOINT_LIST_DELIM_RE = re.compile(r"\s*,\s*(?:and\s+)?|\s+and\s+", re.IGNORECASE)
+
+
+def _split_endpoint_list_candidates(text: str) -> list[str]:
+    """Split an endpoint string on an explicit ','/'and' list grammar into
+    candidate phrases. Pure. Returns `[text]` unchanged whenever there is no
+    list separator at all, so an ordinary name is never touched merely
+    because splitting is possible in principle."""
+    if not re.search(r",|\band\b", text, re.IGNORECASE):
+        return [text]
+    parts = [part.strip() for part in _ENDPOINT_LIST_DELIM_RE.split(text) if part.strip()]
+    return parts if len(parts) >= 2 else [text]
+
+
+def _expand_aggregate_endpoint(
+    parts: list[str],
+    catalog: list[str],
+    resolve,
+) -> list[tuple[str, str]] | None:
+    """Fan-out/fan-in expansion for a SIMPLE two-endpoint flow. Pure.
+
+    Root cause this fixes (Task 20, a real KI Connect/Mistral run): the
+    model wrote ONE flow whose target combined several real component names
+    into a single comma-separated string ("Monitoring -> React Frontend,
+    GraphQL Gateway, User Identity Service") instead of one flow per
+    component. That string parses as a single endpoint matching nothing in
+    the catalog, becoming a `_check_flow_participants` finding refinement
+    could not resolve by describing the combined string as a component.
+
+    Fires ONLY when ALL of the following hold — anything else is left for
+    the caller's ordinary per-endpoint decoration path, unchanged:
+      * the flow is a plain two-endpoint edge (a `->` chain of 3+ hops has
+        different, existing chain semantics — see `split_directional_flow`
+        — and is never touched here);
+      * exactly ONE of the two endpoints does NOT already resolve as a
+        single whole component (via the same `resolve()` used for
+        parenthetical decoration) AND, split on an explicit ','/'and' list
+        grammar, yields 2+ candidate phrases — the OTHER endpoint is left
+        exactly as it is, matched or not (an external actor like "Client"
+        is a legitimate single-sided endpoint);
+      * BOTH endpoints being an unresolved list at once is refused outright
+        — pairing an M-item list with an N-item list is a cartesian-product
+        guess, not a deterministic reading, so nothing is expanded;
+      * EVERY split candidate on the list side resolves EXACTLY/unambiguously
+        to a DISTINCT existing catalog component — one unmatched or
+        duplicate-resolving candidate cancels the entire expansion rather
+        than guessing which parts to keep.
+
+    Returns the expanded `(source, target)` pairs, or None when nothing
+    should be expanded.
+    """
+    if len(parts) != 2:
+        return None
+    source, target = parts
+
+    def whole_resolves(text: str) -> bool:
+        name, _changed = resolve(text)
+        return name in catalog
+
+    # Only ever consider splitting a side that could NOT already be read as
+    # one real component — a catalog component whose own name happens to
+    # contain "and" (already exact-matched by `resolve`) is never split.
+    source_candidates = [] if whole_resolves(source) else _split_endpoint_list_candidates(source)
+    target_candidates = [] if whole_resolves(target) else _split_endpoint_list_candidates(target)
+    source_is_list = len(source_candidates) > 1
+    target_is_list = len(target_candidates) > 1
+    if source_is_list == target_is_list:
+        return None  # neither side is a list, or both are — no guess either way
+
+    list_candidates = source_candidates if source_is_list else target_candidates
+    resolved_names: list[str] = []
+    for candidate in list_candidates:
+        name, _changed = resolve(candidate)
+        if name not in catalog:
+            return None  # a candidate did not resolve — do not guess
+        resolved_names.append(name)
+    if len(set(resolved_names)) != len(resolved_names):
+        return None  # two candidates resolved to the same component — ambiguous
+
+    if source_is_list:
+        fixed_target, _changed = resolve(target)
+        return [(name, fixed_target) for name in resolved_names]
+    fixed_source, _changed = resolve(source)
+    return [(fixed_source, name) for name in resolved_names]
+
+
 def canonicalize_data_flow_endpoints(
     flows: list[str], component_names: list[str]
 ) -> tuple[list[str], int]:
     """Resolve decorated flow endpoints back to exact Blueprint component
-    names. Pure.
+    names, and expand an unambiguous multi-component endpoint into several
+    single-endpoint edges. Pure.
 
-    Root cause this fixes (run 20260822T164736Z-1a15e2e4): the model writes
-    "Order Service (New order flow)" against a component named
+    Root cause #1 this fixes (run 20260822T164736Z-1a15e2e4): the model
+    writes "Order Service (New order flow)" against a component named
     "Order Service". The string parses as an endpoint, so the deterministic
     diagram draws a PHANTOM duplicate node beside the real one.
 
@@ -990,7 +1107,16 @@ def canonicalize_data_flow_endpoints(
     component catalog and therefore pass through untouched. Exact component
     names are fixed points of the rule.
 
-    Returns (canonical_flows, number_of_endpoints_resolved).
+    Root cause #2 this fixes (Task 20): the model aggregates a fan-out/fan-in
+    into ONE endpoint listing several real component names instead of one
+    flow per component — see `_expand_aggregate_endpoint` for the exact,
+    deliberately conservative expansion rule. A flow this fires on turns
+    into MULTIPLE output flow strings, so `canonical_flows` may be LONGER
+    than `flows`; every other flow keeps its 1:1 position.
+
+    Returns (canonical_flows, number_of_endpoints_resolved) — the count
+    includes both a changed decoration and every endpoint produced by an
+    expansion.
     """
     catalog: list[str] = [name.strip() for name in component_names if name.strip()]
 
@@ -1030,6 +1156,17 @@ def canonicalize_data_flow_endpoints(
             text, _, label = text.partition(":")
             label = label.strip()
         parts = [part.strip() for part in FLOW_ARROW_RE.split(text)]
+
+        expanded = _expand_aggregate_endpoint(parts, catalog, resolve)
+        if expanded is not None:
+            for source, target in expanded:
+                rebuilt = f"{source} → {target}"
+                if label:
+                    rebuilt = f"{rebuilt}: {label}"
+                canonical.append(rebuilt)
+            resolved_count += len(expanded)
+            continue
+
         out_parts: list[str] = []
         for part in parts:
             if not part:

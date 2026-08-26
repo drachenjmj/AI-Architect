@@ -2987,10 +2987,14 @@ def run_deterministic_checks(
                 ),
                 f"referenced in data_flows: {'; '.join(flows)}",
                 (
-                    f"Add a Component Description for '{endpoint}', "
-                    "change the flow to reference an existing Component by "
-                    "its exact name, or mark the participant explicitly "
-                    "external."
+                    f"Fix this in blueprint.data_flows. If '{endpoint}' "
+                    f"actually names more than one component, that is the "
+                    f"defect: split the flow into one entry per component "
+                    f"(one source, one target each) instead of combining "
+                    f"them into a single endpoint. Otherwise add a "
+                    f"Component Description for '{endpoint}', change the "
+                    f"flow to reference an existing Component by its exact "
+                    f"name, or mark the participant explicitly external."
                 ),
             )
 
@@ -3007,10 +3011,14 @@ def run_deterministic_checks(
                 ),
                 f"component={name}",
                 (
-                    f"State '{name}'s migration disposition explicitly: "
-                    "extracted in a named migration step, deferred to a "
-                    "later phase, retained in the legacy system for now, "
-                    "or external/already existing."
+                    f"Fix this in blueprint.migration_steps: add or update "
+                    f"a migration step whose title/objective/changes name "
+                    f"'{name}' and state its disposition explicitly — "
+                    f"extracted in that step, deferred to a later phase, "
+                    f"retained in the legacy system for now, or "
+                    f"external/already existing. Stating the disposition "
+                    f"only in the component's own description does not "
+                    f"satisfy this check."
                 ),
             )
 
@@ -3297,7 +3305,10 @@ def run_deterministic_checks(
             )
             + ("; …" if len(invented_quantitative_targets) > 4 else ""),
             str(invented_quantitative_targets),
-            "Remove the invented figure; state the target qualitatively, "
+            "Remove or replace the exact literal in the field(s) named "
+            "above — the value must actually be gone from the returned "
+            "artifacts, not merely described as removed in revision_note, "
+            "which this check never reads. State the target qualitatively, "
             "or note it must be measured/agreed later, unless the Context "
             "Record explicitly authorizes that exact number.",
         )
