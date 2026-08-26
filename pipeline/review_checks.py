@@ -112,11 +112,13 @@ class DeterministicChecks(BaseModel):
     # ADR ids/titles with NO related_decision_topic_ids at all, when decision
     # topics were planned this run (see `_check_adr_topic_mapping_presence`).
     adrs_without_decision_topic_mapping: list[str] = Field(default_factory=list)
-    # Required material decision topics (MATERIAL_DECISION_TOPICS /
-    # MIGRATION_MATERIAL_TOPIC) planned this run with ZERO qualifying
-    # curated-KB evidence retrieved for that topic specifically — an
-    # honest, non_refinable per-topic gap (see
-    # `_check_material_topic_evidence_gaps`), distinct from `kb_evidence_gap`
+    # Decision topics with ZERO qualifying curated-KB evidence retrieved for
+    # that topic specifically, where the topic is material — either one of
+    # the always-required MATERIAL_DECISION_TOPICS/MIGRATION_MATERIAL_TOPIC,
+    # or a CONDITIONAL topic (observability, technology conservation, ...)
+    # that at least one ADR actually declared via related_decision_topic_ids
+    # (see `_check_material_topic_evidence_gaps`) — an honest, non_refinable
+    # per-topic gap, distinct from `kb_evidence_gap`
     # (which only fires when nothing was retrieved for ANY topic at all).
     material_topics_without_evidence: list[str] = Field(default_factory=list)
 
@@ -1643,8 +1645,8 @@ def _check_adr_evidence_topic_provenance(
 
 
 def _check_material_topic_evidence_gaps(state: ArchitectState) -> list[str]:
-    """Required material decision topics that retrieved ZERO qualifying
-    curated-KB evidence for THAT topic specifically. Pure.
+    """Material decision topics that retrieved ZERO qualifying curated-KB
+    evidence for THAT topic specifically. Pure.
 
     Distinct from the whole-run `kb_evidence_gap` in
     `_check_kb_evidence_grounding` (which fires only when NOTHING
@@ -1658,23 +1660,53 @@ def _check_material_topic_evidence_gaps(state: ArchitectState) -> list[str]:
     marks the resulting issue `non_refinable` for exactly the same reason
     the whole-run gap already is.
 
-    Purely topic-centric by design: it does not inspect which ADR maps to
-    the topic or what ELSE that ADR maps to. An ADR spanning both this gap
-    topic and another topic that DOES have evidence is unaffected — it can
-    still legitimately ground itself in the other topic's evidence, which
+    A topic is material here in EITHER of two independent, deterministic
+    ways:
+      * it is one of `MATERIAL_DECISION_TOPICS` (always required) or the
+        conditionally-required `MIGRATION_MATERIAL_TOPIC` — exactly the
+        original rule, regardless of whether any ADR maps to it yet (ADR
+        presence is `_check_material_decision_coverage`'s own finding, not
+        this one's); OR
+      * at least one ADR actually declares it via
+        `related_decision_topic_ids`. A CONDITIONAL topic (observability,
+        technology conservation, compliance, ...) is only ever planned by
+        the researcher when the case actually raises the question (see
+        `researcher._conditional_topics`) — so an ADR genuinely grounded in
+        one is exactly as material as the always-required four, and a real
+        E2E run exposed exactly this gap: an ADR mapped to a conditional
+        topic with zero retrieved evidence had no way to be recognised as
+        an honest gap, so it fell into the generic refinable finding
+        instead — inviting a refine round that could never succeed (the
+        Architect cannot manufacture evidence research already failed to
+        find) while the Reviewer's own citation-quality judgment correctly
+        rejected any decorative citation reached for instead.
+        Deterministic and non-gameable: both facts this branch reads
+        (`topic.evidence_ids` and the topic's own existence in
+        `state.decision_topics`) are Researcher-set, never Architect-writable
+        — the Architect only picks WHICH already-real topic ID to cite,
+        and citing a fabricated one is `_check_material_decision_coverage`'s
+        `invalid_topic_ids` finding to catch, not this function's to trust.
+
+    Purely topic-centric otherwise: it does not inspect what ELSE an ADR
+    maps to. An ADR spanning both this gap topic and another topic that
+    DOES have evidence is unaffected — it can still legitimately ground
+    itself in the other topic's evidence, which
     `_check_adr_evidence_topic_provenance` and `_check_material_decision_coverage`
     (not this function) continue to judge on their own terms.
     """
-    required_topic_names = list(MATERIAL_DECISION_TOPICS)
+    required_topic_names = set(MATERIAL_DECISION_TOPICS)
     if state.blueprint is not None and state.blueprint.migration_steps:
-        required_topic_names.append(MIGRATION_MATERIAL_TOPIC)
-    if not required_topic_names:
-        return []
+        required_topic_names.add(MIGRATION_MATERIAL_TOPIC)
+
+    adr_mapped_topic_ids: set[str] = set()
+    for adr in state.adrs:
+        adr_mapped_topic_ids |= _adr_topic_ids(adr)
 
     return [
         topic.topic
         for topic in state.decision_topics
-        if topic.topic in required_topic_names and not topic.evidence_ids
+        if not topic.evidence_ids
+        and (topic.topic in required_topic_names or topic.id in adr_mapped_topic_ids)
     ]
 
 

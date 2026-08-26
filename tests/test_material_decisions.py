@@ -671,6 +671,53 @@ def test_pure_material_topic_gap_triggers_the_existing_nonrefinable_stop():
     assert reason == "non_refinable_findings"
 
 
+def test_conditional_topic_gap_alone_stops_refinement_immediately():
+    topics, adrs, kb_chunks, _ = _baseline_covered()
+    topics.append(_topic("TOPIC-5", CONDITIONAL_TOPIC, []))
+    adrs.append(_adr("ADR-005", "ADR-5: Retain the stack", ["TOPIC-5"], []))
+    state = _state(topics=topics, adrs=adrs, kb_chunks=kb_chunks)
+    checks = run_deterministic_checks(state)
+
+    state.review = ReviewResult(
+        overall_status="fail",
+        rubric_scores=RubricScores(),
+        issues=checks.issues,
+        requires_refinement=any(i.requires_refinement for i in checks.issues),
+    )
+    state.stage = Stage.REFINING
+
+    stop, reason = evaluate_caps(state)
+
+    assert stop is True
+    assert reason == "non_refinable_findings"
+
+
+def test_conditional_topic_gap_mixed_with_refinable_finding_still_loops():
+    """The non-refinable per-topic gap coexists with an ordinary, fixable
+    finding — the mix is not pure, so the loop must still run for the
+    fixable one, exactly like the baseline-topic mixed case above."""
+    topics, adrs, kb_chunks, _ = _baseline_covered()
+    topics.append(_topic("TOPIC-5", CONDITIONAL_TOPIC, []))
+    adrs.append(_adr("ADR-005", "ADR-5: Retain the stack", ["TOPIC-5"], []))
+    extra = _adr("ADR-999", "ADR-999: An extra decision", [], [])  # unmapped, refinable
+    state = _state(topics=topics, adrs=adrs + [extra], kb_chunks=kb_chunks)
+    checks = run_deterministic_checks(state)
+    assert any(i.non_refinable for i in checks.issues)
+    assert any(not i.non_refinable and i.requires_refinement for i in checks.issues)
+
+    state.review = ReviewResult(
+        overall_status="fail",
+        rubric_scores=RubricScores(),
+        issues=checks.issues,
+        requires_refinement=True,
+    )
+    state.stage = Stage.REFINING
+
+    stop, reason = evaluate_caps(state)
+
+    assert stop is False
+
+
 def test_mixed_refinable_and_nonrefinable_material_blockers_still_loop():
     """The non-refinable per-topic gap coexists with an ordinary, fixable
     finding (an ADR with no topic mapping at all) — the mix is not pure, so
@@ -695,3 +742,209 @@ def test_mixed_refinable_and_nonrefinable_material_blockers_still_loop():
     stop, reason = evaluate_caps(state)
 
     assert stop is False
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Task 19 — CONDITIONAL material topics also produce an honest per-topic gap
+#
+# Real E2E gap: `_check_material_topic_evidence_gaps` only ever recognized
+# the fixed MATERIAL_DECISION_TOPICS/MIGRATION_MATERIAL_TOPIC catalog (the
+# four always-planned baseline topics + migration). A CONDITIONAL topic
+# (observability, technology conservation, ...) is only ever planned by the
+# researcher when the case actually raises the question — so an ADR
+# genuinely grounded in one is exactly as material as the baseline four —
+# but the old code could never recognize its zero-evidence state as an
+# honest gap. That ADR fell into the generic REFINABLE "cite something"
+# finding, while the Reviewer's own citation-quality judgment correctly
+# rejected any decorative citation reached for instead — an oscillating,
+# unwinnable refine loop. The fix: a topic is also material when at least
+# one ADR actually declares it via `related_decision_topic_ids` — see
+# `_check_material_topic_evidence_gaps`.
+# ═════════════════════════════════════════════════════════════════════════
+
+CONDITIONAL_TOPIC = "technology conservation vs replacement"
+
+
+def test_conditional_topic_with_adr_mapping_and_zero_evidence_is_an_honest_gap():
+    topics, adrs, kb_chunks, _ = _baseline_covered()
+    topics.append(_topic("TOPIC-5", CONDITIONAL_TOPIC, []))
+    adrs.append(_adr(
+        "ADR-005", "ADR-5: Retain the existing technology stack",
+        ["TOPIC-5"], [],
+    ))
+    state = _state(topics=topics, adrs=adrs, kb_chunks=kb_chunks)
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.material_topics_without_evidence == [CONDITIONAL_TOPIC]
+    gap_issue = next(
+        i for i in checks.issues
+        if CONDITIONAL_TOPIC in i.finding and "curated-KB evidence" in i.finding
+    )
+    assert gap_issue.severity == "high"
+    assert gap_issue.non_refinable is True
+    # The ordinary, refinable "cite something" finding must NOT also fire
+    # for ADR-005 — that would invite a refine round that can never
+    # succeed, exactly the oscillating loop this fix closes.
+    assert not any(
+        "claim no traceable curated-KB literature support" in i.finding
+        for i in checks.issues
+    )
+
+
+def test_conditional_topic_with_zero_evidence_but_no_adr_mapping_is_not_a_gap():
+    """A conditional topic nobody ever grounded a decision in is not
+    material by mere existence — materiality requires an ADR to have
+    actually used it, guarding against over-broadening the gap list."""
+    topics, adrs, kb_chunks, _ = _baseline_covered()
+    topics.append(_topic("TOPIC-5", CONDITIONAL_TOPIC, []))
+    state = _state(topics=topics, adrs=adrs, kb_chunks=kb_chunks)
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.material_topics_without_evidence == []
+
+
+def test_conditional_topic_with_evidence_still_requires_engagement():
+    """The Architect cannot self-declare a gap: materiality alone does not
+    excuse skipping AVAILABLE evidence — only a genuine, Researcher-set
+    zero-evidence topic is a gap. An ADR mapped to a conditional topic that
+    DOES have qualifying evidence still gets the ordinary refinable
+    finding if it cites nothing."""
+    topics, adrs, kb_chunks, _ = _baseline_covered()
+    topics.append(_topic("TOPIC-5", CONDITIONAL_TOPIC, ["KB-E005"]))
+    adrs.append(_adr("ADR-005", "ADR-5: Retain the stack", ["TOPIC-5"], []))
+    kb_chunks = list(kb_chunks) + [_chunk("KB-E005", "s5.pdf")]
+    state = _state(topics=topics, adrs=adrs, kb_chunks=kb_chunks)
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.material_topics_without_evidence == []
+    assert "ADR-005" in checks.adrs_without_kb_evidence
+    assert any(
+        "claim no traceable curated-KB literature support" in i.finding
+        and "ADR-005" in i.finding
+        for i in checks.issues
+    )
+
+
+def test_conditional_topic_gap_cannot_be_satisfied_by_citing_another_topics_evidence():
+    """A gap is not permission to cite garbage: borrowing a genuinely
+    qualifying ID retrieved for a DIFFERENT topic is still rejected by the
+    exact topic-provenance check, on top of (not instead of) the honest
+    gap finding — and that rejection stays refinable."""
+    topics, adrs, kb_chunks, _ = _baseline_covered()
+    topics.append(_topic("TOPIC-5", CONDITIONAL_TOPIC, []))
+    adrs.append(_adr(
+        "ADR-005", "ADR-5: Retain the stack", ["TOPIC-5"], ["KB-E001"],
+    ))  # KB-E001 was retrieved for DECOMPOSITION, not this topic
+    state = _state(topics=topics, adrs=adrs, kb_chunks=kb_chunks)
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.material_topics_without_evidence == [CONDITIONAL_TOPIC]
+    assert checks.adr_evidence_outside_mapped_topics == {"ADR-005": ["KB-E001"]}
+    provenance_issue = next(
+        i for i in checks.issues if "different decision topic" in i.finding
+    )
+    assert provenance_issue.non_refinable is False  # always the Architect's to fix
+
+
+def test_conditional_topic_gap_fabricated_citation_still_flagged_and_refinable():
+    """A gap is not permission to invent an ID either — fabrication is
+    always reported and always refinable, gap or no gap."""
+    topics, adrs, kb_chunks, _ = _baseline_covered()
+    topics.append(_topic("TOPIC-5", CONDITIONAL_TOPIC, []))
+    adrs.append(_adr(
+        "ADR-005", "ADR-5: Retain the stack", ["TOPIC-5"], ["KB-E999"],
+    ))
+    state = _state(topics=topics, adrs=adrs, kb_chunks=kb_chunks)
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.material_topics_without_evidence == [CONDITIONAL_TOPIC]
+    assert checks.invalid_evidence_ids == {"ADR-005": ["KB-E999"]}
+    fabrication_issue = next(
+        i for i in checks.issues if "not actually retrieved" in i.finding
+    )
+    assert fabrication_issue.non_refinable is False
+
+
+def test_conditional_topic_gap_still_fails_the_verdict_honestly():
+    """Phase 9 policy check: a verified gap is not silently accepted.
+    `derive_verdict` blocks on ANY high-severity issue regardless of
+    `non_refinable` — this fix only stops the refine LOOP from wasting
+    iterations on an unfixable finding, matching the existing whole-run
+    `kb_evidence_gap` precedent; it does not change verdict semantics."""
+    topics, adrs, kb_chunks, _ = _baseline_covered()
+    topics.append(_topic("TOPIC-5", CONDITIONAL_TOPIC, []))
+    adrs.append(_adr("ADR-005", "ADR-5: Retain the stack", ["TOPIC-5"], []))
+    state = _state(topics=topics, adrs=adrs, kb_chunks=kb_chunks)
+    checks = run_deterministic_checks(state)
+
+    passed, blocking = rev.derive_verdict(RubricScores(), checks.issues)
+
+    assert passed is False
+    assert "high_severity_issue" in blocking
+
+
+def test_architect_prompt_tells_the_architect_not_to_fabricate_around_a_gap():
+    """Pins the Architect-side half of the contract this fix relies on:
+    a topic with no evidence is already an explicit instruction to say so
+    in the rationale rather than invent or decorate a citation."""
+    prompt = _flat(arch.ARCHITECTURE_SYSTEM_PROMPT)
+    assert "known KB gap, not something to fabricate around" in prompt
+    assert "never attach one merely to satisfy this rule" in prompt
+
+
+def test_refinement_iteration_cap_is_unchanged():
+    from pipeline.refine_gate import MAX_REFINE_ITERATIONS
+    assert MAX_REFINE_ITERATIONS == 3
+
+
+# ── Real-run regression shape ────────────────────────────────────────────
+# Reproduces the SHAPE of the observed failure: a material decision (retain
+# the existing stack) grounded in repository/requirement reasoning, for a
+# decision topic that genuinely retrieved no curated-KB evidence. Not
+# hardcoding the real run's generated wording — only its structure.
+
+def _repo_grounded_gap_fixture(citation_ids=()):
+    topics, adrs, kb_chunks, _ = _baseline_covered()
+    topics.append(_topic("TOPIC-5", CONDITIONAL_TOPIC, []))
+    adrs.append(_adr(
+        "ADR-005",
+        "ADR-5: Retain the existing Python/Django/React stack",
+        ["TOPIC-5"],
+        list(citation_ids),
+    ))
+    return _state(topics=topics, adrs=adrs, kb_chunks=kb_chunks)
+
+
+def test_real_run_regression_shape_no_citation_required():
+    state = _repo_grounded_gap_fixture()
+
+    checks = run_deterministic_checks(state)
+
+    # No fake citation required, and no ordinary missing-curated-evidence
+    # finding — the honest, non_refinable per-topic gap covers it instead.
+    assert CONDITIONAL_TOPIC in checks.material_topics_without_evidence
+    assert not any(
+        "claim no traceable curated-KB literature support" in i.finding
+        for i in checks.issues
+    )
+    # No impossible refinement instruction: the only finding about this ADR
+    # is marked non_refinable, so `evaluate_caps` would stop rather than
+    # loop (already proven end-to-end above); re-asserted narrowly here.
+    gap_issue = next(
+        i for i in checks.issues
+        if CONDITIONAL_TOPIC in i.finding and "curated-KB evidence" in i.finding
+    )
+    assert gap_issue.non_refinable is True
+
+
+def test_real_run_regression_shape_unrelated_citation_still_flagged():
+    state = _repo_grounded_gap_fixture(citation_ids=["KB-E001"])
+
+    checks = run_deterministic_checks(state)
+
+    assert checks.adr_evidence_outside_mapped_topics == {"ADR-005": ["KB-E001"]}
