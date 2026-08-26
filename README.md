@@ -11,18 +11,23 @@ and Component Descriptions — grounded in a curated knowledge base via RAG.
 2. Double-click `SETUP_AND_RUN.bat`.
 3. Choose Google Gemini (recommended, works outside the university) or
    University of Cologne KI Connect (requires University of Cologne access).
-4. Enter the requested credential when prompted — it is never displayed or
-   logged, and is saved locally in the git-ignored `.env`.
+4. Enter the requested credential(s) when prompted — a Gemini API key for
+   Gemini, or both a KI Connect key and a Gemini key for KI Connect (see
+   below). Nothing is ever displayed or logged; both are saved locally in
+   the git-ignored `.env`.
 5. The AI-Architect UI opens automatically in your browser.
 
 Gemini runtime automatically sets the Architect and Reviewer to `HIGH`
-thinking. The bundled `chroma_db/` knowledge base is included and validated
-offline on every launch — a normal start never rebuilds it and never spends
-an API call doing so. Rebuilding is optional and always uses Gemini
-embeddings (`models/gemini-embedding-2`), regardless of which runtime
-provider you chose, via its own one-click entry point: `REBUILD_RAG.bat` (see
-[tools/rebuild_rag.py](tools/rebuild_rag.py)). Manual setup remains available
-— see [SETUP.md](SETUP.md).
+thinking. KI Connect redirects only the Architect and Reviewer generation
+calls — the Clarifier and every RAG query-time embedding call always use
+Gemini regardless of runtime provider, so **a Gemini API key is required
+for both providers**, not only Gemini. The bundled `chroma_db/` knowledge
+base is included and validated offline on every launch — a normal start
+never rebuilds it and never spends an API call doing so. Rebuilding is
+optional and always uses Gemini embeddings (`models/gemini-embedding-2`),
+regardless of which runtime provider you chose, via its own one-click entry
+point: `REBUILD_RAG.bat` (see [tools/rebuild_rag.py](tools/rebuild_rag.py)).
+Manual setup remains available — see [SETUP.md](SETUP.md).
 
 ## How it works
 

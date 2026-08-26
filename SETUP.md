@@ -8,12 +8,22 @@ creates `.venv`, installs the pinned `requirements.txt`, offline-validates
 the bundled RAG database, walks you through choosing **Google Gemini**
 (recommended — works outside the university) or **University of Cologne KI
 Connect** (requires University of Cologne access), securely collects only
-the credential still missing, and launches the Streamlit UI in your browser.
-Gemini runtime sets the Architect and Reviewer to `HIGH` thinking
+the credential(s) still missing, and launches the Streamlit UI in your
+browser. Gemini runtime sets the Architect and Reviewer to `HIGH` thinking
 automatically. Re-running it later reuses the saved `.env` configuration
 without asking again. See [tools/setup_app.py](tools/setup_app.py) for the
 underlying logic (`python -m tools.setup_app --help` for advanced flags —
 `--provider`, `--setup-only`/`--no-launch`).
+
+**KI Connect still needs a Gemini API key too.** It only redirects the
+Architect's and Reviewer's own generation calls — the Clarifier and every
+RAG query-time embedding call always use Gemini
+(`pipeline/agents/clarifier.py`'s `CLARIFIER_MODEL`/`ADVISOR_MODEL` are
+hard-coded to the Gemini registry, never routed by
+`ARCHITECT_LLM_PROVIDER`/`REVIEWER_LLM_PROVIDER`; `architect.get_vectorstore()`
+always builds a `GoogleGenerativeAIEmbeddings` client for every retrieval).
+So setup requires **both** `KICONNECT_API_KEY` and `GEMINI_API_KEY` before a
+KI Connect configuration is considered complete.
 
 The bundled RAG database (`chroma_db/`) ships with the repo and is validated,
 never rebuilt, by a normal setup — no API key is spent doing so. Rebuilding

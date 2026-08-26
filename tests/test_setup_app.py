@@ -82,15 +82,23 @@ def test_apply_gemini_config_preserves_existing_explicit_google_pin():
 
 def test_apply_kiconnect_config_selects_kiconnect_route():
     updates: dict = {}
-    sa.apply_kiconnect_config(updates, existing_env={}, kiconnect_key="sk-fake-ki")
+    sa.apply_kiconnect_config(updates, existing_env={}, kiconnect_key="sk-fake-ki", gemini_key="sk-fake-gem")
     assert updates["KICONNECT_API_KEY"] == "sk-fake-ki"
+    assert updates["GEMINI_API_KEY"] == "sk-fake-gem"
     assert updates["ARCHITECT_LLM_PROVIDER"] == "kiconnect"
     assert updates["REVIEWER_LLM_PROVIDER"] == "kiconnect"
     assert updates["ARCHITECT_LLM_MODEL"] == sa.KICONNECT_DEFAULT_MODEL
     assert updates["REVIEWER_LLM_MODEL"] == sa.KICONNECT_DEFAULT_MODEL
-    # No Gemini-only concept invented for KI Connect.
+    # No Gemini-thinking-level concept invented for KI Connect - only the
+    # credential itself is still required (Clarifier + RAG query embeddings).
     assert updates["ARCHITECT_GEMINI_THINKING_LEVEL"] is None
     assert updates["REVIEWER_GEMINI_THINKING_LEVEL"] is None
+
+
+def test_apply_kiconnect_config_gemini_key_omitted_when_not_given():
+    updates: dict = {}
+    sa.apply_kiconnect_config(updates, existing_env={}, kiconnect_key="sk-fake-ki", gemini_key=None)
+    assert "GEMINI_API_KEY" not in updates  # already-present key left untouched, not blanked
 
 
 def test_apply_kiconnect_config_preserves_custom_model_override():
@@ -105,9 +113,20 @@ def test_detect_existing_provider_google():
     assert sa.detect_existing_provider({"GEMINI_API_KEY": "x"}) == "google"
 
 
-def test_detect_existing_provider_kiconnect():
-    env = {"ARCHITECT_LLM_PROVIDER": "kiconnect", "KICONNECT_API_KEY": "x"}
-    assert sa.detect_existing_provider(env) == "kiconnect"
+def test_detect_existing_provider_kiconnect_requires_both_credentials():
+    complete = {
+        "ARCHITECT_LLM_PROVIDER": "kiconnect",
+        "KICONNECT_API_KEY": "x",
+        "GEMINI_API_KEY": "y",
+    }
+    assert sa.detect_existing_provider(complete) == "kiconnect"
+
+
+def test_detect_existing_provider_kiconnect_incomplete_without_gemini_key():
+    """A KI Connect routing pin with no Gemini key is not a WORKING config -
+    it must not be silently offered as "reuse existing configuration"."""
+    incomplete = {"ARCHITECT_LLM_PROVIDER": "kiconnect", "KICONNECT_API_KEY": "x"}
+    assert sa.detect_existing_provider(incomplete) is None
 
 
 def test_detect_existing_provider_none_when_unconfigured():
@@ -348,10 +367,43 @@ def test_run_setup_valid_rag_never_calls_rebuild(monkeypatch, tmp_path):
     assert rc == 0
 
 
-def test_run_setup_kiconnect_with_valid_rag_never_touches_gemini_key(monkeypatch, tmp_path):
+def test_run_setup_kiconnect_valid_rag_still_requires_gemini_key(monkeypatch, tmp_path):
+    """A valid bundled RAG means no REBUILD is required - it does NOT mean
+    KI Connect can skip Gemini entirely: the Clarifier and RAG query-time
+    embeddings always use Gemini. Non-interactive with no Gemini key
+    available anywhere must fail clearly rather than launch a broken app."""
     monkeypatch.setattr(sa, "check_rag_status", lambda: ("VALID", _fake_manifest()))
     monkeypatch.setattr(sa, "ENV_PATH", tmp_path / ".env")
     env = {"KICONNECT_API_KEY": "existing-ki-key"}  # deliberately NO GEMINI_API_KEY
+    monkeypatch.setattr(sa, "read_env_dict", lambda path=None: env)
+
+    def _boom(*a, **k):
+        raise AssertionError(".env must not be written when setup fails on a missing credential")
+
+    monkeypatch.setattr(sa, "update_env_file", _boom)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    args = sa.build_arg_parser().parse_args(["--provider", "kiconnect", "--setup-only"])
+    rc = sa.run_setup(args, interactive=False)
+
+    assert rc == 1  # fails clearly, does not silently proceed without Gemini
+
+
+def test_run_setup_kiconnect_with_both_credentials_succeeds_and_does_not_rebuild(monkeypatch, tmp_path):
+    def _boom(*a, **k):
+        raise AssertionError("rebuild must not be called when RAG is VALID")
+
+    monkeypatch.setattr(sa, "check_rag_status", lambda: ("VALID", _fake_manifest()))
+    monkeypatch.setattr(sa, "handle_rebuild", _boom)
+    monkeypatch.setattr(sa, "ENV_PATH", tmp_path / ".env")
+    # resolve_credential() checks os.environ BEFORE the (monkeypatched)
+    # existing_env dict, and other tests' load_dotenv() calls can leak the
+    # real developer .env's GEMINI_API_KEY into os.environ for the rest of
+    # the process - delenv both so this test's fixture values are the ones
+    # actually resolved, regardless of run order.
+    monkeypatch.delenv("KICONNECT_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    env = {"KICONNECT_API_KEY": "existing-ki-key", "GEMINI_API_KEY": "existing-gemini-key"}
     monkeypatch.setattr(sa, "read_env_dict", lambda path=None: env)
     captured_updates = {}
     monkeypatch.setattr(
@@ -359,13 +411,94 @@ def test_run_setup_kiconnect_with_valid_rag_never_touches_gemini_key(monkeypatch
         lambda updates, path=None: captured_updates.update(updates),
     )
     monkeypatch.setattr(sa, "prelaunch_checks", lambda root, provider, env: [])
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
     args = sa.build_arg_parser().parse_args(["--provider", "kiconnect", "--setup-only"])
     rc = sa.run_setup(args, interactive=False)
 
     assert rc == 0
-    assert "GEMINI_API_KEY" not in captured_updates
+    # Both already present -> reused silently (same values written back, same
+    # as the existing Gemini-only path's idempotent update behavior).
+    assert captured_updates["KICONNECT_API_KEY"] == "existing-ki-key"
+    assert captured_updates["GEMINI_API_KEY"] == "existing-gemini-key"
+    assert captured_updates["ARCHITECT_LLM_PROVIDER"] == "kiconnect"
+
+
+def test_run_setup_kiconnect_prompts_for_gemini_key_when_only_kiconnect_key_present(monkeypatch, tmp_path):
+    monkeypatch.setattr(sa, "check_rag_status", lambda: ("VALID", _fake_manifest()))
+    monkeypatch.setattr(sa, "ENV_PATH", tmp_path / ".env")
+    monkeypatch.delenv("KICONNECT_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    env = {"KICONNECT_API_KEY": "existing-ki-key"}
+    monkeypatch.setattr(sa, "read_env_dict", lambda path=None: env)
+    captured_updates = {}
+    monkeypatch.setattr(
+        sa, "update_env_file",
+        lambda updates, path=None: captured_updates.update(updates),
+    )
+    monkeypatch.setattr(sa, "prelaunch_checks", lambda root, provider, env: [])
+
+    prompts = []
+
+    def _fake_getpass(prompt=""):
+        prompts.append(prompt)
+        return "typed-gemini-key"
+
+    monkeypatch.setattr(sa.getpass, "getpass", _fake_getpass)
+
+    args = sa.build_arg_parser().parse_args(["--provider", "kiconnect", "--setup-only"])
+    rc = sa.run_setup(args, interactive=True)
+
+    assert rc == 0
+    assert any("Gemini" in p for p in prompts)
+    assert captured_updates["GEMINI_API_KEY"] == "typed-gemini-key"
+
+
+def test_run_setup_kiconnect_prompts_for_kiconnect_key_when_only_gemini_key_present(monkeypatch, tmp_path):
+    monkeypatch.setattr(sa, "check_rag_status", lambda: ("VALID", _fake_manifest()))
+    monkeypatch.setattr(sa, "ENV_PATH", tmp_path / ".env")
+    monkeypatch.delenv("KICONNECT_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    env = {"GEMINI_API_KEY": "existing-gemini-key"}
+    monkeypatch.setattr(sa, "read_env_dict", lambda path=None: env)
+    captured_updates = {}
+    monkeypatch.setattr(
+        sa, "update_env_file",
+        lambda updates, path=None: captured_updates.update(updates),
+    )
+    monkeypatch.setattr(sa, "prelaunch_checks", lambda root, provider, env: [])
+
+    prompts = []
+
+    def _fake_getpass(prompt=""):
+        prompts.append(prompt)
+        return "typed-ki-key"
+
+    monkeypatch.setattr(sa.getpass, "getpass", _fake_getpass)
+
+    args = sa.build_arg_parser().parse_args(["--provider", "kiconnect", "--setup-only"])
+    rc = sa.run_setup(args, interactive=True)
+
+    assert rc == 0
+    assert any("KI Connect" in p for p in prompts)
+    assert captured_updates["KICONNECT_API_KEY"] == "typed-ki-key"
+
+
+def test_run_setup_kiconnect_neither_credential_printed(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(sa, "check_rag_status", lambda: ("VALID", _fake_manifest()))
+    monkeypatch.setattr(sa, "ENV_PATH", tmp_path / ".env")
+    monkeypatch.setattr(sa, "read_env_dict", lambda path=None: {})
+    monkeypatch.delenv("KICONNECT_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr(sa, "update_env_file", lambda updates, path=None: None)
+    monkeypatch.setattr(sa, "prelaunch_checks", lambda root, provider, env: [])
+    monkeypatch.setattr(sa.getpass, "getpass", lambda prompt="": "SUPER_SECRET_VALUE")
+
+    args = sa.build_arg_parser().parse_args(["--provider", "kiconnect", "--setup-only"])
+    rc = sa.run_setup(args, interactive=True)
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "SUPER_SECRET_VALUE" not in out
 
 
 def test_run_setup_stale_rag_non_interactive_continues(monkeypatch, tmp_path):
@@ -490,6 +623,26 @@ def test_prelaunch_checks_flags_missing_credential(tmp_path):
     (tmp_path / "ui.py").write_text("", encoding="utf-8")
     problems = sa.prelaunch_checks(tmp_path, "google", {})
     assert any("GEMINI_API_KEY" in p for p in problems)
+
+
+def test_prelaunch_checks_kiconnect_requires_both_credentials(tmp_path):
+    (tmp_path / "ui.py").write_text("", encoding="utf-8")
+    problems = sa.prelaunch_checks(tmp_path, "kiconnect", {"KICONNECT_API_KEY": "x"})
+    assert any("GEMINI_API_KEY" in p for p in problems)
+
+    problems = sa.prelaunch_checks(tmp_path, "kiconnect", {"GEMINI_API_KEY": "x"})
+    assert any("KICONNECT_API_KEY" in p for p in problems)
+
+
+def test_prelaunch_checks_kiconnect_passes_with_both_credentials(monkeypatch, tmp_path):
+    (tmp_path / "ui.py").write_text("", encoding="utf-8")
+    venv_python = tmp_path / ".venv" / "Scripts" / "python.exe"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_bytes(b"")
+    problems = sa.prelaunch_checks(
+        tmp_path, "kiconnect", {"KICONNECT_API_KEY": "x", "GEMINI_API_KEY": "y"}
+    )
+    assert problems == []
 
 
 def test_prelaunch_checks_passes_with_everything_present(monkeypatch, tmp_path):

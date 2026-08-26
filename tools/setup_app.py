@@ -170,9 +170,20 @@ def report_credential_status(var_name: str, existing_env: dict[str, str]) -> boo
 # PROVIDER CONFIGURATION
 # ──────────────────────────────────────────────
 def detect_existing_provider(env: dict[str, str]) -> str | None:
-    """Which provider (if any) `.env` is currently configured to use."""
+    """Which provider (if any) `.env` is currently FULLY configured to use.
+
+    KI Connect needs BOTH credentials to be a complete, working config
+    (Architect/Reviewer -> KI Connect, but Clarifier + RAG query embeddings
+    always need Gemini) - a KI Connect routing pin without a Gemini key is
+    not reported as "configured", so setup asks for the missing key instead
+    of silently reusing a broken configuration.
+    """
     arch_provider = env.get("ARCHITECT_LLM_PROVIDER", "").strip().lower()
-    if arch_provider == "kiconnect" and env.get("KICONNECT_API_KEY", "").strip():
+    if (
+        arch_provider == "kiconnect"
+        and env.get("KICONNECT_API_KEY", "").strip()
+        and env.get("GEMINI_API_KEY", "").strip()
+    ):
         return "kiconnect"
     if arch_provider in ("", "google") and env.get("GEMINI_API_KEY", "").strip():
         return "google"
@@ -200,10 +211,24 @@ def apply_gemini_config(
 
 
 def apply_kiconnect_config(
-    updates: dict[str, str | None], existing_env: dict[str, str], kiconnect_key: str | None
+    updates: dict[str, str | None],
+    existing_env: dict[str, str],
+    kiconnect_key: str | None,
+    gemini_key: str | None = None,
 ) -> None:
+    """KI Connect redirects ONLY the Architect/Reviewer generation calls
+    (ARCHITECT_LLM_PROVIDER/REVIEWER_LLM_PROVIDER). The Clarifier/advisor
+    (pipeline/agents/clarifier.py: CLARIFIER_MODEL/ADVISOR_MODEL = a bare
+    "flash-lite" registry name, never routed through role_model_override)
+    and every RAG query-time embedding call (architect.get_vectorstore() ->
+    GoogleGenerativeAIEmbeddings, used by every retrieve_chunks() /
+    similarity_search_with_score() call) always go through Gemini regardless
+    of this routing - so a Gemini key is required for KI Connect too, not
+    only for Google."""
     if kiconnect_key:
         updates["KICONNECT_API_KEY"] = kiconnect_key
+    if gemini_key:
+        updates["GEMINI_API_KEY"] = gemini_key
     updates["ARCHITECT_LLM_PROVIDER"] = "kiconnect"
     updates["REVIEWER_LLM_PROVIDER"] = "kiconnect"
     # Preserve an already-configured custom model override; only fill in the
@@ -366,8 +391,15 @@ def prelaunch_checks(repo_root: Path, provider: str | None, env: dict[str, str])
         problems.append(f"no supported runtime provider selected (must be one of {PROVIDERS})")
     elif provider == "google" and not env.get("GEMINI_API_KEY", "").strip():
         problems.append("GEMINI_API_KEY is not set")
-    elif provider == "kiconnect" and not env.get("KICONNECT_API_KEY", "").strip():
-        problems.append("KICONNECT_API_KEY is not set")
+    elif provider == "kiconnect":
+        if not env.get("KICONNECT_API_KEY", "").strip():
+            problems.append("KICONNECT_API_KEY is not set")
+        # KI Connect only redirects Architect/Reviewer generation - the
+        # Clarifier and every RAG query-time embedding call still go through
+        # Gemini (see apply_kiconnect_config's docstring), so a missing
+        # Gemini key is just as fatal here as it is for the Google provider.
+        if not env.get("GEMINI_API_KEY", "").strip():
+            problems.append("GEMINI_API_KEY is not set (still required for the Clarifier and RAG query embeddings)")
 
     return problems
 
@@ -469,18 +501,34 @@ def run_setup(args: argparse.Namespace, *, interactive: bool | None = None) -> i
         print("Architect thinking: HIGH")
         print("Reviewer thinking: HIGH")
     else:
+        # KI Connect only redirects Architect/Reviewer generation. The
+        # Clarifier and every RAG query-time embedding call always go
+        # through Gemini regardless of that routing (see
+        # apply_kiconnect_config's docstring) - so BOTH credentials are
+        # required, not just KICONNECT_API_KEY.
         report_credential_status("KICONNECT_API_KEY", env)
-        key = resolve_credential("KICONNECT_API_KEY", "KI Connect API key", env, interactive)
-        if not key and not credential_present("KICONNECT_API_KEY", env):
+        ki_key = resolve_credential("KICONNECT_API_KEY", "KI Connect API key", env, interactive)
+        if not ki_key and not credential_present("KICONNECT_API_KEY", env):
             print("\nA KI Connect API key is required for the University of Cologne KI Connect provider.")
             return 1
-        apply_kiconnect_config(updates, env, key)
+
+        report_credential_status("GEMINI_API_KEY", env)
+        gem_key = resolve_credential("GEMINI_API_KEY", "Gemini API key", env, interactive)
+        if not gem_key and not credential_present("GEMINI_API_KEY", env):
+            print(
+                "\nA Gemini API key is also required for KI Connect: the Clarifier "
+                "and RAG query embeddings always use Gemini, independent of the "
+                "Architect/Reviewer routing."
+            )
+            return 1
+
+        apply_kiconnect_config(updates, env, ki_key, gem_key)
         update_env_file(updates)
         print("\nRuntime provider: University of Cologne KI Connect")
-        print(
-            "Gemini API key is not required for normal runtime because the "
-            "bundled RAG database is already available."
-        )
+        print()
+        print("KI Connect is used for Architect and Reviewer.")
+        print("A Gemini API key is also required for the Clarifier and RAG query embeddings.")
+        print("The bundled RAG database is already included, so no rebuild is required.")
 
     env = read_env_dict()
     problems = prelaunch_checks(REPO_ROOT, provider, env)
