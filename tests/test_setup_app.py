@@ -87,8 +87,8 @@ def test_apply_kiconnect_config_selects_kiconnect_route():
     assert updates["GEMINI_API_KEY"] == "sk-fake-gem"
     assert updates["ARCHITECT_LLM_PROVIDER"] == "kiconnect"
     assert updates["REVIEWER_LLM_PROVIDER"] == "kiconnect"
-    assert updates["ARCHITECT_LLM_MODEL"] == sa.KICONNECT_DEFAULT_MODEL
-    assert updates["REVIEWER_LLM_MODEL"] == sa.KICONNECT_DEFAULT_MODEL
+    assert updates["ARCHITECT_LLM_MODEL"] == sa.KICONNECT_SETUP_MODEL
+    assert updates["REVIEWER_LLM_MODEL"] == sa.KICONNECT_SETUP_MODEL
     # No Gemini-thinking-level concept invented for KI Connect - only the
     # credential itself is still required (Clarifier + RAG query embeddings).
     assert updates["ARCHITECT_GEMINI_THINKING_LEVEL"] is None
@@ -106,13 +106,13 @@ def test_apply_kiconnect_config_preserves_custom_model_override():
     updates: dict = {}
     sa.apply_kiconnect_config(updates, existing_env=existing, kiconnect_key=None)
     assert "ARCHITECT_LLM_MODEL" not in updates  # left as the user set it
-    assert updates["REVIEWER_LLM_MODEL"] == sa.KICONNECT_DEFAULT_MODEL
+    assert updates["REVIEWER_LLM_MODEL"] == sa.KICONNECT_SETUP_MODEL
 
 
 def test_apply_kiconnect_config_explicit_model_overrides_both_roles_exactly():
-    """An explicit `model=` (from `choose_kiconnect_model`) is the one
-    intentional case where an existing per-role value IS overwritten - the
-    caller already confirmed the new value with the user."""
+    """An explicit `model=` (what `run_setup` always passes, pinned to
+    `KICONNECT_SETUP_MODEL`) is the one intentional case where an existing
+    per-role value IS overwritten - this is the one-click setup path."""
     existing = {
         "ARCHITECT_LLM_MODEL": "old-architect-model",
         "REVIEWER_LLM_MODEL": "old-reviewer-model",
@@ -125,196 +125,23 @@ def test_apply_kiconnect_config_explicit_model_overrides_both_roles_exactly():
     assert updates["REVIEWER_LLM_MODEL"] == "chosen-model-xyz"
 
 
-# ── KI Connect model discovery/selection ────────────────────────────────
+# ── Task 21: KI Connect setup uses one fixed, proven model ──────────────
+#
+# The dynamic model-discovery/selection flow (fetch_kiconnect_models,
+# choose_kiconnect_model, and their menu/fallback UX) has been REMOVED from
+# the professor-facing setup: a real end-to-end run proved
+# "OpenAI GPT OSS 120b KI:Inferenz.nrw" end to end, so the one-click setup
+# now standardizes on it unconditionally - no /models request, no numbered
+# menu, no manual-entry fallback. Generic backend routing
+# (pipeline.llm.role_model_override / apply_kiconnect_config with an
+# explicit model=None) is untouched - a developer can still hand-edit
+# ARCHITECT_LLM_MODEL/REVIEWER_LLM_MODEL to any other KI Connect model.
 
-class _FakeModelsResponse:
-    def __init__(self, body, *, error: Exception | None = None):
-        self._body = body
-        self._error = error
-
-    def raise_for_status(self) -> None:
-        if self._error is not None:
-            raise self._error
-
-    def json(self):
-        return self._body
-
-
-class _FakeGetSession:
-    def __init__(self, response):
-        self.response = response
-        self.calls: list[dict] = []
-
-    def get(self, url: str, **kwargs):
-        self.calls.append({"url": url, **kwargs})
-        return self.response
-
-    def post(self, *a, **k):
-        raise AssertionError("model discovery must never make a POST/generation call")
+def test_kiconnect_setup_model_is_the_proven_gpt_oss_id():
+    assert sa.KICONNECT_SETUP_MODEL == "OpenAI GPT OSS 120b KI:Inferenz.nrw"
 
 
-def test_fetch_kiconnect_models_parses_valid_response(monkeypatch):
-    session = _FakeGetSession(_FakeModelsResponse({"data": [{"id": "b-model"}, {"id": "a-model"}]}))
-    monkeypatch.setattr(sa, "_get_kiconnect_session", lambda: session)
-
-    models = sa.fetch_kiconnect_models("sk-fake-ki", "https://example.test/api/v1")
-
-    assert models == ["a-model", "b-model"]  # deterministically sorted
-
-
-def test_fetch_kiconnect_models_sends_bearer_auth_at_the_models_endpoint(monkeypatch):
-    session = _FakeGetSession(_FakeModelsResponse({"data": [{"id": "m1"}]}))
-    monkeypatch.setattr(sa, "_get_kiconnect_session", lambda: session)
-
-    sa.fetch_kiconnect_models("sk-secret-key", "https://example.test/api/v1/")
-
-    sent = session.calls[0]
-    assert sent["url"] == "https://example.test/api/v1/models"
-    assert sent["headers"]["Authorization"] == "Bearer sk-secret-key"
-    assert sent["timeout"] == sa.KICONNECT_MODEL_LIST_TIMEOUT_SECONDS
-
-
-def test_fetch_kiconnect_models_never_leaks_key_on_failure(monkeypatch):
-    session = _FakeGetSession(_FakeModelsResponse({}, error=RuntimeError("service unavailable, key=sk-secret-key")))
-    monkeypatch.setattr(sa, "_get_kiconnect_session", lambda: session)
-
-    with pytest.raises(sa.ModelDiscoveryError) as exc_info:
-        sa.fetch_kiconnect_models("sk-secret-key", "https://example.test/api/v1")
-
-    assert "sk-secret-key" not in str(exc_info.value)
-
-
-def test_fetch_kiconnect_models_rejects_unexpected_shape(monkeypatch):
-    session = _FakeGetSession(_FakeModelsResponse({"unexpected": "shape"}))
-    monkeypatch.setattr(sa, "_get_kiconnect_session", lambda: session)
-
-    with pytest.raises(sa.ModelDiscoveryError):
-        sa.fetch_kiconnect_models("sk-fake-ki", "https://example.test/api/v1")
-
-
-def test_fetch_kiconnect_models_rejects_empty_list(monkeypatch):
-    session = _FakeGetSession(_FakeModelsResponse({"data": []}))
-    monkeypatch.setattr(sa, "_get_kiconnect_session", lambda: session)
-
-    with pytest.raises(sa.ModelDiscoveryError):
-        sa.fetch_kiconnect_models("sk-fake-ki", "https://example.test/api/v1")
-
-
-def test_choose_kiconnect_model_interactive_discovers_and_selects(monkeypatch):
-    monkeypatch.setattr(sa, "fetch_kiconnect_models", lambda *a, **k: ["model-a", "model-b"])
-    monkeypatch.setattr("builtins.input", lambda prompt="": "2")
-
-    chosen = sa.choose_kiconnect_model({}, "sk-fake-ki", "https://example.test/api/v1", interactive=True)
-
-    assert chosen == "model-b"  # exactly the selected entry, not the first/default
-
-
-def test_choose_kiconnect_model_existing_same_model_reused_without_discovery(monkeypatch):
-    def _boom(*a, **k):
-        raise AssertionError("must not call discovery when reusing an existing model")
-
-    monkeypatch.setattr(sa, "fetch_kiconnect_models", _boom)
-    monkeypatch.setattr("builtins.input", lambda prompt="": "")  # [Enter] = keep existing
-
-    existing = {"ARCHITECT_LLM_MODEL": "same-model", "REVIEWER_LLM_MODEL": "same-model"}
-    chosen = sa.choose_kiconnect_model(existing, "sk-fake-ki", "https://example.test/api/v1", interactive=True)
-
-    assert chosen == "same-model"
-
-
-def test_choose_kiconnect_model_existing_same_model_can_be_changed(monkeypatch):
-    inputs = iter(["c", "1"])  # C = choose another, then pick option 1
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
-    monkeypatch.setattr(sa, "fetch_kiconnect_models", lambda *a, **k: ["new-model"])
-
-    existing = {"ARCHITECT_LLM_MODEL": "old-model", "REVIEWER_LLM_MODEL": "old-model"}
-    chosen = sa.choose_kiconnect_model(existing, "sk-fake-ki", "https://example.test/api/v1", interactive=True)
-
-    assert chosen == "new-model"
-
-
-def test_choose_kiconnect_model_differing_roles_require_explicit_choice(monkeypatch, capsys):
-    monkeypatch.setattr(sa, "fetch_kiconnect_models", lambda *a, **k: ["resolved-model"])
-    monkeypatch.setattr("builtins.input", lambda prompt="": "1")
-
-    existing = {"ARCHITECT_LLM_MODEL": "arch-model", "REVIEWER_LLM_MODEL": "rev-model"}
-    chosen = sa.choose_kiconnect_model(existing, "sk-fake-ki", "https://example.test/api/v1", interactive=True)
-
-    assert chosen == "resolved-model"
-    out = capsys.readouterr().out
-    assert "differ" in out.lower()
-
-
-def test_choose_kiconnect_model_non_interactive_reuses_existing_without_discovery(monkeypatch):
-    def _boom(*a, **k):
-        raise AssertionError("non-interactive must never call discovery")
-
-    monkeypatch.setattr(sa, "fetch_kiconnect_models", _boom)
-    existing = {"ARCHITECT_LLM_MODEL": "x", "REVIEWER_LLM_MODEL": "x"}
-    chosen = sa.choose_kiconnect_model(existing, "sk-fake-ki", "https://example.test/api/v1", interactive=False)
-    assert chosen == "x"
-
-
-def test_choose_kiconnect_model_non_interactive_falls_back_to_documented_default(monkeypatch):
-    def _boom(*a, **k):
-        raise AssertionError("non-interactive must never call discovery")
-
-    monkeypatch.setattr(sa, "fetch_kiconnect_models", _boom)
-    chosen = sa.choose_kiconnect_model({}, "sk-fake-ki", "https://example.test/api/v1", interactive=False)
-    assert chosen == sa.KICONNECT_DEFAULT_MODEL
-
-
-def test_choose_kiconnect_model_non_interactive_differing_roles_left_unresolved(monkeypatch):
-    """No prompting is possible non-interactively, so the ambiguous pair is
-    left for apply_kiconnect_config's own preserve-each-role logic - the
-    caller must pass this None straight through as `model=None`, never
-    invent a pick between the two."""
-    existing = {"ARCHITECT_LLM_MODEL": "arch-model", "REVIEWER_LLM_MODEL": "rev-model"}
-    chosen = sa.choose_kiconnect_model(existing, "sk-fake-ki", "https://example.test/api/v1", interactive=False)
-    assert chosen is None
-
-
-def test_discover_or_manual_reuses_existing_model_on_discovery_failure(monkeypatch):
-    monkeypatch.setattr(sa, "fetch_kiconnect_models", lambda *a, **k: (_ for _ in ()).throw(sa.ModelDiscoveryError("down")))
-    monkeypatch.setattr("builtins.input", lambda prompt="": "")  # [Enter] = keep existing
-
-    chosen = sa._discover_or_manual_kiconnect_model(
-        "sk-fake-ki", "https://example.test/api/v1", existing_model="existing-model",
-    )
-    assert chosen == "existing-model"
-
-
-def test_discover_or_manual_manual_entry_on_discovery_failure(monkeypatch):
-    monkeypatch.setattr(sa, "fetch_kiconnect_models", lambda *a, **k: (_ for _ in ()).throw(sa.ModelDiscoveryError("down")))
-    inputs = iter(["m", "typed-model-id"])
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
-
-    chosen = sa._discover_or_manual_kiconnect_model(
-        "sk-fake-ki", "https://example.test/api/v1", existing_model="existing-model",
-    )
-    assert chosen == "typed-model-id"
-
-
-def test_discover_or_manual_no_existing_model_requires_manual_or_quit(monkeypatch):
-    monkeypatch.setattr(sa, "fetch_kiconnect_models", lambda *a, **k: (_ for _ in ()).throw(sa.ModelDiscoveryError("down")))
-    monkeypatch.setattr("builtins.input", lambda prompt="": "q")
-
-    chosen = sa._discover_or_manual_kiconnect_model(
-        "sk-fake-ki", "https://example.test/api/v1", existing_model=None,
-    )
-    assert chosen is None  # no silent fallback to an unknown default
-
-
-def test_manual_model_id_entry_rejects_blank_and_returns_typed_value(monkeypatch):
-    inputs = iter(["", "   ", "typed-model-id"])
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
-    assert sa._prompt_manual_model_entry() == "typed-model-id"
-
-
-def test_run_setup_kiconnect_writes_selected_model_to_both_roles(monkeypatch, tmp_path):
-    """End-to-end: the model chosen through discovery is written verbatim to
-    BOTH ARCHITECT_LLM_MODEL and REVIEWER_LLM_MODEL, and no generation call
-    is ever made getting there."""
+def test_run_setup_kiconnect_sets_the_fixed_model_for_both_roles(monkeypatch, tmp_path):
     monkeypatch.setattr(sa, "check_rag_status", lambda: ("VALID", _fake_manifest()))
     monkeypatch.setattr(sa, "ENV_PATH", tmp_path / ".env")
     monkeypatch.delenv("KICONNECT_API_KEY", raising=False)
@@ -328,72 +155,137 @@ def test_run_setup_kiconnect_writes_selected_model_to_both_roles(monkeypatch, tm
     )
     monkeypatch.setattr(sa, "prelaunch_checks", lambda root, provider, env: [])
 
-    session = _FakeGetSession(_FakeModelsResponse({"data": [{"id": "picked-model"}, {"id": "other-model"}]}))
-    monkeypatch.setattr(sa, "_get_kiconnect_session", lambda: session)
-    monkeypatch.setattr("builtins.input", lambda prompt="": "2")  # picks "picked-model" (sorted 2nd)
-
-    def _boom_getpass(*a, **k):
-        raise AssertionError("both credentials already resolved from env - must not prompt")
-
-    monkeypatch.setattr(sa.getpass, "getpass", _boom_getpass)
-
     args = sa.build_arg_parser().parse_args(["--provider", "kiconnect", "--setup-only"])
-    rc = sa.run_setup(args, interactive=True)
+    rc = sa.run_setup(args, interactive=False)
 
     assert rc == 0
-    assert captured_updates["ARCHITECT_LLM_MODEL"] == "picked-model"
-    assert captured_updates["REVIEWER_LLM_MODEL"] == "picked-model"
-    # only the read-only /models endpoint was ever hit - no /chat/completions call
-    assert all(c["url"].endswith("/models") for c in session.calls)
+    assert captured_updates["ARCHITECT_LLM_MODEL"] == sa.KICONNECT_SETUP_MODEL
+    assert captured_updates["REVIEWER_LLM_MODEL"] == sa.KICONNECT_SETUP_MODEL
 
 
-def test_run_setup_kiconnect_quit_during_model_selection_aborts_without_writing_env(monkeypatch, tmp_path):
+def test_run_setup_kiconnect_replaces_an_existing_different_model(monkeypatch, tmp_path, capsys):
+    """An older .env with a different KI Connect model is intentionally
+    standardized to the tested professor model - no second confirmation
+    prompt, just a concise, non-secret notice."""
+    monkeypatch.setattr(sa, "check_rag_status", lambda: ("VALID", _fake_manifest()))
+    monkeypatch.setattr(sa, "ENV_PATH", tmp_path / ".env")
+    monkeypatch.delenv("KICONNECT_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    env = {
+        "KICONNECT_API_KEY": "existing-ki-key",
+        "GEMINI_API_KEY": "existing-gemini-key",
+        "ARCHITECT_LLM_MODEL": "some-other-previously-configured-model",
+        "REVIEWER_LLM_MODEL": "some-other-previously-configured-model",
+    }
+    monkeypatch.setattr(sa, "read_env_dict", lambda path=None: env)
+    captured_updates = {}
+    monkeypatch.setattr(
+        sa, "update_env_file",
+        lambda updates, path=None: captured_updates.update(updates),
+    )
+    monkeypatch.setattr(sa, "prelaunch_checks", lambda root, provider, env: [])
+
+    args = sa.build_arg_parser().parse_args(["--provider", "kiconnect", "--setup-only"])
+    rc = sa.run_setup(args, interactive=False)
+
+    assert rc == 0
+    assert captured_updates["ARCHITECT_LLM_MODEL"] == sa.KICONNECT_SETUP_MODEL
+    assert captured_updates["REVIEWER_LLM_MODEL"] == sa.KICONNECT_SETUP_MODEL
+    out = capsys.readouterr().out
+    assert "will be replaced" in out.lower()
+    assert "some-other-previously-configured-model" not in out  # non-secret, but not dumped either
+
+
+def test_run_setup_kiconnect_no_replacement_notice_when_nothing_configured(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(sa, "check_rag_status", lambda: ("VALID", _fake_manifest()))
     monkeypatch.setattr(sa, "ENV_PATH", tmp_path / ".env")
     monkeypatch.delenv("KICONNECT_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     env = {"KICONNECT_API_KEY": "existing-ki-key", "GEMINI_API_KEY": "existing-gemini-key"}
     monkeypatch.setattr(sa, "read_env_dict", lambda path=None: env)
+    monkeypatch.setattr(sa, "update_env_file", lambda updates, path=None: None)
+    monkeypatch.setattr(sa, "prelaunch_checks", lambda root, provider, env: [])
 
-    def _boom(*a, **k):
-        raise AssertionError(".env must not be written when the user quits model selection")
+    args = sa.build_arg_parser().parse_args(["--provider", "kiconnect", "--setup-only"])
+    rc = sa.run_setup(args, interactive=False)
 
-    monkeypatch.setattr(sa, "update_env_file", _boom)
-    monkeypatch.setattr(
-        sa, "fetch_kiconnect_models",
-        lambda *a, **k: (_ for _ in ()).throw(sa.ModelDiscoveryError("down")),
-    )
-    monkeypatch.setattr("builtins.input", lambda prompt="": "q")
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "will be replaced" not in out.lower()
+
+
+def test_run_setup_kiconnect_no_model_menu_or_manual_entry_prompt(monkeypatch, tmp_path, capsys):
+    """No numbered model list, no manual-entry prompt, no /models fallback
+    text ever appears - and no `input()` call happens at all once both
+    credentials are already present, proving the menu is really gone."""
+    monkeypatch.setattr(sa, "check_rag_status", lambda: ("VALID", _fake_manifest()))
+    monkeypatch.setattr(sa, "ENV_PATH", tmp_path / ".env")
+    monkeypatch.delenv("KICONNECT_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    env = {"KICONNECT_API_KEY": "existing-ki-key", "GEMINI_API_KEY": "existing-gemini-key"}
+    monkeypatch.setattr(sa, "read_env_dict", lambda path=None: env)
+    monkeypatch.setattr(sa, "update_env_file", lambda updates, path=None: None)
+    monkeypatch.setattr(sa, "prelaunch_checks", lambda root, provider, env: [])
+
+    def _boom_input(prompt=""):
+        raise AssertionError("no interactive prompt should be needed - both credentials are present and there is no model menu")
+
+    monkeypatch.setattr("builtins.input", _boom_input)
 
     args = sa.build_arg_parser().parse_args(["--provider", "kiconnect", "--setup-only"])
     rc = sa.run_setup(args, interactive=True)
 
-    assert rc == 1  # no silent fallback to an unconfirmed model
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Available KI Connect models" not in out
+    assert "Choose model" not in out
+    assert "Enter a KI Connect model ID" not in out
+    assert "Could not retrieve the KI Connect model list" not in out
+    assert "KI Connect model:" in out
+    assert sa.KICONNECT_SETUP_MODEL in out
 
 
-def test_gemini_setup_path_never_touches_kiconnect_model_selection(monkeypatch, tmp_path):
+def test_run_setup_kiconnect_makes_no_network_call(monkeypatch, tmp_path):
+    """No /models discovery, no generation, no embedding call - the
+    professor-facing KI Connect setup path is fully offline once
+    credentials resolve from the environment/.env."""
+    import requests
+
+    def _boom(*a, **k):
+        raise AssertionError("setup must not make any network request")
+
+    monkeypatch.setattr(requests.Session, "request", _boom)
+    monkeypatch.setattr(requests.Session, "get", _boom)
+    monkeypatch.setattr(requests.Session, "post", _boom)
+
     monkeypatch.setattr(sa, "check_rag_status", lambda: ("VALID", _fake_manifest()))
     monkeypatch.setattr(sa, "ENV_PATH", tmp_path / ".env")
-    monkeypatch.setattr(sa, "read_env_dict", lambda path=None: {"GEMINI_API_KEY": "x"})
+    monkeypatch.delenv("KICONNECT_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    env = {"KICONNECT_API_KEY": "existing-ki-key", "GEMINI_API_KEY": "existing-gemini-key"}
+    monkeypatch.setattr(sa, "read_env_dict", lambda path=None: env)
     monkeypatch.setattr(sa, "update_env_file", lambda updates, path=None: None)
     monkeypatch.setattr(sa, "prelaunch_checks", lambda root, provider, env: [])
 
-    def _boom(*a, **k):
-        raise AssertionError("Gemini setup must never call KI Connect model discovery")
+    args = sa.build_arg_parser().parse_args(["--provider", "kiconnect", "--setup-only"])
+    rc = sa.run_setup(args, interactive=False)
 
-    monkeypatch.setattr(sa, "choose_kiconnect_model", _boom)
-    monkeypatch.setattr(sa, "fetch_kiconnect_models", _boom)
-
-    args = sa.build_arg_parser().parse_args(["--provider", "google", "--setup-only"])
-    assert sa.run_setup(args, interactive=False) == 0
+    assert rc == 0
 
 
-def test_resolved_kiconnect_base_url_prefers_process_env_then_dotenv_then_default(monkeypatch):
-    monkeypatch.delenv("KICONNECT_BASE_URL", raising=False)
-    assert sa.resolved_kiconnect_base_url({}) == sa.KICONNECT_DEFAULT_BASE_URL
-    assert sa.resolved_kiconnect_base_url({"KICONNECT_BASE_URL": "https://from-dotenv/v1"}) == "https://from-dotenv/v1"
-    monkeypatch.setenv("KICONNECT_BASE_URL", "https://from-process-env/v1")
-    assert sa.resolved_kiconnect_base_url({"KICONNECT_BASE_URL": "https://from-dotenv/v1"}) == "https://from-process-env/v1"
+def test_backend_role_model_override_accepts_a_different_kiconnect_model(monkeypatch):
+    """Advanced/manual `.env` configuration remains fully generic: backend
+    routing (pipeline.llm) has no awareness of KICONNECT_SETUP_MODEL and
+    never enforces it - a developer can still point Architect/Reviewer at
+    any other KI Connect model independently of the setup default."""
+    from pipeline.llm import role_model_override
+
+    monkeypatch.setenv("ARCHITECT_LLM_PROVIDER", "kiconnect")
+    monkeypatch.setenv("ARCHITECT_LLM_MODEL", "Some Other KI Connect Model")
+
+    assert role_model_override("architect", "flash-lite") == (
+        "kiconnect/Some Other KI Connect Model"
+    )
 
 
 def test_detect_existing_provider_google():
@@ -708,6 +600,8 @@ def test_run_setup_kiconnect_with_both_credentials_succeeds_and_does_not_rebuild
     assert captured_updates["KICONNECT_API_KEY"] == "existing-ki-key"
     assert captured_updates["GEMINI_API_KEY"] == "existing-gemini-key"
     assert captured_updates["ARCHITECT_LLM_PROVIDER"] == "kiconnect"
+    assert captured_updates["ARCHITECT_LLM_MODEL"] == sa.KICONNECT_SETUP_MODEL
+    assert captured_updates["REVIEWER_LLM_MODEL"] == sa.KICONNECT_SETUP_MODEL
 
 
 def test_run_setup_kiconnect_prompts_for_gemini_key_when_only_kiconnect_key_present(monkeypatch, tmp_path):
@@ -731,9 +625,6 @@ def test_run_setup_kiconnect_prompts_for_gemini_key_when_only_kiconnect_key_pres
         return "typed-gemini-key"
 
     monkeypatch.setattr(sa.getpass, "getpass", _fake_getpass)
-    # Model selection is exercised by its own dedicated tests below; this
-    # test is only about credential prompting, so keep it offline.
-    monkeypatch.setattr(sa, "choose_kiconnect_model", lambda *a, **k: sa.KICONNECT_DEFAULT_MODEL)
 
     args = sa.build_arg_parser().parse_args(["--provider", "kiconnect", "--setup-only"])
     rc = sa.run_setup(args, interactive=True)
@@ -764,7 +655,6 @@ def test_run_setup_kiconnect_prompts_for_kiconnect_key_when_only_gemini_key_pres
         return "typed-ki-key"
 
     monkeypatch.setattr(sa.getpass, "getpass", _fake_getpass)
-    monkeypatch.setattr(sa, "choose_kiconnect_model", lambda *a, **k: sa.KICONNECT_DEFAULT_MODEL)
 
     args = sa.build_arg_parser().parse_args(["--provider", "kiconnect", "--setup-only"])
     rc = sa.run_setup(args, interactive=True)
@@ -784,21 +674,12 @@ def test_run_setup_kiconnect_neither_credential_printed(monkeypatch, tmp_path, c
     monkeypatch.setattr(sa, "prelaunch_checks", lambda root, provider, env: [])
     monkeypatch.setattr(sa.getpass, "getpass", lambda prompt="": "SUPER_SECRET_VALUE")
 
-    received_keys = []
-
-    def _fake_choose_model(existing_env, api_key, base_url, interactive):
-        received_keys.append(api_key)
-        return sa.KICONNECT_DEFAULT_MODEL
-
-    monkeypatch.setattr(sa, "choose_kiconnect_model", _fake_choose_model)
-
     args = sa.build_arg_parser().parse_args(["--provider", "kiconnect", "--setup-only"])
     rc = sa.run_setup(args, interactive=True)
 
     assert rc == 0
     out = capsys.readouterr().out
     assert "SUPER_SECRET_VALUE" not in out
-    assert received_keys == ["SUPER_SECRET_VALUE"]  # the resolved key did reach model selection...
 
 
 def test_run_setup_stale_rag_non_interactive_continues(monkeypatch, tmp_path):

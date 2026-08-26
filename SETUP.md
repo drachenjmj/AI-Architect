@@ -25,15 +25,17 @@ always builds a `GoogleGenerativeAIEmbeddings` client for every retrieval).
 So setup requires **both** `KICONNECT_API_KEY` and `GEMINI_API_KEY` before a
 KI Connect configuration is considered complete.
 
-**KI Connect setup also asks which model to use.** The evaluator picks the
-concrete model that both the Architect and the Reviewer will run — setup
-fetches the current model list from KI Connect's model-list endpoint and
-presents it as a numbered choice (falling back to reusing an already
-configured model, or manual entry, if that request fails). The chosen model
-ID is written verbatim to `ARCHITECT_LLM_MODEL` and `REVIEWER_LLM_MODEL` in
-`.env`; the model shown in the KI Connect web UI is not automatically what
-the API uses. Re-running setup with an already-configured model offers to
-keep it without a new discovery request. See "KI Connect A/B routing" in
+**University of Cologne KI Connect uses the tested `OpenAI GPT OSS 120b
+KI:Inferenz.nrw` model for Architect and Reviewer in the one-click setup** —
+proven end to end in a real run, so setup writes it automatically to both
+`ARCHITECT_LLM_MODEL` and `REVIEWER_LLM_MODEL` in `.env` with no model list
+to choose from and no `/models` discovery request. If an older `.env`
+already names a different KI Connect model for either role, setup replaces
+it with the tested one and says so (no secret is ever shown). A developer
+who wants a different KI Connect model can still set `ARCHITECT_LLM_MODEL`
+/ `REVIEWER_LLM_MODEL` by hand afterward — the backend routing in
+`pipeline/llm.py` is fully generic and has no awareness of the setup
+default. See "KI Connect A/B routing" in
 [pipeline/LLM_MODULE.md](pipeline/LLM_MODULE.md).
 
 The bundled RAG database (`chroma_db/`) ships with the repo and is validated,
