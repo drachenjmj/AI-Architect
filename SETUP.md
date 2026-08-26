@@ -25,6 +25,17 @@ always builds a `GoogleGenerativeAIEmbeddings` client for every retrieval).
 So setup requires **both** `KICONNECT_API_KEY` and `GEMINI_API_KEY` before a
 KI Connect configuration is considered complete.
 
+**KI Connect setup also asks which model to use.** The evaluator picks the
+concrete model that both the Architect and the Reviewer will run — setup
+fetches the current model list from KI Connect's model-list endpoint and
+presents it as a numbered choice (falling back to reusing an already
+configured model, or manual entry, if that request fails). The chosen model
+ID is written verbatim to `ARCHITECT_LLM_MODEL` and `REVIEWER_LLM_MODEL` in
+`.env`; the model shown in the KI Connect web UI is not automatically what
+the API uses. Re-running setup with an already-configured model offers to
+keep it without a new discovery request. See "KI Connect A/B routing" in
+[pipeline/LLM_MODULE.md](pipeline/LLM_MODULE.md).
+
 The bundled RAG database (`chroma_db/`) ships with the repo and is validated,
 never rebuilt, by a normal setup — no API key is spent doing so. Rebuilding
 is optional, always uses Gemini embeddings regardless of runtime provider,

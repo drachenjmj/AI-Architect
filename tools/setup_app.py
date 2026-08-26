@@ -37,8 +37,15 @@ ENV_PATH = REPO_ROOT / ".env"
 ENV_EXAMPLE_PATH = REPO_ROOT / ".env.example"
 
 # The runtime-provider identifiers this repo actually supports, read from the
-# single existing source of truth rather than duplicated here.
-from pipeline.llm import PROVIDERS  # noqa: E402 - after REPO_ROOT/local setup above
+# single existing source of truth rather than duplicated here. The base URL
+# and the cached HTTP session are reused too, so setup's model-list request
+# uses the exact same endpoint/auth-style/connection pooling as a real
+# generation call, without duplicating the KI Connect client.
+from pipeline.llm import (  # noqa: E402 - after REPO_ROOT/local setup above
+    KICONNECT_DEFAULT_BASE_URL,
+    PROVIDERS,
+    _get_kiconnect_session,
+)
 
 PROVIDER_LABELS: dict[str, str] = {
     "google": "Google Gemini",
@@ -47,8 +54,13 @@ PROVIDER_LABELS: dict[str, str] = {
 
 GEMINI_THINKING_HIGH = "high"
 # Matches the commented default in .env.example - reused verbatim rather than
-# invented, per the "use existing defaults" setup policy.
+# invented, per the "use existing defaults" setup policy. Offered as an
+# explicit fallback choice only - live discovery is always preferred.
 KICONNECT_DEFAULT_MODEL = "OpenAI GPT OSS 120b KI:Inferenz.nrw"
+
+# Short timeout for the read-only model-list request - this is metadata, not
+# a generation call, so it must never sit on the 180s generation timeout.
+KICONNECT_MODEL_LIST_TIMEOUT_SECONDS = 10.0
 
 # The ONLY .env keys this setup tool is allowed to add/change/remove. Every
 # other line (comments, unrelated settings) is preserved byte-for-byte.
@@ -215,6 +227,7 @@ def apply_kiconnect_config(
     existing_env: dict[str, str],
     kiconnect_key: str | None,
     gemini_key: str | None = None,
+    model: str | None = None,
 ) -> None:
     """KI Connect redirects ONLY the Architect/Reviewer generation calls
     (ARCHITECT_LLM_PROVIDER/REVIEWER_LLM_PROVIDER). The Clarifier/advisor
@@ -224,19 +237,32 @@ def apply_kiconnect_config(
     GoogleGenerativeAIEmbeddings, used by every retrieve_chunks() /
     similarity_search_with_score() call) always go through Gemini regardless
     of this routing - so a Gemini key is required for KI Connect too, not
-    only for Google."""
+    only for Google.
+
+    `model`, when given, is the EXACT model ID an explicit choice resolved
+    (see `choose_kiconnect_model`) and is written to BOTH roles verbatim -
+    the one intentional case where an existing per-role value is overwritten,
+    because the caller already confirmed the new value with the user. When
+    omitted (the default), the previous per-role behavior is unchanged: an
+    already-configured override survives and only an unset role is filled
+    with the repository's documented default.
+    """
     if kiconnect_key:
         updates["KICONNECT_API_KEY"] = kiconnect_key
     if gemini_key:
         updates["GEMINI_API_KEY"] = gemini_key
     updates["ARCHITECT_LLM_PROVIDER"] = "kiconnect"
     updates["REVIEWER_LLM_PROVIDER"] = "kiconnect"
-    # Preserve an already-configured custom model override; only fill in the
-    # repository's documented default when nothing is set yet.
-    if not existing_env.get("ARCHITECT_LLM_MODEL", "").strip():
-        updates["ARCHITECT_LLM_MODEL"] = KICONNECT_DEFAULT_MODEL
-    if not existing_env.get("REVIEWER_LLM_MODEL", "").strip():
-        updates["REVIEWER_LLM_MODEL"] = KICONNECT_DEFAULT_MODEL
+    if model is not None:
+        updates["ARCHITECT_LLM_MODEL"] = model
+        updates["REVIEWER_LLM_MODEL"] = model
+    else:
+        # Preserve an already-configured custom model override; only fill in
+        # the repository's documented default when nothing is set yet.
+        if not existing_env.get("ARCHITECT_LLM_MODEL", "").strip():
+            updates["ARCHITECT_LLM_MODEL"] = KICONNECT_DEFAULT_MODEL
+        if not existing_env.get("REVIEWER_LLM_MODEL", "").strip():
+            updates["REVIEWER_LLM_MODEL"] = KICONNECT_DEFAULT_MODEL
     # Gemini thinking level is a Google-only seam - never combined with KI
     # Connect routing (see .env.example / pipeline/llm.py).
     updates["ARCHITECT_GEMINI_THINKING_LEVEL"] = None
@@ -244,6 +270,176 @@ def apply_kiconnect_config(
     # KICONNECT_BASE_URL / MAX_TOKENS / TIMEOUT_SECONDS deliberately untouched:
     # pipeline/llm.py already has repository defaults for all three, and the
     # setup policy is to never ask for values that already have a good default.
+
+
+# ──────────────────────────────────────────────
+# KI CONNECT MODEL SELECTION (read-only discovery, never a generation call)
+# ──────────────────────────────────────────────
+class ModelDiscoveryError(RuntimeError):
+    """The KI Connect model-list request failed or returned nothing usable.
+
+    Deliberately generic: the message shown to the user never includes the
+    underlying transport exception, so a URL/response detail can never carry
+    a credential into a log or terminal.
+    """
+
+
+def resolved_kiconnect_base_url(existing_env: dict[str, str]) -> str:
+    """The KI Connect base URL this run would use - same precedence as
+    `pipeline.llm._kiconnect_settings` (process env, then `.env`, then the
+    repository default), without requiring KICONNECT_MAX_TOKENS/TIMEOUT to
+    already be valid just to look up a model list."""
+    return (
+        os.environ.get("KICONNECT_BASE_URL", "").strip()
+        or existing_env.get("KICONNECT_BASE_URL", "").strip()
+        or KICONNECT_DEFAULT_BASE_URL
+    )
+
+
+def fetch_kiconnect_models(
+    api_key: str,
+    base_url: str,
+    *,
+    timeout: float = KICONNECT_MODEL_LIST_TIMEOUT_SECONDS,
+) -> list[str]:
+    """Deterministically sorted model IDs from KI Connect's model-list
+    endpoint (`GET {base_url}/models`, OpenAI-compatible `{"data": [...]}`).
+
+    Read-only metadata request - same bearer-token auth style as
+    `pipeline.llm`'s generation calls, but never a generation/completion
+    request itself. Raises `ModelDiscoveryError` on any network failure,
+    non-2xx response, or a response shape without usable model IDs; the key
+    is sent only in the Authorization header and never appears in that error.
+    """
+    try:
+        resp = _get_kiconnect_session().get(
+            f"{base_url.rstrip('/')}/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        raise ModelDiscoveryError("KI Connect model-list request failed.") from exc
+
+    items = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        raise ModelDiscoveryError(
+            "KI Connect model-list response had an unexpected shape."
+        )
+    model_ids = sorted({
+        item["id"].strip()
+        for item in items
+        if isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"].strip()
+    })
+    if not model_ids:
+        raise ModelDiscoveryError("KI Connect model list was empty.")
+    return model_ids
+
+
+def _prompt_model_selection(models: list[str]) -> str:
+    print("\nAvailable KI Connect models:\n")
+    for i, model_id in enumerate(models, start=1):
+        print(f"  [{i}] {model_id}")
+    while True:
+        choice = input("\nChoose model: ").strip()
+        if choice.isdigit() and 1 <= int(choice) <= len(models):
+            return models[int(choice) - 1]
+        print(f"Please enter a number between 1 and {len(models)}.")
+
+
+def _prompt_manual_model_entry() -> str:
+    while True:
+        value = input("Enter KI Connect model ID: ").strip()
+        if value:
+            return value
+        print("Model ID cannot be empty.")
+
+
+def _discover_or_manual_kiconnect_model(
+    api_key: str, base_url: str, *, existing_model: str | None,
+) -> str | None:
+    """Live discovery, degrading to the documented fallback UX on failure.
+
+    Returns the chosen model ID, or None only if the user explicitly quit.
+    """
+    try:
+        models = fetch_kiconnect_models(api_key, base_url)
+    except ModelDiscoveryError:
+        if existing_model:
+            print("\nCould not refresh the KI Connect model list.")
+            print(f"Existing configured model: {existing_model}")
+            print("\n[Enter] Keep existing model")
+            print("[M]     Enter a model ID manually")
+            print("[Q]     Quit")
+            choice = input("Selection: ").strip().lower()
+            if choice == "q":
+                return None
+            if choice == "m":
+                return _prompt_manual_model_entry()
+            return existing_model
+        print("\nCould not retrieve the KI Connect model list.")
+        print("\n[M] Enter a KI Connect model ID manually")
+        print("[Q] Quit")
+        choice = input("Selection: ").strip().lower()
+        if choice == "m":
+            return _prompt_manual_model_entry()
+        return None
+    return _prompt_model_selection(models)
+
+
+def choose_kiconnect_model(
+    existing_env: dict[str, str],
+    api_key: str,
+    base_url: str,
+    interactive: bool,
+) -> str | None:
+    """The exact KI Connect model ID Architect+Reviewer will use this run.
+
+    Non-interactive (no network call, no prompt - discovery/selection is an
+    interactive-only feature so an unattended/CI run stays deterministic and
+    offline): a single already-configured shared model is reused as-is; with
+    nothing configured, the repository's documented default is returned.
+    A DIFFERING Architect/Reviewer pair cannot be resolved without asking, so
+    this returns None - the caller must then leave `model=None` and let
+    `apply_kiconnect_config`'s own per-role preserve logic keep each value
+    exactly as it was, per "never silently collapse them".
+
+    Interactive: offers live discovery + numbered selection; an existing
+    single shared model can be kept with [Enter] (no discovery call); a
+    differing pair forces an explicit choice; discovery failure degrades to
+    the "keep existing / enter manually / quit" fallback UX. Returns None
+    only when the user explicitly quit - the caller must then abort setup
+    rather than launch with an unconfirmed model.
+    """
+    arch_model = existing_env.get("ARCHITECT_LLM_MODEL", "").strip()
+    rev_model = existing_env.get("REVIEWER_LLM_MODEL", "").strip()
+    differing = bool(arch_model) and bool(rev_model) and arch_model != rev_model
+    shared_existing = arch_model if arch_model == rev_model else (arch_model or rev_model or None)
+
+    if not interactive:
+        if differing:
+            return None
+        return shared_existing or KICONNECT_DEFAULT_MODEL
+
+    if differing:
+        print("\nExisting Architect and Reviewer models differ.")
+        print("The one-click setup uses one shared model for both roles.")
+        print("Choose the model to use for this setup.")
+        return _discover_or_manual_kiconnect_model(api_key, base_url, existing_model=None)
+
+    if shared_existing:
+        print(f"\nExisting KI Connect model: {shared_existing}")
+        print("[Enter] Keep existing model")
+        print("[C]     Choose another model")
+        choice = input("Selection: ").strip().lower()
+        if choice != "c":
+            return shared_existing
+        return _discover_or_manual_kiconnect_model(
+            api_key, base_url, existing_model=shared_existing
+        )
+
+    return _discover_or_manual_kiconnect_model(api_key, base_url, existing_model=None)
 
 
 def resolve_provider(args: argparse.Namespace, env: dict[str, str], interactive: bool) -> str | None:
@@ -522,13 +718,25 @@ def run_setup(args: argparse.Namespace, *, interactive: bool | None = None) -> i
             )
             return 1
 
-        apply_kiconnect_config(updates, env, ki_key, gem_key)
-        update_env_file(updates)
-        print("\nRuntime provider: University of Cologne KI Connect")
         print()
         print("KI Connect is used for Architect and Reviewer.")
-        print("A Gemini API key is also required for the Clarifier and RAG query embeddings.")
+        print("Gemini remains required for the Clarifier and RAG query embeddings.")
+
+        model = choose_kiconnect_model(
+            env, ki_key, resolved_kiconnect_base_url(env), interactive,
+        )
+        if interactive and model is None:
+            print("\nNo KI Connect model selected - aborting setup.")
+            return 1
+
+        apply_kiconnect_config(updates, env, ki_key, gem_key, model=model)
+        update_env_file(updates)
+        final_arch_model = updates.get("ARCHITECT_LLM_MODEL", env.get("ARCHITECT_LLM_MODEL", "").strip())
+        final_rev_model = updates.get("REVIEWER_LLM_MODEL", env.get("REVIEWER_LLM_MODEL", "").strip())
+        print("\nRuntime provider: University of Cologne KI Connect")
         print("The bundled RAG database is already included, so no rebuild is required.")
+        print(f"\nArchitect model: {final_arch_model}")
+        print(f"Reviewer model:  {final_rev_model}")
 
     env = read_env_dict()
     problems = prelaunch_checks(REPO_ROOT, provider, env)

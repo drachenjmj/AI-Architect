@@ -14,14 +14,22 @@ and Component Descriptions — grounded in a curated knowledge base via RAG.
 4. Enter the requested credential(s) when prompted — a Gemini API key for
    Gemini, or both a KI Connect key and a Gemini key for KI Connect (see
    below). Nothing is ever displayed or logged; both are saved locally in
-   the git-ignored `.env`.
+   the git-ignored `.env`. For KI Connect, setup also lets you pick the
+   concrete model (fetched live from KI Connect where possible) that the
+   Architect and Reviewer will run — see below.
 5. The AI-Architect UI opens automatically in your browser.
 
 Gemini runtime automatically sets the Architect and Reviewer to `HIGH`
 thinking. KI Connect redirects only the Architect and Reviewer generation
 calls — the Clarifier and every RAG query-time embedding call always use
 Gemini regardless of runtime provider, so **a Gemini API key is required
-for both providers**, not only Gemini. The bundled `chroma_db/` knowledge
+for both providers**, not only Gemini. Choosing KI Connect also requires
+picking the exact model the Architect and Reviewer will run: setup fetches
+the current list of available models from KI Connect and asks you to choose
+one, so a run never silently uses whatever happens to be configured or
+default — the model shown in the KI Connect web UI is not automatically what
+the API uses; only the model ID saved to `.env` (`ARCHITECT_LLM_MODEL` /
+`REVIEWER_LLM_MODEL`) controls that. The bundled `chroma_db/` knowledge
 base is included and validated offline on every launch — a normal start
 never rebuilds it and never spends an API call doing so. Rebuilding is
 optional and always uses Gemini embeddings (`models/gemini-embedding-2`),
