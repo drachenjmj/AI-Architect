@@ -242,6 +242,42 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def canonicalize_markdown_text(text: str) -> str:
+    """Normalize line-ending representation ONLY (CRLF/CR -> LF).
+
+    Does not strip whitespace, alter Unicode, normalize headings, touch
+    trailing spaces, or add/remove a final newline - the only thing this
+    changes is how a newline is spelled, so two checkouts of the exact same
+    logical Markdown content canonicalize to the exact same string even when
+    Git rewrote LF -> CRLF on checkout (core.autocrlf=true, the Windows
+    default).
+    """
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def source_sha256(path: Path) -> str:
+    """Canonical SHA-256 for one ACTIVE RAG source file.
+
+    The single hash function used by both manifest generation
+    (build_manifest) and offline validation (validate_offline) - so the two
+    can never independently drift.
+
+    Markdown (.md) is hashed as canonicalized UTF-8 TEXT (line endings
+    normalized via canonicalize_markdown_text): a Windows checkout with
+    core.autocrlf=true rewrites LF -> CRLF on checkout, and raw-byte hashing
+    would then see every text source as "changed" despite identical logical
+    content - exactly the false STALE this function exists to prevent.
+    Every other active source type (currently only .pdf) is hashed as exact
+    raw bytes via sha256_file(): PDFs are binary and must never be
+    text-normalized.
+    """
+    if path.suffix.lower() == ".md":
+        text = path.read_text(encoding="utf-8")
+        canonical = canonicalize_markdown_text(text)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return sha256_file(path)
+
+
 def build_manifest(plan: ChunkPlan) -> dict:
     """Deterministic manifest dict: no timestamp, no machine path, no key."""
     sources_manifest = []
@@ -249,7 +285,7 @@ def build_manifest(plan: ChunkPlan) -> dict:
         rel = relative_source_path(path)
         sources_manifest.append({
             "path": rel,
-            "sha256": sha256_file(path),
+            "sha256": source_sha256(path),
             "box": box,
             "chunk_count": plan.per_source_chunk_count.get(rel, 0),
         })
@@ -349,7 +385,7 @@ def validate_offline(chroma_dir: Path = CHROMA_DIR) -> ValidationResult:
         if not src_path.is_file():
             result.fail(f"MISSING: source listed in manifest not found on disk: {entry['path']}")
             continue
-        actual_hash = sha256_file(src_path)
+        actual_hash = source_sha256(src_path)
         if actual_hash != entry.get("sha256"):
             result.fail(f"STALE: source hash changed since last rebuild: {entry['path']}")
 

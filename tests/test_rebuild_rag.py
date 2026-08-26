@@ -162,6 +162,185 @@ def test_sha256_file_matches_hashlib(tmp_path):
     assert rr.sha256_file(f) == hashlib.sha256(b"hello world").hexdigest()
 
 
+# ── canonical cross-platform source hashing (source_sha256) ────────────────
+# core.autocrlf=true (the Windows default) rewrites LF -> CRLF on checkout,
+# so a fresh Windows clone's Markdown files are byte-different from the same
+# logical content checked out on macOS/Linux (or edited directly on a
+# machine that never re-checked them out). Raw-byte hashing would then see
+# every text source as "changed" and report a false STALE. source_sha256()
+# exists specifically to make that impossible for .md sources while still
+# hashing binary PDFs exactly as before.
+
+_MD_SAMPLE_LF = "# Title\n\nSome body text.\n\n- item one\n- item two\n"
+
+
+def test_markdown_hash_identical_for_lf_crlf_cr(tmp_path):
+    lf = tmp_path / "lf.md"
+    crlf = tmp_path / "crlf.md"
+    cr = tmp_path / "cr.md"
+    lf.write_bytes(_MD_SAMPLE_LF.encode("utf-8"))
+    crlf.write_bytes(_MD_SAMPLE_LF.replace("\n", "\r\n").encode("utf-8"))
+    cr.write_bytes(_MD_SAMPLE_LF.replace("\n", "\r").encode("utf-8"))
+
+    h_lf = rr.source_sha256(lf)
+    h_crlf = rr.source_sha256(crlf)
+    h_cr = rr.source_sha256(cr)
+
+    assert h_lf == h_crlf == h_cr
+
+
+def test_markdown_hash_changes_on_real_textual_change(tmp_path):
+    a = tmp_path / "a.md"
+    b = tmp_path / "b.md"
+    a.write_text(_MD_SAMPLE_LF, encoding="utf-8")
+    b.write_text(_MD_SAMPLE_LF.replace("Some body text.", "Some OTHER body text."), encoding="utf-8")
+    assert rr.source_sha256(a) != rr.source_sha256(b)
+
+
+def test_markdown_hash_changes_on_trailing_space_change(tmp_path):
+    a = tmp_path / "a.md"
+    b = tmp_path / "b.md"
+    a.write_text(_MD_SAMPLE_LF, encoding="utf-8")
+    b.write_text(_MD_SAMPLE_LF.replace("item one\n", "item one \n"), encoding="utf-8")
+    assert rr.source_sha256(a) != rr.source_sha256(b)
+
+
+def test_markdown_hash_changes_on_missing_final_newline():
+    """A missing/extra trailing newline is a REAL content difference (a
+    different number of logical lines), not a newline-ENCODING difference -
+    it must still change the hash even though only newline canonicalization
+    is applied."""
+    with_nl = rr.canonicalize_markdown_text(_MD_SAMPLE_LF)
+    without_nl = rr.canonicalize_markdown_text(_MD_SAMPLE_LF.rstrip("\n"))
+    assert with_nl != without_nl
+
+
+def test_markdown_hash_is_deterministic_for_unicode_content(tmp_path):
+    # write_bytes(), not write_text(): Path.write_text()'s default universal-
+    # newline mode translates \n -> os.linesep on WRITE on Windows, which
+    # would silently re-normalize the deliberately-CRLF fixture back toward
+    # the host's own newline style and defeat the point of this test.
+    text = "# Café façade\n\n你好，世界。\n\n- Ångström\n"
+    a = tmp_path / "a.md"
+    b = tmp_path / "b.md"
+    a.write_bytes(text.encode("utf-8"))
+    b.write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
+    assert rr.source_sha256(a) == rr.source_sha256(b) == rr.source_sha256(a)
+
+
+def test_markdown_hash_does_not_depend_on_machine_path(tmp_path):
+    dir_a = tmp_path / "dir_a" / "nested"
+    dir_b = tmp_path / "totally" / "different" / "path"
+    dir_a.mkdir(parents=True)
+    dir_b.mkdir(parents=True)
+    (dir_a / "same.md").write_text(_MD_SAMPLE_LF, encoding="utf-8")
+    (dir_b / "same.md").write_text(_MD_SAMPLE_LF, encoding="utf-8")
+    assert rr.source_sha256(dir_a / "same.md") == rr.source_sha256(dir_b / "same.md")
+
+
+def test_canonicalize_markdown_text_only_touches_newlines():
+    text = "line one  \nline two\r\nline three\r\n\r\ntrailing blank above\n"
+    canonical = rr.canonicalize_markdown_text(text)
+    assert "\r" not in canonical
+    assert canonical == "line one  \nline two\nline three\n\ntrailing blank above\n"
+    # trailing spaces on "line one" are untouched by canonicalization
+    assert "line one  \n" in canonical
+
+
+# ── PDF hashing: raw bytes, no text normalization ───────────────────────────
+
+def test_pdf_hash_identical_bytes_identical_hash(tmp_path):
+    data = b"%PDF-1.4\r\nfake binary content\r\nwith embedded CRLF bytes\r\n%%EOF"
+    a = tmp_path / "a.pdf"
+    b = tmp_path / "b.pdf"
+    a.write_bytes(data)
+    b.write_bytes(data)
+    assert rr.source_sha256(a) == rr.source_sha256(b)
+
+
+def test_pdf_hash_one_changed_byte_changes_hash(tmp_path):
+    data = bytearray(b"%PDF-1.4\r\nfake binary content\r\n%%EOF")
+    a = tmp_path / "a.pdf"
+    a.write_bytes(bytes(data))
+    data[20] ^= 0xFF
+    b = tmp_path / "b.pdf"
+    b.write_bytes(bytes(data))
+    assert rr.source_sha256(a) != rr.source_sha256(b)
+
+
+def test_pdf_hash_no_newline_normalization(tmp_path):
+    """A .pdf containing CRLF byte sequences must hash as raw bytes, exactly
+    like sha256_file() - unlike .md, nothing is ever canonicalized."""
+    data = b"%PDF-1.4\r\nsome bytes\r\nthat happen to look like CRLF text\r\n%%EOF"
+    p = tmp_path / "sample.pdf"
+    p.write_bytes(data)
+    assert rr.source_sha256(p) == rr.sha256_file(p)
+    # And explicitly NOT equal to what the .md canonicalization path would
+    # produce for the same bytes decoded as text.
+    canonical_as_if_text = rr.canonicalize_markdown_text(data.decode("utf-8")).encode("utf-8")
+    import hashlib
+    assert rr.source_sha256(p) != hashlib.sha256(canonical_as_if_text).hexdigest()
+
+
+# ── manifest / validator regression against a CRLF checkout simulation ─────
+#
+# Fully isolated from the real Rag Database/ and chroma_db/: REPO_ROOT and
+# discover_sources() are monkeypatched to a synthetic tmp_path fixture built
+# with the real Strategy-A layout, then run through the REAL
+# build_chunk_plan()/build_manifest()/validate_offline() pipeline - no test
+# here ever opens a file under the real repository tree.
+
+def _isolated_md_fixture(tmp_path, monkeypatch, text=_MD_SAMPLE_LF):
+    """One box1_patterns/*.md source under an isolated tmp "repo root",
+    wired so build_chunk_plan()/build_manifest()/validate_offline() (which
+    reads REPO_ROOT and calls discover_sources() with no arguments) resolve
+    entirely inside tmp_path."""
+    repo_root = tmp_path / "fake_repo"
+    data_dir = repo_root / "Rag Database"
+    (data_dir / "box1_patterns").mkdir(parents=True)
+    md_path = data_dir / "box1_patterns" / "sample.md"
+    md_path.write_text(text, encoding="utf-8")
+
+    monkeypatch.setattr(rr, "REPO_ROOT", repo_root)
+    # discover_sources() is called with NO arguments inside validate_offline
+    # (its "data_dir: Path = DATA_DIR" default was already bound to the REAL
+    # DATA_DIR at import time, so patching rr.DATA_DIR alone would not
+    # retroactively change it) - replace the function itself instead.
+    monkeypatch.setattr(rr, "discover_sources", lambda data_dir=None: [(md_path, 1)])
+    return data_dir, md_path
+
+
+def test_validate_offline_tolerates_crlf_checkout_of_same_markdown(tmp_path, monkeypatch):
+    """Simulates PHASE 6's scenario end-to-end through the real validator:
+    build a manifest from LF source, rewrite ONLY the isolated tmp copy
+    (never the real Rag Database/) to CRLF, and confirm validation still
+    reports VALID."""
+    data_dir, md_path = _isolated_md_fixture(tmp_path, monkeypatch)
+    plan = rr.build_chunk_plan(data_dir=data_dir)
+    manifest = rr.build_manifest(plan)
+    chroma_dir = _fake_chroma_dir(tmp_path, manifest)
+
+    # Simulate a fresh Windows checkout (core.autocrlf=true: LF -> CRLF).
+    text = md_path.read_text(encoding="utf-8")
+    md_path.write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
+
+    result = rr.validate_offline(chroma_dir)
+    assert result.ok, result.messages
+
+
+def test_validate_offline_still_detects_real_content_change(tmp_path, monkeypatch):
+    data_dir, md_path = _isolated_md_fixture(tmp_path, monkeypatch)
+    plan = rr.build_chunk_plan(data_dir=data_dir)
+    manifest = rr.build_manifest(plan)
+    chroma_dir = _fake_chroma_dir(tmp_path, manifest)
+
+    md_path.write_text(_MD_SAMPLE_LF + "AN ACTUAL CONTENT CHANGE, NOT JUST A NEWLINE STYLE\n", encoding="utf-8")
+
+    result = rr.validate_offline(chroma_dir)
+    assert not result.ok
+    assert any("hash changed" in m for m in result.messages)
+
+
 def test_build_manifest_is_deterministic(real_plan):
     m1 = rr.build_manifest(real_plan)
     m2 = rr.build_manifest(real_plan)
@@ -192,7 +371,7 @@ def test_manifest_schema_and_hashes(real_plan):
     assert manifest["source_count"] == 11
     assert manifest["box_counts"] == {"1": 440, "2": 63}
     for entry in manifest["sources"]:
-        actual = rr.sha256_file(REPO_ROOT / entry["path"])
+        actual = rr.source_sha256(REPO_ROOT / entry["path"])
         assert entry["sha256"] == actual
 
 
