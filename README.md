@@ -130,16 +130,28 @@ flat, domain-prefixed naming convention (`ecommerce_*.md`; a future domain
 would be e.g. `healthcare_*.md`) — no code change needed. Scanned/image-only
 PDFs (no extractable text) fail with a clear error; OCR is not supported.
 
-Provenance: prepared Markdown keeps `source=<filename>` metadata and the
-original PDF page boundaries inline as `---` separators, but the Markdown
-loader sets `page=0` — exact original page numbers are not reconstructed as
-chunk metadata (direct PDF ingestion via PyPDFLoader still has per-page
-metadata). Acceptable for the prototype.
+Safety: an existing output `.md` is **never silently replaced** — most of
+`Rag Database/box1_patterns/` and `box2_domain/` is hand-curated (condensed,
+re-structured, citation-annotated excerpts, not raw conversions), so a rerun
+refuses and exits non-zero if the target file already exists. Pass
+`--overwrite` to replace one intentionally. The file is written atomically
+(temp file + rename), so a failed run never leaves a partial `.md` behind.
+
+Provenance: prepared Markdown is prefixed with a `Source PDF: <filename>`
+header identifying the originating PDF, and keeps `source=<filename>`
+metadata plus the original PDF page boundaries inline as `---` separators,
+but the Markdown loader sets `page=0` — exact original page numbers are not
+reconstructed as chunk metadata (direct PDF ingestion via PyPDFLoader still
+has per-page metadata). Acceptable for the prototype.
 
 2. **Review the prepared `.md` by hand** — nothing becomes permanent KB
-   content unseen.
+   content unseen. Treat it as a first draft: most existing Box 1/2 sources
+   are curated, condensed excerpts of the raw conversion, not the raw
+   conversion itself.
 3. **Rebuild the index** by rerunning `notebooks/Rag_Setup.ipynb` (chunks at
    1000/200, embeds with the configured model, persists to `chroma_db/`).
+   This is a separate, manual step — running `pdf_to_md.py` never touches
+   `chroma_db/` on its own.
 
 When Box 1/2 cannot answer a query, Box 3 performs a grounded web search and
 the gap plus its candidate sources are logged. Recurring gaps and their
