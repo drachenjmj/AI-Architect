@@ -223,6 +223,10 @@ __marimo__/
 rag_log.jsonl
 architect.db
 
+# Transient RAG rebuild staging/backup directories (tools/rebuild_rag.py)
+/.chroma_db_rebuild_staging/
+/.chroma_db_rebuild_backup/
+
 # Local E2E analysis artifacts (kept on disk for the report, never committed)
 /final_run.json
 /final_contract_diff.txt

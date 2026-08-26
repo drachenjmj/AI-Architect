@@ -106,11 +106,14 @@ pipeline/
   agents/          base class + one file per agent
 eval/              development-only labeled evaluation harness
 architect.py       single-agent prototype (reference for prompt + RAG wiring)
-Rag Database/      curated knowledge base: box1_patterns/ (general architecture),
-                   box2_domain/ (8 curated e-commerce sources), raw_source_archive/
-                   (unindexed raw upstream material), plus 2 AWS whitepapers in the
-                   root (box 1). Web-search grounding (box 3) is the live fallback in
-                   architect.py when the KB has no usable match. See docs/setup_report.md.
+Rag Database/      curated knowledge base. Only two folders are ever indexed:
+                   box1_patterns/ (general architecture: 2 AWS whitepaper PDFs +
+                   curated Markdown) and box2_domain/ (8 curated e-commerce
+                   Markdown sources). raw_source_archive/ is unindexed raw
+                   upstream material, kept for audit only. Web-search grounding
+                   (box 3) is the live fallback in architect.py when the KB has
+                   no usable match. See docs/setup_report.md.
+tools/rebuild_rag.py  canonical RAG rebuild pipeline (see REBUILD_RAG.bat below)
 ```
 
 ### KB maintenance workflow (PDF → Markdown → KB)
@@ -148,10 +151,27 @@ has per-page metadata). Acceptable for the prototype.
    content unseen. Treat it as a first draft: most existing Box 1/2 sources
    are curated, condensed excerpts of the raw conversion, not the raw
    conversion itself.
-3. **Rebuild the index** by rerunning `notebooks/Rag_Setup.ipynb` (chunks at
-   1000/200, embeds with the configured model, persists to `chroma_db/`).
-   This is a separate, manual step — running `pdf_to_md.py` never touches
-   `chroma_db/` on its own.
+3. **Rebuild the index** with the canonical rebuild pipeline:
+
+   ```powershell
+   .\REBUILD_RAG.bat                # Windows one-click
+   python -m tools.rebuild_rag      # direct CLI
+   ```
+
+   The bundled `chroma_db/` is included in the repo and normally needs no
+   rebuild — this step is only needed after adding/changing a source. It is
+   a safe, staged rebuild (chunks at 1000/200, embeds with
+   `models/gemini-embedding-2`, builds into a throwaway staging directory,
+   validates the result, then swaps it in) — a failure at any point leaves
+   `chroma_db/` exactly as it was. It requires a Gemini API key (from
+   `.env` or an interactive prompt) because embeddings always go through
+   Gemini, even on a KI Connect run — KI Connect is a runtime choice for the
+   Architect/Reviewer LLM calls, not a substitute for the Gemini embedding
+   endpoint used to build the KB. `python -m tools.rebuild_rag
+   --validate-only` checks the installed index offline (no API key, no
+   network). `notebooks/Rag_Setup.ipynb` remains as a read-only inspection
+   notebook only. This is a separate, manual step — running `pdf_to_md.py`
+   never touches `chroma_db/` on its own.
 
 When Box 1/2 cannot answer a query, Box 3 performs a grounded web search and
 the gap plus its candidate sources are logged. Recurring gaps and their

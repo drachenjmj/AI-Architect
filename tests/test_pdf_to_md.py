@@ -275,25 +275,17 @@ def test_single_bad_page_does_not_drop_the_document(tmp_path):
 
 
 def test_ingestion_constants_are_pinned():
-    """The accepted chunking/retrieval design lives in
-    notebooks/Rag_Setup.ipynb. This parses the notebook source (offline, no
-    execution) and pins the values this workflow must NOT change: chunk
+    """The accepted chunking/retrieval design now lives in the canonical
+    rebuild module tools/rebuild_rag.py (notebooks/Rag_Setup.ipynb is a
+    read-only inspection notebook that imports these same constants, so
+    pinning them here is equivalent and does not depend on notebook JSON
+    structure). This pins the values this workflow must NOT change: chunk
     size/overlap and the Box folder mapping."""
-    import json
-    from pathlib import Path
+    from tools import rebuild_rag
 
-    nb = json.loads(
-        (Path(__file__).resolve().parents[1] / "notebooks" / "Rag_Setup.ipynb")
-        .read_text(encoding="utf-8")
-    )
-    src = "\n".join("".join(c["source"]) for c in nb["cells"])
-
-    assert "chunk_size = 1000" in src.replace(", ", " = ").replace(
-        "chunk_size=1000", "chunk_size = 1000"
-    ) or "chunk_size = 1000" in src or "chunk_size=1000" in src
-    assert "chunk_overlap = 200" in src or "chunk_overlap=200" in src
-    assert '"box1_patterns": 1' in src
-    assert '"box2_domain": 2' in src
+    assert rebuild_rag.CHUNK_SIZE == 1000
+    assert rebuild_rag.CHUNK_OVERLAP == 200
+    assert rebuild_rag.BOX_DIRS == {"box1_patterns": 1, "box2_domain": 2}
 
 
 # ── safe-rebuild hardening: overwrite protection, atomic write, provenance ─

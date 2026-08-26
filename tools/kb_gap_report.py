@@ -10,7 +10,7 @@ the candidate Box-3 sources recorded on the matching fallback events
 those candidates and may manually add a suitable source to Box 1
 (`Rag Database/box1_patterns/`) or the relevant Box-2 domain
 (`Rag Database/box2_domain/`), then rebuilds the KB through the normal
-ingestion path (notebooks/Rag_Setup.ipynb).
+ingestion path (REBUILD_RAG.bat or `python -m tools.rebuild_rag`).
 
 THE INTENDED MAINTENANCE WORKFLOW (nothing here is automatic):
     1. Box 1/2 cannot answer a query sufficiently.

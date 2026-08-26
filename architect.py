@@ -144,14 +144,14 @@ def get_vectorstore():
         except Exception as e:
             raise RuntimeError(
                 f"Chroma index at '{CHROMA_DIR}' could not be read ({e}). "
-                "Run notebooks/Rag_Setup.ipynb to build the "
-                "knowledge base first."
+                "Run REBUILD_RAG.bat (or `python -m tools.rebuild_rag`) to "
+                "build the knowledge base first."
             ) from e
         if vector_count == 0:
             raise RuntimeError(
                 f"Chroma index at '{CHROMA_DIR}' contains 0 vectors — the "
-                "knowledge base is empty. Run notebooks/Rag_Setup.ipynb "
-                "to build chroma_db/ before querying."
+                "knowledge base is empty. Run REBUILD_RAG.bat (or "
+                "`python -m tools.rebuild_rag`) to build chroma_db/ before querying."
             )
         _vectorstore = store
     return _vectorstore
