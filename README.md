@@ -5,6 +5,25 @@ constraints in natural language, it produces a Context Record, an Architecture
 Blueprint (stakeholder + technical views), Architecture Decision Records (ADRs),
 and Component Descriptions — grounded in a curated knowledge base via RAG.
 
+## Quick Start on Windows
+
+1. Download or clone the repository.
+2. Double-click `SETUP_AND_RUN.bat`.
+3. Choose Google Gemini (recommended, works outside the university) or
+   University of Cologne KI Connect (requires University of Cologne access).
+4. Enter the requested credential when prompted — it is never displayed or
+   logged, and is saved locally in the git-ignored `.env`.
+5. The AI-Architect UI opens automatically in your browser.
+
+Gemini runtime automatically sets the Architect and Reviewer to `HIGH`
+thinking. The bundled `chroma_db/` knowledge base is included and validated
+offline on every launch — a normal start never rebuilds it and never spends
+an API call doing so. Rebuilding is optional and always uses Gemini
+embeddings (`models/gemini-embedding-2`), regardless of which runtime
+provider you chose, via its own one-click entry point: `REBUILD_RAG.bat` (see
+[tools/rebuild_rag.py](tools/rebuild_rag.py)). Manual setup remains available
+— see [SETUP.md](SETUP.md).
+
 ## How it works
 
 A single shared state object travels through a pipeline of specialised agents.

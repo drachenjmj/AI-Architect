@@ -1,5 +1,28 @@
 # Environment Setup
 
+## One-click (Windows, recommended for a professor/evaluator)
+
+Double-click `SETUP_AND_RUN.bat` from the repository root. It detects or
+offers to install Python 3.12 (via `winget`, user-level, no admin required),
+creates `.venv`, installs the pinned `requirements.txt`, offline-validates
+the bundled RAG database, walks you through choosing **Google Gemini**
+(recommended — works outside the university) or **University of Cologne KI
+Connect** (requires University of Cologne access), securely collects only
+the credential still missing, and launches the Streamlit UI in your browser.
+Gemini runtime sets the Architect and Reviewer to `HIGH` thinking
+automatically. Re-running it later reuses the saved `.env` configuration
+without asking again. See [tools/setup_app.py](tools/setup_app.py) for the
+underlying logic (`python -m tools.setup_app --help` for advanced flags —
+`--provider`, `--setup-only`/`--no-launch`).
+
+The bundled RAG database (`chroma_db/`) ships with the repo and is validated,
+never rebuilt, by a normal setup — no API key is spent doing so. Rebuilding
+is optional, always uses Gemini embeddings regardless of runtime provider,
+and has its own one-click entry point: `REBUILD_RAG.bat` (or
+`python -m tools.rebuild_rag`).
+
+## Manual setup (all platforms)
+
 Everyone runs the **same Python and the same pinned packages** so the repo behaves
 identically on every machine. Two files guarantee this:
 
@@ -57,7 +80,8 @@ environment variables. Not required for a standard setup.
 
 **5. Run**
 ```bash
-python -m pipeline.run      # run the pipeline end to end
+streamlit run ui.py         # the AI-Architect web UI (what SETUP_AND_RUN.bat launches)
+python -m pipeline.run      # or: run the pipeline end to end from the terminal
 ```
 (The old single-agent prototype is still runnable with `streamlit run app.py`.)
 
