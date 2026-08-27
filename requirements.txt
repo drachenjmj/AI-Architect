@@ -59,6 +59,8 @@ colorama==0.4.6
     #   typer
 cryptography==50.0.0
     # via google-auth
+defusedxml==0.7.1
+    # via fpdf2
 distro==1.9.0
     # via
     #   google-genai
@@ -71,6 +73,10 @@ filetype==1.2.0
     # via langchain-google-genai
 flatbuffers==25.12.19
     # via onnxruntime
+fonttools==4.63.0
+    # via fpdf2
+fpdf2==2.8.8
+    # via -r requirements.in
 frozenlist==1.8.0
     # via
     #   aiohttp
@@ -282,7 +288,9 @@ pandas==3.0.5
     #   -r requirements.in
     #   streamlit
 pillow==12.3.0
-    # via streamlit
+    # via
+    #   fpdf2
+    #   streamlit
 pluggy==1.6.0
     # via pytest
 propcache==0.5.2
@@ -373,6 +381,7 @@ referencing==0.37.0
     #   jsonschema-specifications
 requests==2.34.2
     # via
+    #   -r requirements.in
     #   google-api-core
     #   google-auth
     #   google-genai

@@ -174,7 +174,7 @@ from pipeline.persistence import CheckpointError, list_runs, load_state, save_st
 from pipeline.refine_gate import begin_user_round
 from pipeline.repo_analysis import is_repo_url
 from pipeline.state import ArchitectState, PendingDecision, Stage, new_run
-from pipeline import sign_off, user_feedback
+from pipeline import reporting, sign_off, user_feedback
 from webapp.ui_sections import (
     BCG_DARK as _BCG_DARK,
     BCG_GREEN as _BCG_GREEN,
@@ -187,6 +187,7 @@ from webapp.ui_sections import (
     render_context_approval,
     render_optional_context,
     render_user_rounds,
+    set_report_generation_feedback,
 )
 from webapp.ui_workspace import (
     render_pending_feedback_panel,
@@ -339,6 +340,14 @@ def _sign_off(state: ArchitectState, note: str) -> None:
     Feedback sends the run back into the graph; a sign-off ends it. There is
     nothing to stream, no node to visit and no token to spend — the state is
     checkpointed and the page simply redraws in its accepted form.
+
+    THE FINAL REPORT IS GENERATED RIGHT AFTER, NEVER BEFORE. Acceptance is
+    the trigger `pipeline.reporting` is documented to require — see
+    `build_report`'s guard on `Stage.ACCEPTED` — so the export call sits here
+    and nowhere upstream of `accept_design`. A failed export never undoes or
+    hides a valid human sign-off: the acceptance above is already
+    checkpointed by the time `generate_reports` runs, and any failure is only
+    recorded for the report panel to show, via `set_report_generation_feedback`.
     """
     sign_off.accept_design(state, note=note)
     # The pipeline checkpoints on every graph transition, and this is not one.
@@ -346,6 +355,21 @@ def _sign_off(state: ArchitectState, note: str) -> None:
     # acceptance that only existed in `st.session_state` would be the one fact
     # in the run that a refresh could erase.
     save_state(state)
+    result = reporting.generate_reports(state)
+    set_report_generation_feedback(state.run_id, result)
+    st.rerun()
+
+
+def _regenerate_report(state: ArchitectState) -> None:
+    """REACT half of the report (re)generate/retry button.
+
+    Idempotent: `generate_reports` always fully re-renders both files from
+    the CURRENT accepted state and atomically replaces this run's own report
+    artifacts, so retrying after a partial failure is always safe and never
+    leaves a stale mix of an old file and a new one.
+    """
+    result = reporting.generate_reports(state)
+    set_report_generation_feedback(state.run_id, result)
     st.rerun()
 
 
@@ -939,6 +963,8 @@ else:
             st.rerun()
         elif intents.sign_off is not None:
             _sign_off(state, intents.sign_off[1])
+        elif intents.regenerate_report:
+            _regenerate_report(state)
 
     # 5. Failed? → say so plainly, with the recorded errors.
     elif state.stage is Stage.FAILED:

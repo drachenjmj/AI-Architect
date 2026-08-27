@@ -113,6 +113,8 @@ from webapp.ui_sections import (
     render_migration_approach,
     render_migration_steps,
     render_objections,
+    render_report_downloads,
+    render_report_downloads_readonly,
     render_repo_analysis,
     render_review_confidence,
     render_review_report,
@@ -205,6 +207,10 @@ class WorkspaceIntents:
     question: str | None = None
     sign_off: tuple[str, str] | None = None
     chat_question: str | None = None
+    # True when the human asked to (re)generate the final Markdown/PDF report
+    # from `render_report_downloads` — the Overview view only, and only once
+    # accepted. ui.py performs it through `pipeline.reporting.generate_reports`.
+    regenerate_report: bool = False
 
 
 # Which workspace view contributed which kind of pending feedback, for the
@@ -469,7 +475,7 @@ def _render_needs_attention(state: ArchitectState) -> None:
     st.divider()
 
 
-def _render_overview_view(state: ArchitectState) -> tuple[str, str] | None:
+def _render_overview_view(state: ArchitectState, intents: WorkspaceIntents) -> None:
     """The CLIENT-FACING ANSWER, scannable top to bottom.
 
     Reading order is the order a client asks: what do we recommend and why
@@ -478,7 +484,8 @@ def _render_overview_view(state: ArchitectState) -> tuple[str, str] | None:
     decided, what it consists of, what the risks are, whether it passed —
     and only then the large Target architecture visualization, which would
     otherwise dominate the first screenful. The sign-off stays last: it
-    acts on the whole picture above it.
+    acts on the whole picture above it, and the report panel — the final
+    deliverable — comes after acceptance exists to deliver.
 
     Every section is existing artifact text, assembled deterministically
     (the renderers live in ui_sections beside this note). What is
@@ -490,6 +497,12 @@ def _render_overview_view(state: ArchitectState) -> tuple[str, str] | None:
     A Migration Approach section renders from the Blueprint's STRUCTURED
     `migration_steps` only, silent when absent: prose mentions of
     "incremental" work were never a sequence, and are not rendered as one.
+
+    Takes `intents` rather than returning a single value: this view now
+    produces TWO possible actions (sign-off, report regeneration) and writing
+    straight onto the shared `WorkspaceIntents` — the same object every other
+    view's single intent lands on — keeps the dispatcher a plain call, one
+    line per view, exactly like `Architecture` and `Chat` below it.
     """
 
     _render_needs_attention(state)           # real pending actions only, or nothing
@@ -505,7 +518,8 @@ def _render_overview_view(state: ArchitectState) -> tuple[str, str] | None:
     _nav_link("View validation & findings →", "Review", "ov_link_validation")
     render_target_architecture(state)        # B. the large visual, below the verdict
     render_acceptance(state)                 # I. the acceptance record, when it exists
-    return render_sign_off(state)            # I. the client action, when still valid
+    intents.sign_off = render_sign_off(state)          # I. the client action, when still valid
+    intents.regenerate_report = render_report_downloads(state)  # J. the final deliverable
 
 
 def _render_run_details_view(state: ArchitectState) -> None:
@@ -788,6 +802,9 @@ def _render_historical_overview(state: ArchitectState) -> None:
     render_blocking_findings(state)
     render_key_risks(state)
     # NOT render_sign_off: history cannot accept anything.
+    # NOT render_report_downloads: that one offers a (re)generate button,
+    # which would write into a run History has no business touching.
+    render_report_downloads_readonly(state)
 
 
 def _render_historical_context(state: ArchitectState) -> None:
@@ -1002,6 +1019,6 @@ def render_workspace_view(
         # as an intent; ui.py performs the ONE answer call.
         intents.chat_question = _render_chat_view(state)
     else:  # Overview — the default and the fallback
-        intents.sign_off = _render_overview_view(state)
+        _render_overview_view(state, intents)
 
     return intents

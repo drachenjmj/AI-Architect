@@ -81,6 +81,18 @@ None of it ever enters an agent prompt. The Reviewer grades artifacts, not
 intentions; a waived finding is not a solved one; and the Architect never reads
 its own objections back. That is asserted in `test_sign_off.py`, not trusted.
 
+## Final report — Markdown and PDF, from the accepted design
+
+Once a design is accepted, AI-Architect generates a final architecture report
+as both Markdown and PDF, downloadable from the workspace and, later, from
+History (`pipeline/reporting.py`). Both files are rendered from the same
+canonical, deterministic model built out of the accepted run's own
+artifacts — no LLM call and no network call happen while generating a report,
+so the two formats can never say different things about the same run. A FAIL
+verdict, an open finding, or a knowledge-base evidence gap stays visible in
+the report exactly as it stood at sign-off: acceptance means a person took
+the design, not that the record forgets what it was taken despite.
+
 ## Reviewer quality gate
 
 Reviewer rubric v3 separates checks by who can evaluate them reliably:

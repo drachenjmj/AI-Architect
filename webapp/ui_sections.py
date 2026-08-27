@@ -80,6 +80,7 @@ from pipeline.refine_gate import (
     MAX_USER_ROUNDS,
 )
 from pipeline.flow_syntax import classify_flow, split_directional_flow
+from pipeline import reporting
 from pipeline.sign_off import (
     feedback_is_closed,
     open_findings,
@@ -2127,6 +2128,136 @@ def render_acceptance(state: ArchitectState) -> None:
         )
     if waiver.note:
         st.caption(f"Note: {waiver.note}")
+
+
+# Session key for the one-shot generation error banner — see
+# `render_report_downloads`. Set by ui.py right after a `generate_reports`
+# call that did not fully succeed; read here, keyed by run id so a stale
+# error from a PREVIOUS run's failed export can never bleed onto this one.
+_REPORT_FEEDBACK_KEY = "report_generation_feedback"
+
+
+def set_report_generation_feedback(run_id: str, result: "reporting.ReportGenerationResult") -> None:
+    """Record the outcome of one `generate_reports` call for the NEXT redraw.
+
+    Called by ui.py right after sign-off or a regenerate click — never here,
+    since this module only draws. A fully successful result clears any
+    stale banner rather than storing empty strings that would just render as
+    nothing anyway; a partial or total failure is kept until the next
+    generation attempt supersedes it.
+    """
+    if result.ok:
+        st.session_state.pop(_REPORT_FEEDBACK_KEY, None)
+        return
+    st.session_state[_REPORT_FEEDBACK_KEY] = {
+        "run_id": run_id,
+        "markdown_error": result.markdown_error,
+        "pdf_error": result.pdf_error,
+    }
+
+
+def render_report_downloads(state: ArchitectState) -> bool:
+    """The final-report panel: Markdown + PDF downloads, once accepted.
+
+    Returns True when the human asked to (re)generate the report — ui.py
+    performs it through `pipeline.reporting.generate_reports`, the same
+    intent/perform split every other action on this screen uses. Silent
+    before acceptance: `pipeline.reporting.build_report` refuses to run
+    against a design nobody has taken yet, so there is nothing to offer.
+
+    The two files are independent: one missing or failed does not hide the
+    other, and the button is labelled "Retry" rather than "Regenerate" only
+    when something still needs it — regenerating always re-renders BOTH from
+    the current accepted state, never just the missing one, so the two files
+    can never drift onto different renders of the same run.
+    """
+    if state.stage is not Stage.ACCEPTED:
+        return False
+
+    md_path, pdf_path = reporting.report_paths(state.run_id)
+    feedback = st.session_state.get(_REPORT_FEEDBACK_KEY) or {}
+    md_error = pdf_error = ""
+    if feedback.get("run_id") == state.run_id:
+        md_error = str(feedback.get("markdown_error") or "")
+        pdf_error = str(feedback.get("pdf_error") or "")
+
+    st.markdown("##### 📄  Final architecture report")
+
+    if md_path is None and pdf_path is None and not (md_error or pdf_error):
+        st.caption("No report has been generated yet for this accepted run.")
+        return st.button("Generate report", key="report_generate_btn")
+
+    left, right = st.columns(2)
+    with left:
+        if md_path is not None:
+            st.download_button(
+                "⬇ Download Markdown",
+                data=md_path.read_bytes(),
+                file_name=reporting.REPORT_MD_NAME,
+                mime="text/markdown",
+                use_container_width=True,
+            )
+        else:
+            st.caption("Markdown unavailable" + (f": {md_error}" if md_error else "."))
+    with right:
+        if pdf_path is not None:
+            st.download_button(
+                "⬇ Download PDF",
+                data=pdf_path.read_bytes(),
+                file_name=reporting.REPORT_PDF_NAME,
+                mime="application/pdf",
+                use_container_width=True,
+            )
+        else:
+            st.caption("PDF unavailable" + (f": {pdf_error}" if pdf_error else "."))
+
+    label = "Regenerate report" if (md_path and pdf_path) else "Retry report generation"
+    return st.button(label, key="report_regenerate_btn")
+
+
+def render_report_downloads_readonly(state: ArchitectState) -> None:
+    """The History cut of `render_report_downloads`: downloads only, never a
+    (re)generate button. History never writes (see run_history.py) — a run
+    accepted before this feature existed simply says so, rather than
+    silently mutating a historical run to backfill a report for it.
+    """
+    if state.stage is not Stage.ACCEPTED:
+        return
+
+    md_path, pdf_path = reporting.report_paths(state.run_id)
+    st.markdown("##### 📄  Final architecture report")
+    if md_path is None and pdf_path is None:
+        st.caption(
+            "No report was generated for this run — it may predate this "
+            "feature. Re-run and accept again to produce one."
+        )
+        return
+
+    left, right = st.columns(2)
+    with left:
+        if md_path is not None:
+            st.download_button(
+                "⬇ Download Markdown",
+                data=md_path.read_bytes(),
+                file_name=reporting.REPORT_MD_NAME,
+                mime="text/markdown",
+                use_container_width=True,
+                key="history_report_md_btn",
+            )
+        else:
+            st.caption("Markdown report not available for this run.")
+    with right:
+        if pdf_path is not None:
+            st.download_button(
+                "⬇ Download PDF",
+                data=pdf_path.read_bytes(),
+                file_name=reporting.REPORT_PDF_NAME,
+                mime="application/pdf",
+                use_container_width=True,
+                key="history_report_pdf_btn",
+            )
+        else:
+            st.caption("PDF report not available for this run.")
 
 
 def render_features(state: ArchitectState) -> None:
