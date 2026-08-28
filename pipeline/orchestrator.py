@@ -20,18 +20,21 @@ ONE PAUSE STAGE, ONE DISCRIMINATOR
 There is exactly one human-in-the-loop stage, `AWAITING_HUMAN`, and
 `state.pending_decision` says which decision is owed. `_route` does not read the
 discriminator at all — every kind of pause ends the invocation the same way —
-and `_entry_route` reads it only to REFUSE one case (see below). That is the
-whole cost of adding a human touchpoint to this file: nothing, plus one refusal.
-A new `AWAITING_*` stage per interaction would instead have made the stage enum
-the router's problem, one row of `STAGE_TO_NODE` at a time.
+and `_entry_route` reads it only to REFUSE the caller-resolved cases (see
+below: `CONTEXT_LOCK`, and `OPTIONAL_CONTEXT` alongside it). That is the whole
+cost of adding a human touchpoint to this file: nothing, plus one refusal per
+caller-resolved pause. A new `AWAITING_*` stage per interaction would instead
+have made the stage enum the router's problem, one row of `STAGE_TO_NODE` at a
+time.
 
 The public entry point `run_pipeline(state, max_steps)` keeps its old signature,
 so run.py, the UI, and tests call it exactly as before.
 
-WHY LangGraph: it hands us — for free and as industry-standard primitives — the
-two things still on Kati's roadmap: human-in-the-loop PAUSE (`interrupt`) for the
-clarifier, and state-on-disk recovery (`checkpointer`). We build on the standard
-container instead of extending bespoke loop code.
+WHY LangGraph: it gave us — for free and as industry-standard primitives — the
+two things this rewrite needed: human-in-the-loop PAUSE (the `AWAITING_HUMAN`
+stage, below) for the clarifier, and state-on-disk recovery (`checkpointer`,
+see below). We build on the standard container instead of extending bespoke
+loop code.
 
 STATE ON DISK (added)
 ---------------------
@@ -118,12 +121,13 @@ def _entry_route(state: ArchitectState) -> str:
     record in a way that opened a gap — and we must RE-RUN the clarifier to
     re-judge. Everything else defers to the normal table.
 
-    ONE resolution never comes here: `CONTEXT_LOCK`. The whole point of that
-    pause is that the caller resolves it OUTSIDE the graph (accept, edit, ask —
-    see pipeline/agents/clarifier.py), so arriving with it still pending means a
-    caller re-entered on a half-resolved pause. Routing to the clarifier anyway
-    would "work": it would burn a call, re-lock, and pause again, and the bug
-    would look like a slow gate rather than a wiring error. So it is refused
+    TWO resolutions never come here: `CONTEXT_LOCK` and `OPTIONAL_CONTEXT`. The
+    whole point of both pauses is that the caller resolves them OUTSIDE the
+    graph (accept, edit, ask, resolve-optional — see pipeline/agents/
+    clarifier.py), so arriving with either still pending means a caller
+    re-entered on a half-resolved pause. Routing to the clarifier anyway would
+    "work": it would burn a call, re-lock, and pause again, and the bug would
+    look like a slow gate rather than a wiring error. So both are refused
     here, loudly, at the only place that can still tell the difference. Not an
     `assert` statement — those vanish under `python -O`, and a routing invariant
     that switches itself off in optimised mode is not an invariant.
@@ -136,6 +140,14 @@ def _entry_route(state: ArchitectState) -> str:
                 "clarifier.accept_context_lock (approve), or "
                 "clarifier.submit_context_edits + clarifier.open_for_rejudge "
                 "(edit). clarifier.ask_advisor never enters the graph at all."
+            )
+        if state.pending_decision is PendingDecision.OPTIONAL_CONTEXT:
+            raise RuntimeError(
+                "run_pipeline was entered while an OPTIONAL_CONTEXT decision is "
+                "still pending. Like CONTEXT_LOCK, that pause is resolved by the "
+                "CALLER, before re-entry: clarifier.resolve_optional_context "
+                "(skip, or apply answers) — it advances to CONTEXT_LOCK without "
+                "ever entering the graph."
             )
         return "clarifier"
     return _route(state)

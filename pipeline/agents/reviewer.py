@@ -3,8 +3,8 @@
 The review standard is derived from each run rather than a built-in use case:
 
 * Python owns artifact, constraint, traceability, ADR, and source checks.
-* Gemini answers five atomic qualitative questions with yes/no, a reason, and
-  a suggested fix.
+* The configured Reviewer LLM answers five atomic qualitative questions with
+  yes/no, a reason, and a suggested fix.
 * Python assembles the report and derives the pass/fail route. There is no
   numeric threshold and the model never emits the final verdict.
 """
@@ -15,8 +15,19 @@ from typing import Sequence
 
 from pydantic import BaseModel, Field
 
+from pipeline.agents.architect import (
+    decision_topics_block,
+    evidence_catalog_block,
+    web_context_block,
+)
 from pipeline.agents.base import make_step, node
-from pipeline.llm import LLMUsage, attach_usage, llm_call
+from pipeline.llm import (
+    LLMUsage,
+    attach_usage,
+    llm_call,
+    role_gemini_thinking_level,
+    role_model_override,
+)
 from pipeline.review_checks import DeterministicChecks, run_deterministic_checks
 from pipeline.state import (
     ArchitectState,
@@ -77,19 +88,79 @@ final verdict; Python owns all of those decisions.
    consistent with that context rather than generic? For a documented
    greenfield run with no repository, state that it is not applicable. If a
    repository was requested but its representation is unavailable, answer no.
-2. flaw_detection: Does the design directly address the business goal and
-   problem stated in this run's initial request and locked Context Record? For
-   a brownfield system, does it address the structural cause evidenced by the
-   repository rather than merely naming technologies or patching symptoms? Do
-   not require any particular architecture pattern.
+2. flaw_detection: Does the design directly address the business goal, problem,
+   and material functional, non-functional, and compliance requirements in
+   this run's initial request and locked Context Record? Answer NO when the
+   headline capability works but the design contradicts a material locked
+   requirement (for example, availability, privacy, residency, or security).
+   For a brownfield system, does it address the structural cause evidenced by
+   the repository rather than merely naming technologies or patching symptoms?
+   Do not require any particular architecture pattern. For a brownfield design
+   also judge the DECOMPOSITION QUALITY and the MIGRATION APPROACH:
+   - Challenge services that appear to exist only because a source
+     module/package existed, tiny services with no independent
+     scaling/ownership/security/data boundary, and fragmentation that adds
+     network/operational complexity without a stated benefit. A DIFFERENT
+     decomposition than any reference passes when each standalone service
+     carries a concrete boundary rationale — do not insist services match
+     any particular decomposition.
+   - When the design modernizes a brownfield system with an incremental or
+     no-major-downtime objective, check the Blueprint's `migration_steps`
+     are coherent: understandable ordering, current and target can coexist,
+     routing/cutover and data-ownership transition are acknowledged, and
+     the sequence does not secretly require a big-bang rewrite. Architecture
+     level only — do not demand project-management detail, and do not
+     penalize a non-brownfield design for having no migration plan.
 3. adr_soundness: Are the ADR rationales, alternatives, and trade-offs
-   internally sound and supported by the locked context or retrieved evidence?
+   internally sound and supported by the locked context or retrieved
+   evidence? For a brownfield design also check TECHNOLOGY-CHANGE
+   JUSTIFICATION: every substantial change from the detected existing stack
+   (language, framework, data store, identity, or communication
+   infrastructure) must be justified by a requirement, an
+   architecture problem it solves, a scaling/security/reliability/operational
+   constraint, or a meaningful trade-off. Technology novelty without a
+   requirement-linked rationale is a soundness failure; a genuinely
+   justified change must not be flagged merely for differing from the
+   existing stack. Also check ADR GRANULARITY: when one ADR's
+   `related_decision_topic_ids` names two or more materially independent
+   decision topics (e.g. service decomposition, data ownership, integration
+   style, scaling/availability, migration strategy), are those decisions
+   genuinely coupled in THIS architecture (choosing one necessarily
+   determines the other), and does the ADR separately make the decision,
+   rationale, alternatives, and consequences clear for each bundled topic?
+   One generic rationale covering several distinct decisions ("improves
+   scalability and maintainability") is a soundness failure even though
+   every topic is nominally mapped. A multi-topic ADR that genuinely earns
+   its bundling — coupled decisions, each one's trade-offs addressed — is
+   not a failure on this ground; there is no minimum ADR count and no
+   requirement that topics map one-to-one to ADRs.
 4. best_practice_grounding: Are the recommendations supported by retrieved
    knowledge, repository evidence, or clearly labelled assumptions and open
-   risks, rather than fabricated citations or unsupported certainty?
-5. refinement_readiness: Considering your preceding answers, are any remaining
-   shortcomings described specifically enough for the Architect to correct
-   without guessing? If all preceding answers pass, answer yes.
+   risks, rather than fabricated citations or unsupported certainty? This
+   includes SEMANTIC RELEVANCE of cited literature, which
+   <deterministic_check_results> cannot judge — it only proves an ADR's
+   evidence_ids were actually retrieved this run, never that they are
+   RELEVANT to that ADR's decision. Using <decision_topics> and
+   <evidence_catalog>, check for each ADR that lists evidence_ids: does the
+   cited content genuinely support what the ADR decided, or does the ADR
+   cite an evidence ID that is real but UNRELATED to its own decision —
+   attached only to satisfy the deterministic check rather than because it
+   actually informed the choice? A decorative/unrelated citation is a
+   best_practice_grounding failure even though the ID itself resolves.
+   Conversely, an ADR that leaves evidence_ids EMPTY and says so honestly in
+   its rationale is not a failure on this ground alone. Also check each
+   ADR's `related_decision_topic_ids` genuinely matches what it decided (a
+   decomposition decision mapped only to an unrelated topic is a mismatch),
+   and use <deterministic_check_results> plus <architecture_artifacts> to
+   judge whether any material Blueprint/migration/technology recommendation
+   is effectively hiding outside the ADR trail — described in prose but
+   never recorded as a decision.
+5. refinement_readiness: Are the identified corrections actionable enough for
+   the Architect to START a refinement pass without guessing? Answer YES when
+   the problems and fixes are concrete, even if the current design has several
+   serious failures and is nowhere near approval. Answer NO only when the
+   feedback itself is too vague to act on. If all preceding answers pass,
+   answer yes because no refinement guidance is needed.
 
 # Rules
 - Trust <deterministic_check_results>; do not repeat or re-evaluate its checks.
@@ -310,10 +381,21 @@ def _build_prompt(state: ArchitectState, checks: DeterministicChecks) -> str:
             else "not_provided_greenfield"
         )
     )
-    findings = "\n".join(
-        f"- [{chunk.source}] {chunk.content}"
-        for chunk in state.retrieved_knowledge
-    ) or "(none retrieved)"
+    # The SAME decision-evidence blocks the
+    # Architect prompt is built from (pipeline/agents/architect.py) — not a
+    # second rendering. best_practice_grounding's semantic-relevance
+    # question (see REVIEWER_SYSTEM) needs the actual evidence content and
+    # the topic mapping to judge whether an ADR's cited ID genuinely
+    # supports its decision; a source+content bullet list with no evidence
+    # ID (the previous <researcher_findings>) gave the Reviewer no way to
+    # even connect an ADR's `evidence_ids` (visible in
+    # <architecture_artifacts>) back to what that ID actually says.
+    decision_evidence = (
+        decision_topics_block(state)
+        + "\n\n"
+        + evidence_catalog_block(state)
+        + web_context_block(state)
+    )
     return (
         f"<initial_request>\n{initial_request}\n</initial_request>\n\n"
         f"<locked_context_record>\n{context}\n</locked_context_record>\n\n"
@@ -324,7 +406,7 @@ def _build_prompt(state: ArchitectState, checks: DeterministicChecks) -> str:
         f"</architecture_artifacts>\n\n"
         f"<deterministic_check_results>\n{checks.model_dump_json(indent=2)}\n"
         f"</deterministic_check_results>\n\n"
-        f"<researcher_findings>\n{findings}\n</researcher_findings>"
+        f"{decision_evidence}"
     )
 
 
@@ -424,6 +506,8 @@ def _assemble_report(
         traceability=checks.score_traceability,
         adr_presence=checks.score_adr_presence,
         source_integrity=checks.score_source_integrity,
+        # Decision-level literature grounding.
+        kb_evidence_grounding=checks.score_kb_evidence_grounding,
         repo_grounding=(
             True
             if "repo_grounding" in not_applicable
@@ -497,9 +581,20 @@ def _assemble_report(
 def run_reviewer(
     state: ArchitectState,
     *,
-    model: str = REVIEWER_MODEL,
+    model: str | None = None,
 ) -> dict:
-    """Run the Reviewer with an explicit model; used by the node and evals."""
+    """Run the Reviewer with an explicit model; used by the node and evals.
+
+    `model=None` (the default) resolves through `role_model_override`, so
+    `REVIEWER_LLM_PROVIDER`/`REVIEWER_LLM_MODEL` redirect the Reviewer to
+    another configured provider (e.g. KI Connect) for an A/B evaluation
+    while eval callers passing an explicit model keep full control. With no
+    environment set, the routing is the frozen Gemini default — byte-for-byte
+    today's behaviour.
+    """
+
+    if model is None:
+        model = role_model_override("reviewer", REVIEWER_MODEL)
 
     # `usage` is RETURNED, never written into state — LangGraph persists only
     # what a node returns. The try/except forwards already-billed tokens to
@@ -514,6 +609,7 @@ def run_reviewer(
             system=REVIEWER_SYSTEM,
             model=model,
             response_schema=LLMJudgments,
+            thinking_level=role_gemini_thinking_level("reviewer"),
         )
         report = _assemble_report(judgments, checks, state)
         stage_out = Stage.REFINING if report.requires_refinement else Stage.DONE

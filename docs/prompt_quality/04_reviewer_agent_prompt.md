@@ -27,12 +27,18 @@ evidence-backed reason. Every no answer also needs one suggested correction.
 
 1. If repository context exists, is the design consistent with it? If a
    repository was requested but unavailable, answer no.
-2. Does the design solve the business problem stated in this run? For a
-   brownfield system, does it address the repository-evidenced cause rather
-   than only patching symptoms? Do not require a particular pattern.
+2. Does the design solve the business problem and satisfy the material
+   functional, non-functional, and compliance requirements stated in this
+   run? A working headline capability does not pass if the design contradicts
+   a locked requirement. For a brownfield system, does it address the
+   repository-evidenced cause rather than only patching symptoms? Do not
+   require a particular pattern.
 3. Are ADR rationales, alternatives, and trade-offs sound?
 4. Are recommendations grounded in supplied evidence or explicit assumptions?
-5. Are remaining shortcomings actionable enough for refinement?
+5. Are the identified corrections actionable enough for the Architect to
+   start a refinement pass without guessing? Answer yes when the feedback is
+   concrete even if the current design has serious failures; answer no only
+   when the feedback itself is too vague to act on.
 
 # Rules
 - Trust the deterministic results and do not recalculate them.
@@ -47,7 +53,8 @@ UI renderers, and replay tools continue to work. It now means whether the design
 addresses the problem or flaw stated in the current run; it is not a reference
 to a globally hardcoded flaw.
 
-`refinement_readiness` remains advisory because it can restate another failed
-criterion. All answers remain visible for evaluation. The final report follows
+`refinement_readiness` measures the actionability of the feedback, not whether
+the current design is close to approval. It remains advisory because it can
+restate another failed criterion. All answers remain visible for evaluation. The final report follows
 `06_reviewer_report_schema.json`; the current rules are documented in
 `08_eval_rubric_v3.md`.

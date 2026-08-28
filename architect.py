@@ -17,7 +17,7 @@ import google.generativeai as genai
 from langchain_community.vectorstores import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-from rag_logger import RagLogger
+from tools.rag_logger import RagLogger
 
 _REPO_ROOT = Path(__file__).resolve().parent
 
@@ -144,14 +144,14 @@ def get_vectorstore():
         except Exception as e:
             raise RuntimeError(
                 f"Chroma index at '{CHROMA_DIR}' could not be read ({e}). "
-                "Run Rag_Setup.ipynb in the repo root to build the "
-                "knowledge base first."
+                "Run REBUILD_RAG.bat (or `python -m tools.rebuild_rag`) to "
+                "build the knowledge base first."
             ) from e
         if vector_count == 0:
             raise RuntimeError(
                 f"Chroma index at '{CHROMA_DIR}' contains 0 vectors — the "
-                "knowledge base is empty. Run Rag_Setup.ipynb in the repo "
-                "root to build chroma_db/ before querying."
+                "knowledge base is empty. Run REBUILD_RAG.bat (or "
+                "`python -m tools.rebuild_rag`) to build chroma_db/ before querying."
             )
         _vectorstore = store
     return _vectorstore

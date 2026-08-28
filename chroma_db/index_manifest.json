@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "embedding_model": "models/gemini-embedding-2",
+  "chunk_size": 1000,
+  "chunk_overlap": 200,
+  "collection_name": "langchain",
+  "vector_count": 503,
+  "source_count": 11,
+  "box_counts": {
+    "1": 440,
+    "2": 63
+  },
+  "sources": [
+    {
+      "path": "Rag Database/box1_patterns/architecture_patterns_v2.md",
+      "sha256": "cb0ea40de2cc603dc2a6104c3231ac614e8e37d7452c07fcad35047d14f6f75f",
+      "box": 1,
+      "chunk_count": 119
+    },
+    {
+      "path": "Rag Database/box1_patterns/microservices-on-aws.pdf",
+      "sha256": "15fc2a1fc54b691a33daa464a83f2c7c5d7a7a00d355694df3d6b7a40c51a125",
+      "box": 1,
+      "chunk_count": 86
+    },
+    {
+      "path": "Rag Database/box1_patterns/wellarchitected-serverless-applications-lens.pdf",
+      "sha256": "1274e37d80fa35d5f41e1570d7545e89b73bbde8f12c951f63f390684a00dbb9",
+      "box": 1,
+      "chunk_count": 235
+    },
+    {
+      "path": "Rag Database/box2_domain/ecommerce_eshop_event_choreography_hrbatovic.md",
+      "sha256": "905d9aa27106763a98f900ccca617b0b8209e5cb85f7783058151c6b91c8693d",
+      "box": 2,
+      "chunk_count": 15
+    },
+    {
+      "path": "Rag Database/box2_domain/ecommerce_inventory_optimistic_locking_aws.md",
+      "sha256": "258f701482e2942de77fda694c18cb1947170f71e5e99c5875d8efe5f39f10ff",
+      "box": 2,
+      "chunk_count": 4
+    },
+    {
+      "path": "Rag Database/box2_domain/ecommerce_inventory_reservation_stripe.md",
+      "sha256": "b0c7fb7d7f55be1ac5982aad020fdc6dac46f0ccc45204d1c71362ac923dba2a",
+      "box": 2,
+      "chunk_count": 3
+    },
+    {
+      "path": "Rag Database/box2_domain/ecommerce_microservices_challenges_ibrahim_luong.md",
+      "sha256": "515f6678ad50c4905acf246e6f890e369abc125a90b12e12361bfce347738cf1",
+      "box": 2,
+      "chunk_count": 9
+    },
+    {
+      "path": "Rag Database/box2_domain/ecommerce_migration_event_driven_bulus.md",
+      "sha256": "e6572cddbe484ae57c40274391c37db3121105bc89e3cd4603a1dd1240a14573",
+      "box": 2,
+      "chunk_count": 13
+    },
+    {
+      "path": "Rag Database/box2_domain/ecommerce_payment_idempotency_stripe.md",
+      "sha256": "21190dbb9bf9f8a892123622d2e95d4a140b7a2b1de99d583e725340c9b555f3",
+      "box": 2,
+      "chunk_count": 3
+    },
+    {
+      "path": "Rag Database/box2_domain/ecommerce_polyglot_persistence_microsoft.md",
+      "sha256": "7233078e58479fcf8da253fafe7b93aac963dae562503fb3f6c7a84d40bf8b4a",
+      "box": 2,
+      "chunk_count": 10
+    },
+    {
+      "path": "Rag Database/box2_domain/ecommerce_search_opensearch_aws.md",
+      "sha256": "f43dca74864bbaaa504dd3df8d541d63eec37dc95e8bc2fdf6a1962df1dd788b",
+      "box": 2,
+      "chunk_count": 6
+    }
+  ]
+}

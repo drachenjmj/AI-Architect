@@ -89,7 +89,9 @@ from pipeline.state import (
 # ── Cost-cap policy ───────────────────────────────────────────────────────
 # Tunable. The iteration cap is what realistically trips; the token budget is a
 # safety net for a run that burns tokens abnormally fast.
-MAX_REFINE_ITERATIONS = 2
+# Raised from 2 to 3 to allow one additional refinement round in controlled
+# evaluation; revisit only as part of the evaluation plan, not ad hoc.
+MAX_REFINE_ITERATIONS = 3
 # STILL UNTUNED, but no longer unmeasured — deliberately left as-is pending a
 # decision, not an oversight.
 #
@@ -286,13 +288,38 @@ def reopen_for_user_round(state: ArchitectState) -> tuple[bool, str]:
     return True, ""
 
 
+def _only_nonrefinable_blockers(review: ReviewResult) -> bool:
+    """True when EVERY issue that would trigger another refine pass is
+    marked `non_refinable` (see `ReviewIssue.non_refinable`) — i.e. no
+    amount of re-designing within this run could possibly close any of
+    them. Pure.
+
+    Generic by construction: this does not know or care WHAT kind of
+    finding is non-refinable (a total KB evidence gap is the first
+    producer of one, but the check itself is not specific to it). A run
+    with a MIX of refinable and non-refinable blockers still loops
+    normally — only "every blocker is unfixable" short-circuits, so a
+    genuinely fixable finding is never abandoned early merely because an
+    unfixable one happens to be present alongside it.
+    """
+    blocking = [issue for issue in review.issues if issue.requires_refinement]
+    return bool(blocking) and all(issue.non_refinable for issue in blocking)
+
+
 def evaluate_caps(state: ArchitectState) -> tuple[bool, str]:
     """Pure decision function: should the refine loop stop now?
 
     Returns ``(stop, reason)``. Kept free of side effects so it can be
-    unit-tested in isolation without building a graph. Checks the iteration
-    cap first (cheap, deterministic), then the token budget.
+    unit-tested in isolation without building a graph. Checks non-refinable
+    blockers FIRST — cheaper to explain, and it can trip on round 1 before
+    any iteration/token budget would — then the iteration cap (cheap,
+    deterministic), then the token budget.
     """
+    if state.review is not None and _only_nonrefinable_blockers(state.review):
+        # Looping the Architect against a review whose every blocker is
+        # unfixable-this-run would just burn calls re-describing the same
+        # architecture — see `_only_nonrefinable_blockers`.
+        return True, "non_refinable_findings"
     if state.refine_iterations >= MAX_REFINE_ITERATIONS:
         return True, f"max_iterations ({MAX_REFINE_ITERATIONS})"
     if state.input_tokens + state.output_tokens >= MAX_TOTAL_TOKENS:
@@ -433,6 +460,13 @@ def refine_gate_node(state: ArchitectState) -> dict:
         "best_design": best,
         "selected_round": current_round,
     }
+    # "cap reached" is honest for the two budget stops; a non-refinable
+    # stop is not a budget running out, so it gets its own label rather than
+    # borrowing that phrase for a different fact.
+    stop_label = (
+        "no refinable finding remains" if reason == "non_refinable_findings"
+        else "cap reached"
+    )
     if best is not None and best.round != current_round:
         discarded = current_round - best.round
         # The review travels WITH the artifacts. Restoring one without the other
@@ -447,7 +481,7 @@ def refine_gate_node(state: ArchitectState) -> dict:
             selected_round=best.round,
         )
         note = (
-            f"cap reached ({reason}); selected round {best.round} of "
+            f"{stop_label} ({reason}); selected round {best.round} of "
             f"{current_round}, discarded {discarded} later round"
             f"{'s' if discarded != 1 else ''}"
         )
@@ -456,7 +490,7 @@ def refine_gate_node(state: ArchitectState) -> dict:
         # an audit-trail defect, and "nothing was swapped" is exactly as much a
         # fact about this run as "round 2 was restored".
         note = (
-            f"cap reached ({reason}); round {current_round} of {current_round} "
+            f"{stop_label} ({reason}); round {current_round} of {current_round} "
             f"scored best, nothing restored"
         )
 

@@ -66,6 +66,9 @@ def make_step(
         # None means "no verified price for this model"; on the step, which is a
         # plain float, that has to read as 0.0 — the tokens are still recorded.
         cost_usd=(usage.cost_usd or 0.0) if usage else 0.0,
+        # The effective Gemini thinking level, when one was configured, so the
+        # run trace PROVES what the evaluation used ("" = provider default).
+        thinking_level=(usage.thinking_level or "") if usage else "",
     )
 
 

@@ -12,17 +12,16 @@ HOW TO READ THIS FILE
 ---------------------
 The model is split into four layers, top to bottom:
   1. INPUT           — what the user gives us (owned by Kati).
-  2. ARTIFACTS       — the things the agents produce. These are PLACEHOLDERS for
-                       contracts other people own (Maheen's schemas, Kush's KB
-                       chunk, Malte's repo representation). Marked  # TODO(owner
+  2. ARTIFACTS       — the schemas the agents produce (Maheen's Context
+                       Record/Blueprint/ADR/Component schemas, Kush's KB
+                       chunk, Malte's repo representation), each frozen by its
+                       owning agent.
   3. WORKING FIELDS  — intermediate results agents pass to each other.
   4. CONTROL / META  — orchestration bookkeeping (owned entirely by Kati):
                        status, routing, trace history, retries, token usage.
 
-This is v0.1 — a *strawman* for the team's contract-freezing session. The
-placeholder classes exist so the skeleton runs today; each owner replaces the
-body of their class with the real schema once frozen. Because everyone imports
-from THIS file, tightening a placeholder later does not change the pipeline wiring.
+Everyone imports from THIS file, so the state object is the single contract
+every agent builds against.
 """
 from __future__ import annotations
 
@@ -57,9 +56,8 @@ class InitialRequest(BaseModel):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 2. ARTIFACT PLACEHOLDERS  (owned by others — TODO markers, not final schemas)
+# 2. ARTIFACTS  (each schema frozen and owned by its agent)
 # ══════════════════════════════════════════════════════════════════════════
-# Each class below is a stand-in. The owner replaces the body with the real, validated schema.
 
 # ── Repo representation (Malte owns) ──────────────────────────────────────
 # Repository Representation is intended to systematically provide information on the
@@ -156,12 +154,39 @@ class KBChunk(BaseModel):
     page: int = 0
     box: int = 1          # 1=patterns, 2=domain, 3=web fallback
     distance: float | None = None   # Chroma distance, lower = better; None for web results
+    # Stable per-run identifier ("KB-E001", ...),
+    # assigned deterministically by the researcher AFTER retrieval/dedup —
+    # see pipeline/agents/researcher.py. Assigned ONLY to curated-KB chunks
+    # (box != 3); a web-fallback chunk (box == 3) keeps this empty, which is
+    # what stops it from ever satisfying the deterministic ADR literature
+    # gate in review_checks.py (a fabricated/absent ID can never resolve).
+    # Default "" so every existing fixture/checkpoint built before this field
+    # existed loads unchanged.
+    evidence_id: str = ""
+
+
+class DecisionTopic(BaseModel):
+    """One bounded decision/topic query the researcher planned this run, and
+    which KB evidence it actually surfaced. This is
+    the per-run record of decision-level retrieval — see
+    pipeline/agents/researcher.py `plan_decision_topics`. `evidence_ids` lists
+    only QUALIFYING (curated-KB) evidence; an empty list is an explicit
+    evidence gap for that topic, not a hidden one — never backfilled with web
+    results.
+    """
+
+    id: str = Field(..., description="Stable per-run topic identifier, e.g. TOPIC-1.")
+    topic: str = Field(..., description="The decision topic/question, case-derived.")
+    query: str = Field("", description="The retrieval query actually issued for this topic.")
+    evidence_ids: list[str] = Field(
+        default_factory=list,
+        description="Qualifying (curated-KB) KBChunk.evidence_id values surfaced for this topic.",
+    )
 
 
 class ContextRecord(BaseModel):
     """Frozen snapshot of all constraints + clarification answers before design."""
-    # TODO(Maheen): real Context Record schema.
-    
+
     project_name: str = Field(
         default="",
         description="Short name identifying the architecture project.",
@@ -233,7 +258,7 @@ class ContextRecord(BaseModel):
 
 class Feature(BaseModel):
     """One functional requirement, with a concrete scenario (p.9 feature-first)."""
-    # TODO(Maheen): confirm final schema.
+
     id: str = Field(
         ...,
         description="Stable feature identifier, for example FEAT-001.",
@@ -264,9 +289,49 @@ class Feature(BaseModel):
     )
 
 
+class MigrationStep(BaseModel):
+    """One ordered step of a brownfield modernization sequence.
+
+    Added during brownfield hardening; its text
+    fields are read by the deterministic migration-disposition/target
+    checks in review_checks.py, so renaming them changes Reviewer behavior.
+
+    Deliberately COMPACT: this is an architecture-level migration approach
+    (what moves, in what order, and how the old and new coexist), not a
+    transformation-programme plan with owners, dates and tickets. Order is
+    the LIST order — no explicit `order` field to keep in sync.
+
+    Backward compatibility: `Blueprint.migration_steps` defaults to empty,
+    so checkpoints written before this field existed deserialize unchanged
+    (a greenfield run, or any design with no stated migration objective,
+    legitimately carries no steps). Old checkpoint FILES are never
+    rewritten; the default is applied on load.
+    """
+
+    title: str = Field(
+        ...,
+        description="Short step name, e.g. 'Introduce the order event seam'.",
+    )
+    objective: str = Field(
+        default="",
+        description="What this step achieves and why it sits at this point in the sequence.",
+    )
+    changes: list[str] = Field(
+        default_factory=list,
+        description="Architecture-level changes this step makes.",
+    )
+    coexistence_or_data_strategy: str = Field(
+        default="",
+        description="How current and target coexist here: routing, cutover, data ownership/consistency transition.",
+    )
+    exit_condition: str = Field(
+        default="",
+        description="Observable condition that validates the step is complete. Optional.",
+    )
+
+
 class Blueprint(BaseModel):
     """Architecture Blueprint — stakeholder view + technical view."""
-    # TODO(Maheen): real Blueprint schema (two views).
 
     blueprint_id: str = Field(
         default="BP-001",
@@ -316,6 +381,13 @@ class Blueprint(BaseModel):
         default_factory=list,
         description="Known architectural risks that still require attention.",
     )
+    # The ordered modernization sequence for a brownfield redesign. Empty
+    # for greenfield runs and for designs that carry no migration objective
+    # — absence is valid, not an omission (see MigrationStep).
+    migration_steps: list[MigrationStep] = Field(
+        default_factory=list,
+        description="Ordered brownfield modernization steps; empty when no migration is required.",
+    )
     version: str = Field(
         default="1.0",
         description="Version of the blueprint.",
@@ -335,7 +407,6 @@ class Blueprint(BaseModel):
 
 class ADR(BaseModel):
     """One Architecture Decision Record."""
-    # TODO(Maheen): real ADR schema (title, context, options, decision, trade-offs).
 
     id: str = Field(
         default="ADR-001",
@@ -385,11 +456,33 @@ class ADR(BaseModel):
         default_factory=list,
         description="Knowledge-base or repository sources supporting the decision.",
     )
+    # EXACT stable evidence identity, distinct from
+    # `source_references` (fuzzy source-title text, may be repo OR KB
+    # provenance). `evidence_ids` names ONLY curated-KB evidence this run
+    # actually retrieved (see KBChunk.evidence_id / ArchitectState.decision_topics)
+    # and is what the deterministic literature-grounding gate in
+    # review_checks.py validates. Default empty so existing ADRs/fixtures
+    # built before this field existed load unchanged.
+    evidence_ids: list[str] = Field(
+        default_factory=list,
+        description="Stable KB-Exxx evidence identifiers actually retrieved this run that support this decision.",
+    )
+    # Additive — extends "every ADR is grounded" to
+    # "every MATERIAL architecture decision is grounded" (see
+    # review_checks.MATERIAL_DECISION_TOPICS / _check_material_decision_coverage).
+    # EXACT DecisionTopic.id values (e.g. "TOPIC-1") this ADR's decision maps
+    # to, never fuzzy text matching. One ADR may legitimately map to several
+    # topics when one decision spans them (e.g. a migration-strategy ADR that
+    # also touches service decomposition). Default empty so existing
+    # ADRs/fixtures built before this field existed load unchanged.
+    related_decision_topic_ids: list[str] = Field(
+        default_factory=list,
+        description="DecisionTopic IDs (e.g. TOPIC-1) this ADR's decision maps to.",
+    )
 
 
 class ComponentDescription(BaseModel):
     """One component's justified description."""
-    # TODO(Maheen): real Component Description schema.
 
     id: str = Field(
         default="COMP-001",
@@ -451,6 +544,10 @@ REVIEW_CODE_SCORE_FIELDS = (
     "traceability",
     "adr_presence",
     "source_integrity",
+    # Decision-level literature grounding — does
+    # every ADR cite retrieved-this-run curated-KB evidence? See
+    # review_checks._check_kb_evidence_grounding.
+    "kb_evidence_grounding",
 )
 REVIEW_JUDGMENT_FIELDS = (
     "repo_grounding",
@@ -480,6 +577,11 @@ class RubricScores(BaseModel):
     # Defaults to full only for checkpoints written before this check existed.
     # The production Reviewer always overwrites it with the current run's check.
     source_integrity: int = Field(2, ge=0, le=2)
+    # Same backward-compat default as source_integrity, and same reason: a
+    # checkpoint written before this check existed carries no opinion about
+    # it. The production Reviewer always overwrites it with the current run's
+    # check (see review_checks._check_kb_evidence_grounding).
+    kb_evidence_grounding: int = Field(2, ge=0, le=2)
     repo_grounding: bool = False
     flaw_detection: bool = False
     adr_soundness: bool = False
@@ -510,6 +612,16 @@ class ReviewIssue(BaseModel):
     evidence: str = ""
     suggested_fix: str = ""
     requires_refinement: bool = False
+    # True ONLY for a finding that another Architect
+    # pass cannot possibly close within THIS run — e.g. "the curated KB
+    # retrieved no evidence for any decision topic": research runs once,
+    # before the refine loop exists, so no redesign can manufacture evidence
+    # that was never retrieved. `refine_gate.py` reads this to stop the loop
+    # honestly instead of burning iterations re-describing the same
+    # architecture against an unfixable finding. Default False: an ordinary
+    # finding (missing field, bad traceability, fabricated citation, ...) IS
+    # refinable, and that is the overwhelmingly common case.
+    non_refinable: bool = False
 
 
 # Why a criterion can be marked NOT APPLICABLE, keyed by the names that appear in
@@ -636,6 +748,14 @@ class PendingDecision(str, Enum):
         it. Resolved ENTIRELY by the caller (see `pipeline.agents.clarifier`):
         the graph is never entered with this pending, and `_entry_route` says so
         out loud rather than routing on a half-resolved pause.
+      * OPTIONAL_CONTEXT — a distinct step BETWEEN the required questions and
+        CONTEXT_LOCK: relevant, non-blocking gaps the required round did not
+        (or could not) ask about, offered as a clearly-skippable follow-up —
+        never a second required round. Same resolution shape as CONTEXT_LOCK
+        (entirely by the caller, via `clarifier.resolve_optional_context`; the
+        graph is never entered with this pending either), which is what keeps
+        this a screen transition rather than a second pipeline pause with its
+        own re-judge machinery. See `clarifier.optional_slots`.
 
     Feature A (user feedback at DONE) was expected to add a member here. It
     added neither a member nor a stage in the end, which is the stronger
@@ -649,6 +769,7 @@ class PendingDecision(str, Enum):
 
     CLARIFICATION = "clarification"
     CONTEXT_LOCK = "context_lock"
+    OPTIONAL_CONTEXT = "optional_context"
 
 
 def _new_run_id() -> str:
@@ -683,6 +804,11 @@ class StepLog(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
     cost_usd: float = Field(0.0, description="List-price-equivalent cost of THIS step, in USD (free-tier key: not money spent).")
+    # Additive (default "" so old checkpoints deserialize unchanged): the
+    # EFFECTIVE Gemini thinking level this step's call(s) ran with, when one
+    # was explicitly configured (e.g. "high" for the final evaluation).
+    # Empty = no explicit level — the provider default — or not a Google call.
+    thinking_level: str = Field("", description="Effective Gemini thinking level for this step's call(s), if explicitly configured.")
 
 
 class AgentUsage(BaseModel):
@@ -1031,6 +1157,11 @@ class ArchitectState(BaseModel):
     accepted_at: str = ""
     waiver: Optional[Waiver] = None
     retrieved_knowledge: list[KBChunk] = Field(default_factory=list)
+    # This run's bounded decision-topic retrieval
+    # plan and what each topic actually surfaced — see
+    # pipeline/agents/researcher.py `plan_decision_topics`. A plain
+    # (LastValue) field: the researcher is the only writer, once per run.
+    decision_topics: list[DecisionTopic] = Field(default_factory=list)
     features: list[Feature] = Field(default_factory=list)
     # Drill-down cache (Malte): the Architect appends one DeepDive whenever it
     # takes a deeper look at part of the repo, so an insight is derived at most
@@ -1081,6 +1212,16 @@ class ArchitectState(BaseModel):
     # front of it — sets this True; the CLI exposes it as `--approve-context`.
     # Default-off means "auto-approve", which is exactly today's behaviour.
     require_context_approval: bool = False
+    # The ContextRecord `version` the optional-context round was last resolved
+    # (answered or skipped) for. 0 means "never" — no record has version 0, so
+    # every fresh record's optional round is genuinely unresolved. Compared as
+    # `>=` against `context_record.version` (see `clarifier.clarifier_node`):
+    # a version only ever increases on a re-judge, so this watermark alone is
+    # what stops a reload/rerun from re-showing an already-resolved round for
+    # the SAME record version, while a genuine revision (new version) always
+    # re-evaluates which fields are still worth asking about — never a stale
+    # copy of the previous version's answers.
+    optional_context_resolved_version: int = 0
     # Annotated with operator.add so LangGraph MERGES (appends) each node's
     # returned step onto the running trace instead of overwriting it. This is
     # the "reducer" — nodes return {"history": [one_step]} and it accumulates.

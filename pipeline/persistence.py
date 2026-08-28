@@ -77,14 +77,15 @@ class CheckpointError(RuntimeError):
 class RunSummary(NamedTuple):
     """One line for the resume picker.
 
-    A NamedTuple, so callers can unpack it positionally
-    (`run_id, stage, updated_at, excerpt = summary`) or read it by name.
+    Prefer reading fields by name (`summary.project_name`); the tuple has
+    grown before and positional unpacking breaks every time it does.
     """
 
     run_id: str
     stage: str
     updated_at: str
     raw_prompt_excerpt: str
+    project_name: str
 
 
 # ── where ────────────────────────────────────────────────────────────────
@@ -221,6 +222,15 @@ def list_runs() -> list[RunSummary]:
             data = json.loads(path.read_text(encoding="utf-8"))
             prompt = data["initial_request"]["raw_prompt"]
             stage = data["stage"]
+            # Project name straight from the checkpoint JSON — the picker must
+            # never pay a full `load_state` deserialization for one label.
+            # Old checkpoints may lack either object or carry nulls.
+            context_record = data.get("context_record") or {}
+            blueprint = data.get("blueprint") or {}
+            project_name = (
+                str(context_record.get("project_name") or "").strip()
+                or str(blueprint.get("project_name") or "").strip()
+            )
             updated_at = datetime.fromtimestamp(
                 path.stat().st_mtime, tz=timezone.utc
             ).isoformat(timespec="seconds")
@@ -228,7 +238,9 @@ def list_runs() -> list[RunSummary]:
             log.warning("skipping unreadable checkpoint %s: %s", path, exc)
             continue
         summaries.append(
-            RunSummary(directory.name, str(stage), updated_at, _excerpt(prompt))
+            RunSummary(
+                directory.name, str(stage), updated_at, _excerpt(prompt), project_name
+            )
         )
 
     # Newest first. run_id starts with a UTC timestamp, so it is a meaningful

@@ -60,6 +60,31 @@ Returns `(reply, usage)`. `system`, `model` and `response_schema` are keyword-on
 Pick by cost/quality per call. `gemini-2.5-pro` is intentionally excluded
 (zero free-tier quota; no billing on this project).
 
+## KI Connect A/B routing (experiment)
+
+The Architect and the Reviewer can each be redirected to the University of
+Cologne's KI Connect endpoint independently, for a controlled A/B comparison
+against the Gemini baseline. Nothing changes unless you set environment
+variables — see `.env.example`:
+
+```
+KICONNECT_API_KEY=
+ARCHITECT_LLM_PROVIDER=kiconnect
+ARCHITECT_LLM_MODEL=OpenAI GPT OSS 120b KI:Inferenz.nrw
+REVIEWER_LLM_PROVIDER=kiconnect
+REVIEWER_LLM_MODEL=OpenAI GPT OSS 120b KI:Inferenz.nrw
+```
+
+Both roles read their own `{ROLE}_LLM_PROVIDER`/`{ROLE}_LLM_MODEL` per call via
+`role_model_override(role, default)`; unset, they resolve to today's Gemini
+default. The Clarifier and the advisor have no such seam — they always call
+`llm_call` with a hard-coded model name, so they cannot be redirected by an
+Architect/Reviewer env change. `llm_call`'s `model=` argument also accepts a
+real model ID or `"provider/model-id"` directly (not just a registry NAME),
+which is what makes this routing possible — see `resolve_model_routing` in
+`llm.py`. There is no cross-provider fallback: a misconfigured provider/model
+raises `LLMError` instead of silently falling back to Gemini.
+
 ## Token accounting — RETURNED, not automatic
 
 **This changed, and it is the one thing to get right.** `llm_call` used to add
@@ -142,6 +167,7 @@ On any failure `llm_call` raises `LLMError`. You don't need to catch it: the
 
 ## Adding a model / provider later
 
-Add a line to `MODELS` in `llm.py` (name → model ID). To add Claude/GPT,
-the map becomes name → (provider, id) and `llm_call` branches on provider —
-**no agent changes needed**. Contact Kati before editing the registry.
+Add a line to `MODELS` in `llm.py` (name → model ID). To add another
+provider, the map becomes name → (provider, id) and `llm_call` branches on
+provider — **no agent changes needed**. Contact Kati before editing the
+registry.

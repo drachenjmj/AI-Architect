@@ -32,6 +32,7 @@
         "traceability",
         "adr_presence",
         "source_integrity",
+        "kb_evidence_grounding",
         "repo_grounding",
         "flaw_detection",
         "adr_soundness",
@@ -44,6 +45,7 @@
         "traceability": { "type": "integer", "minimum": 0, "maximum": 2 },
         "adr_presence": { "type": "integer", "minimum": 0, "maximum": 2 },
         "source_integrity": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "kb_evidence_grounding": { "type": "integer", "minimum": 0, "maximum": 2 },
         "repo_grounding": { "type": "boolean" },
         "flaw_detection": { "type": "boolean" },
         "adr_soundness": { "type": "boolean" },
@@ -81,7 +83,8 @@
           "finding",
           "evidence",
           "suggested_fix",
-          "requires_refinement"
+          "requires_refinement",
+          "non_refinable"
         ],
         "properties": {
           "id": { "type": "string" },
@@ -102,7 +105,11 @@
           "finding": { "type": "string" },
           "evidence": { "type": "string" },
           "suggested_fix": { "type": "string" },
-          "requires_refinement": { "type": "boolean" }
+          "requires_refinement": { "type": "boolean" },
+          "non_refinable": {
+            "type": "boolean",
+            "description": "True only when another Architect pass cannot possibly close this finding within the same run (e.g. a total KB evidence gap - research runs once, before the refine loop). Read by refine_gate.py to stop honestly instead of burning iterations."
+          }
         }
       }
     },
