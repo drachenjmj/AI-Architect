@@ -153,11 +153,42 @@ def test_round_trip_preserves_state_and_history():
     assert load_state(state.run_id).stage is Stage.RESEARCHING
 
     # ...and the run shows up in the picker's listing.
-    (run_id, stage, updated_at, excerpt), = list_runs()
-    assert run_id == state.run_id
-    assert stage == "researching"
-    assert updated_at.startswith("20")
-    assert excerpt.startswith("Our monolithic shop")
+    (summary,) = list_runs()
+    assert summary.run_id == state.run_id
+    assert summary.stage == "researching"
+    assert summary.updated_at.startswith("20")
+    assert summary.raw_prompt_excerpt.startswith("Our monolithic shop")
+    assert summary.project_name == "Peak-Resilient Shop"
+
+
+def test_list_runs_resolves_project_name_with_fallback():
+    """`project_name` comes from the checkpoint JSON alone (no `load_state`):
+    context_record wins, blueprint is the fallback, else empty string — the
+    picker label then degrades to the prompt excerpt."""
+    _isolate("project_name")
+
+    blueprint = Blueprint(
+        project_name="Blueprint Name",
+        stakeholder_view="Faster checkout for shoppers.",
+        technical_view="Event-driven microservices with queues.",
+    )
+
+    record_wins = _rich_state()
+    record_wins.blueprint = blueprint
+    save_state(record_wins)
+
+    blueprint_only = _rich_state()
+    blueprint_only.context_record = None
+    blueprint_only.blueprint = blueprint
+    save_state(blueprint_only)
+
+    neither = new_run("A run with no project name anywhere.")
+    save_state(neither)
+
+    by_id = {summary.run_id: summary.project_name for summary in list_runs()}
+    assert by_id[record_wins.run_id] == "Peak-Resilient Shop"  # record beats blueprint
+    assert by_id[blueprint_only.run_id] == "Blueprint Name"    # blueprint fallback
+    assert by_id[neither.run_id] == ""                          # neither → empty
 
 
 # ── 2. resume from AWAITING_HUMAN ────────────────────────────────────────

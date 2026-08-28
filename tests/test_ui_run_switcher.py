@@ -71,7 +71,7 @@ def _switcher_selectbox(at: AppTest):
 
 def _pick_run(at: AppTest, needle: str) -> AppTest:
     """Choose the saved-run option whose picker line contains `needle`
-    (the prompt excerpt is the stable part of `_run_label`)."""
+    (the project name, or the prompt excerpt when there is none)."""
     box = _switcher_selectbox(at)
     target = next(option for option in box.options if needle in option)
     box.set_value(target)
@@ -80,8 +80,8 @@ def _pick_run(at: AppTest, needle: str) -> AppTest:
     return at
 
 
-_B_NEEDLE = "Make the existing shop"       # fixture B's prompt excerpt
-_C_NEEDLE = "Architect a ticketing system"  # fixture C's prompt excerpt
+_B_NEEDLE = "Switchable Beta"                # fixture B's project name
+_C_NEEDLE = "Architect a ticketing system"    # fixture C's prompt excerpt (no project name)
 
 
 def _apply(at: AppTest) -> AppTest:

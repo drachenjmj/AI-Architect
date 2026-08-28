@@ -380,15 +380,13 @@ _NEW_RUN_LABEL = "➕ Start a new run"
 
 
 def _run_label(summary) -> str:
-    """Show project name and run date in the run picker."""
-    from pipeline.persistence import load_state
+    """One picker line: `<project> · <date/time>` — presentation ONLY.
 
-    state = load_state(summary.run_id)
-    record = state.context_record
-
+    Built from what `list_runs()` already read; drawing the picker must
+    never load a full run, let alone write or generate anything.
+    """
     project = (
-        (record.project_name if record is not None else "")
-        or (state.blueprint.project_name if state.blueprint is not None else "")
+        summary.project_name
         or summary.raw_prompt_excerpt
         or summary.run_id
     ).strip()
