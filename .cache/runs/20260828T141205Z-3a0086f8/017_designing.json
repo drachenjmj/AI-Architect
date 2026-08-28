@@ -1,0 +1,2764 @@
+{
+  "initial_request": {
+    "raw_prompt": "Build a new e-commerce platform that can support future growth and high peak traffic.",
+    "repo_url": ""
+  },
+  "repo_representation": null,
+  "context_record": {
+    "project_name": "KIConnect Greenfield",
+    "business_goal": "Build a new e-commerce platform that can support future growth and high peak traffic.",
+    "problem_statement": "We want to build a new e-commerce platform from scratch that can support future growth and high peak traffic.",
+    "users": [
+      "Online customers, customer support, warehouse and inventory staff, finance and payment operations, product management, software engineers, and operations staff."
+    ],
+    "functional_requirements": [
+      "Browse and search products",
+      "Manage customer accounts",
+      "Manage shopping carts",
+      "Place and process orders",
+      "Handle payments",
+      "Manage inventory and product availability",
+      "View order status and history"
+    ],
+    "non_functional_requirements": [
+      "Support up to 50,000 concurrent users during peak campaigns",
+      "Maintain high availability during peak periods",
+      "Keep customer-facing interactions responsive",
+      "Allow the system to scale as demand grows"
+    ],
+    "cloud_provider": "AWS",
+    "budget": "No fixed monetary budget has been defined. Cost efficiency should be considered.",
+    "compliance_requirements": [],
+    "existing_systems": [],
+    "assumptions": [],
+    "open_questions": [],
+    "summary": "Goal: Build a new e-commerce platform that can support future growth and high peak traffic. | Problem: We want to build a new e-commerce platform from scratch that can support future growth and high peak traffic. | Cloud: AWS | Budget: No fixed monetary budget has been defined. Cost efficiency should be considered.",
+    "version": 1,
+    "revision_reason": ""
+  },
+  "context_history": [],
+  "blueprint": {
+    "blueprint_id": "BP-001",
+    "project_name": "KIConnect Greenfield",
+    "selected_pattern": "Hybrid Event-Driven Microservices on AWS",
+    "rationale": "Combines domain‑driven service boundaries with asynchronous event‑driven communication to meet high concurrency, scalability, and availability requirements while keeping user‑facing interactions low‑latency via synchronous APIs. Managed AWS services and serverless compute are used to control costs in the absence of a fixed budget.",
+    "stakeholder_view": "Customers browse, search, add items to carts, and place orders; they expect fast, reliable experiences even during peak campaigns. Staff manage product catalogs, inventory, and order fulfillment; finance processes payments. The platform must support up to 50,000 concurrent users, stay highly available during traffic spikes, and scale automatically while keeping operational costs reasonable.",
+    "technical_view": "Stateless services are containerized on AWS Fargate behind an Application Load Balancer. API Gateway exposes REST/GraphQL endpoints for the web UI. Internal workflows use an SNS/SQS Event Bus for asynchronous communication. Each service owns a DynamoDB table; the Search Service uses Amazon OpenSearch; Redis (ElastiCache) caches hot product data. Email and SMS notifications are sent via managed Amazon SES and SNS services. All components are managed services that auto‑scale and provide multi‑AZ resilience.",
+    "components": [
+      "Frontend UI",
+      "Load Balancer",
+      "API Gateway",
+      "User Account Service",
+      "Product Catalog Service",
+      "Search Service",
+      "Cart Service",
+      "Order Service",
+      "Payment Service",
+      "Inventory Service",
+      "Notification Service",
+      "Event Bus",
+      "Data Store",
+      "Cache",
+      "Search Index",
+      "Email Service",
+      "SMS Service"
+    ],
+    "data_flows": [
+      "Frontend UI → Load Balancer: HTTP traffic from browsers",
+      "Load Balancer → API Gateway: Forward HTTP requests",
+      "API Gateway → User Account Service: Account CRUD API calls",
+      "API Gateway → Product Catalog Service: Product browse API calls",
+      "API Gateway → Search Service: Search query API calls",
+      "API Gateway → Cart Service: Cart manipulation API calls",
+      "API Gateway → Order Service: Checkout request API call",
+      "API Gateway → Payment Service: Payment processing API call",
+      "API Gateway → Inventory Service: Inventory availability check API call",
+      "API Gateway → Order Service: Order history request API call",
+      "User Account Service → Data Store: Read/write user data",
+      "Product Catalog Service → Data Store: Read product data",
+      "Search Service → Search Index: Query OpenSearch index",
+      "Cart Service → Data Store: Persist cart state",
+      "Order Service → Data Store: Persist order data",
+      "Payment Service → Data Store: Persist payment transaction",
+      "Inventory Service → Data Store: Update stock levels",
+      "Order Service → Event Bus: Publish OrderCreated event",
+      "Inventory Service → Event Bus: Publish InventoryReserved event",
+      "Payment Service → Event Bus: Publish PaymentProcessed event",
+      "Event Bus → Notification Service: Deliver order and payment events",
+      "Notification Service → Email Service: Send confirmation emails",
+      "Notification Service → SMS Service: Send SMS notifications",
+      "Data Store → Cache: Populate cache entries",
+      "API Gateway → Cache: Retrieve cached product data"
+    ],
+    "addressed_feature_ids": [
+      "FEAT-001",
+      "FEAT-002",
+      "FEAT-003",
+      "FEAT-004",
+      "FEAT-005",
+      "FEAT-006",
+      "FEAT-007",
+      "FEAT-008",
+      "FEAT-009",
+      "FEAT-010",
+      "FEAT-011"
+    ],
+    "constraints_addressed": [
+      "AWS cloud",
+      "Cost efficiency (use of managed services, serverless compute, and autoscaling to keep spend proportional to load)",
+      "Scalability to 50,000 concurrent users",
+      "High availability during peak periods"
+    ],
+    "assumptions": [
+      "All AWS managed services are available in the selected region.",
+      "Stateless services can be containerized on Fargate.",
+      "Eventual consistency is acceptable for inventory updates after order placement."
+    ],
+    "open_risks": [
+      "Increased operational complexity due to many microservices and event pipelines.",
+      "Potential cost overruns if autoscaling thresholds are not tuned.",
+      "Eventual consistency may cause short‑lived stock‑out anomalies."
+    ],
+    "migration_steps": [],
+    "version": "1.0",
+    "revision_note": "Added evidence IDs to ADR-005 to satisfy KB citation requirement."
+  },
+  "adrs": [
+    {
+      "id": "ADR-001",
+      "title": "ADR-001: Adopt Domain-Driven Design bounded contexts for service boundaries",
+      "status": "accepted",
+      "context": "Need to define clear service boundaries for scalability, maintainability, and independent deployment.",
+      "decision": "Decompose the system into services aligned with DDD bounded contexts: User Account, Product Catalog, Search, Cart, Order, Payment, Inventory, Notification.",
+      "rationale": "DDD aligns services with business capabilities, reduces coupling, and supports independent scaling as required for peak traffic.",
+      "alternatives_considered": [
+        "Monolithic application",
+        "Large coarse‑grained services"
+      ],
+      "positive_consequences": [
+        "Clear ownership",
+        "Independent scaling",
+        "Team autonomy"
+      ],
+      "negative_consequences": [
+        "Increased operational complexity",
+        "Need for inter‑service communication"
+      ],
+      "related_feature_ids": [
+        "FEAT-001",
+        "FEAT-002",
+        "FEAT-003",
+        "FEAT-004",
+        "FEAT-005",
+        "FEAT-006",
+        "FEAT-007",
+        "FEAT-008",
+        "FEAT-009",
+        "FEAT-010",
+        "FEAT-011"
+      ],
+      "related_component_names": [
+        "User Account Service",
+        "Product Catalog Service",
+        "Search Service",
+        "Cart Service",
+        "Order Service",
+        "Payment Service",
+        "Inventory Service",
+        "Notification Service"
+      ],
+      "source_references": [],
+      "evidence_ids": [
+        "KB-E004",
+        "KB-E001"
+      ],
+      "related_decision_topic_ids": [
+        "TOPIC-1"
+      ]
+    },
+    {
+      "id": "ADR-002",
+      "title": "ADR-002: Use service‑owned polyglot persistence with DynamoDB and OpenSearch",
+      "status": "accepted",
+      "context": "Each service requires its own data store that matches its access patterns and scalability needs.",
+      "decision": "Each microservice owns a private DynamoDB table; the Search Service uses Amazon OpenSearch for full‑text search.",
+      "rationale": "Service‑owned stores prevent accidental coupling and enable independent schema evolution; DynamoDB provides horizontal scalability, while OpenSearch satisfies search requirements.",
+      "alternatives_considered": [
+        "Single shared relational database",
+        "All services using the same NoSQL store"
+      ],
+      "positive_consequences": [
+        "Independent data model evolution",
+        "Optimized storage per domain",
+        "Reduced cross‑service data coupling"
+      ],
+      "negative_consequences": [
+        "Increased number of managed databases",
+        "Potential data duplication"
+      ],
+      "related_feature_ids": [
+        "FEAT-001",
+        "FEAT-002",
+        "FEAT-003",
+        "FEAT-004",
+        "FEAT-005",
+        "FEAT-006",
+        "FEAT-008",
+        "FEAT-009",
+        "FEAT-010",
+        "FEAT-011"
+      ],
+      "related_component_names": [
+        "Data Store",
+        "Search Index",
+        "User Account Service",
+        "Product Catalog Service",
+        "Cart Service",
+        "Order Service",
+        "Payment Service",
+        "Inventory Service"
+      ],
+      "source_references": [],
+      "evidence_ids": [
+        "KB-E005",
+        "KB-E008"
+      ],
+      "related_decision_topic_ids": [
+        "TOPIC-2"
+      ]
+    },
+    {
+      "id": "ADR-003",
+      "title": "ADR-003: Hybrid integration style – synchronous API for front‑end, asynchronous events for internal processes",
+      "status": "accepted",
+      "context": "User‑facing interactions need low latency, while internal workflows benefit from decoupling and scalability.",
+      "decision": "Expose REST/GraphQL endpoints via API Gateway for all external calls; use SNS/SQS Event Bus for order, inventory, and payment events between services.",
+      "rationale": "Synchronous APIs give immediate feedback to customers; asynchronous events improve throughput and fault tolerance for background processing.",
+      "alternatives_considered": [
+        "Fully synchronous request‑response across all services",
+        "Fully asynchronous event‑driven architecture"
+      ],
+      "positive_consequences": [
+        "Responsive UI",
+        "Scalable backend processing",
+        "Improved fault isolation"
+      ],
+      "negative_consequences": [
+        "Added complexity of managing both sync and async paths",
+        "Need for eventual consistency handling"
+      ],
+      "related_feature_ids": [
+        "FEAT-001",
+        "FEAT-004",
+        "FEAT-005",
+        "FEAT-008",
+        "FEAT-009",
+        "FEAT-010",
+        "FEAT-011"
+      ],
+      "related_component_names": [
+        "API Gateway",
+        "Event Bus",
+        "Order Service",
+        "Inventory Service",
+        "Payment Service",
+        "Notification Service"
+      ],
+      "source_references": [],
+      "evidence_ids": [
+        "KB-E002",
+        "KB-E009"
+      ],
+      "related_decision_topic_ids": [
+        "TOPIC-3"
+      ]
+    },
+    {
+      "id": "ADR-004",
+      "title": "ADR-004: Stateless services with AWS autoscaling and managed data stores for high availability",
+      "status": "accepted",
+      "context": "The platform must handle large traffic spikes without manual capacity planning.",
+      "decision": "Deploy services as stateless containers on AWS Fargate behind an Application Load Balancer; rely on DynamoDB, ElastiCache, and OpenSearch which provide built‑in autoscaling and multi‑AZ replication.",
+      "rationale": "Stateless compute enables rapid horizontal scaling; managed data stores remove operational burden and guarantee high availability.",
+      "alternatives_considered": [
+        "Self‑managed EC2 instances with manual scaling",
+        "Monolithic deployment on a single VM"
+      ],
+      "positive_consequences": [
+        "Automatic scaling to meet demand",
+        "Reduced operational overhead",
+        "Resilience to AZ failures"
+      ],
+      "negative_consequences": [
+        "Higher per‑request cost of managed services",
+        "Less control over underlying infrastructure"
+      ],
+      "related_feature_ids": [
+        "FEAT-008",
+        "FEAT-009",
+        "FEAT-010",
+        "FEAT-011"
+      ],
+      "related_component_names": [
+        "Load Balancer",
+        "API Gateway",
+        "Data Store",
+        "Cache",
+        "Search Index"
+      ],
+      "source_references": [],
+      "evidence_ids": [
+        "KB-E003",
+        "KB-E006"
+      ],
+      "related_decision_topic_ids": [
+        "TOPIC-4"
+      ]
+    },
+    {
+      "id": "ADR-005",
+      "title": "ADR-005: Use serverless and managed services to optimize cost",
+      "status": "accepted",
+      "context": "No fixed monetary budget is defined; cost efficiency must be a primary design driver.",
+      "decision": "Leverage AWS managed services (Fargate, DynamoDB, ElastiCache, OpenSearch, SNS/SQS, SES) and serverless compute (Lambda) to ensure that capacity and spend scale proportionally with load, avoiding over‑provisioning.",
+      "rationale": "Managed services provide pay‑as‑you‑go pricing, automatic scaling, and reduced operational labor, aligning spend with actual usage and satisfying the budget constraint. Evidence shows that managed, stateless architectures reduce capital expenditure and enable cost‑effective scaling.",
+      "alternatives_considered": [
+        "Self‑managed EC2 fleet with manual scaling",
+        "Provisioned capacity on traditional relational databases"
+      ],
+      "positive_consequences": [
+        "Cost aligns with traffic volume",
+        "Lower operational staffing costs",
+        "Built‑in scaling and high availability"
+      ],
+      "negative_consequences": [
+        "Potentially higher per‑unit cost at very low utilization",
+        "Vendor lock‑in to AWS managed services"
+      ],
+      "related_feature_ids": [
+        "FEAT-001",
+        "FEAT-002",
+        "FEAT-003",
+        "FEAT-004",
+        "FEAT-005",
+        "FEAT-006",
+        "FEAT-007",
+        "FEAT-008",
+        "FEAT-009",
+        "FEAT-010",
+        "FEAT-011"
+      ],
+      "related_component_names": [
+        "User Account Service",
+        "Product Catalog Service",
+        "Search Service",
+        "Cart Service",
+        "Order Service",
+        "Payment Service",
+        "Inventory Service",
+        "Notification Service",
+        "Data Store",
+        "Cache",
+        "Search Index",
+        "Email Service",
+        "SMS Service"
+      ],
+      "source_references": [],
+      "evidence_ids": [
+        "KB-E006",
+        "KB-E010"
+      ],
+      "related_decision_topic_ids": [
+        "TOPIC-4"
+      ]
+    }
+  ],
+  "components": [
+    {
+      "id": "COMP-001",
+      "name": "Frontend UI",
+      "component_type": "UI",
+      "purpose": "Customer‑facing web application for browsing, searching, cart management, and checkout.",
+      "description": "A React single‑page application delivered via CDN, interacting with the backend through the API Gateway.",
+      "inputs": [
+        "User HTTP requests (browsing, search, cart actions, checkout, order history)"
+      ],
+      "outputs": [
+        "HTML/JSON responses",
+        "Client‑side events"
+      ],
+      "dependencies": [
+        "API Gateway",
+        "Load Balancer",
+        "Cache"
+      ],
+      "related_feature_ids": [
+        "FEAT-001",
+        "FEAT-010"
+      ],
+      "related_adr_ids": [
+        "ADR-003",
+        "ADR-004"
+      ],
+      "technology_choices": [
+        "React",
+        "AWS CloudFront",
+        "HTTPS"
+      ],
+      "security_considerations": [
+        "Content Security Policy",
+        "XSS protection"
+      ],
+      "scalability_considerations": [
+        "Static assets cached at edge locations",
+        "Stateless front‑end scales automatically"
+      ]
+    },
+    {
+      "id": "COMP-002",
+      "name": "Load Balancer",
+      "component_type": "service",
+      "purpose": "Distribute incoming HTTP traffic across API Gateway instances and provide health‑checking.",
+      "description": "AWS Application Load Balancer operating in multiple AZs, terminating TLS and forwarding requests to the API Gateway.",
+      "inputs": [
+        "HTTP requests from Frontend UI"
+      ],
+      "outputs": [
+        "Forwarded HTTP requests to API Gateway"
+      ],
+      "dependencies": [
+        "API Gateway"
+      ],
+      "related_feature_ids": [
+        "FEAT-008",
+        "FEAT-009",
+        "FEAT-010",
+        "FEAT-011"
+      ],
+      "related_adr_ids": [
+        "ADR-004"
+      ],
+      "technology_choices": [
+        "AWS Application Load Balancer"
+      ],
+      "security_considerations": [
+        "TLS termination",
+        "WAF integration"
+      ],
+      "scalability_considerations": [
+        "Automatic scaling of load balancer capacity",
+        "Multi‑AZ redundancy"
+      ]
+    },
+    {
+      "id": "COMP-003",
+      "name": "API Gateway",
+      "component_type": "API",
+      "purpose": "Expose synchronous REST/GraphQL endpoints for all front‑end interactions.",
+      "description": "AWS API Gateway routes HTTP requests to the appropriate backend services and handles request validation, throttling, and authentication.",
+      "inputs": [
+        "HTTP requests from Load Balancer"
+      ],
+      "outputs": [
+        "HTTP responses to Frontend UI",
+        "Service‑specific requests to backend services"
+      ],
+      "dependencies": [
+        "User Account Service",
+        "Product Catalog Service",
+        "Search Service",
+        "Cart Service",
+        "Order Service",
+        "Payment Service",
+        "Inventory Service",
+        "Cache"
+      ],
+      "related_feature_ids": [
+        "FEAT-001",
+        "FEAT-002",
+        "FEAT-003",
+        "FEAT-004",
+        "FEAT-005",
+        "FEAT-006",
+        "FEAT-008",
+        "FEAT-009",
+        "FEAT-010",
+        "FEAT-011"
+      ],
+      "related_adr_ids": [
+        "ADR-003",
+        "ADR-004"
+      ],
+      "technology_choices": [
+        "AWS API Gateway",
+        "JWT authentication"
+      ],
+      "security_considerations": [
+        "Rate limiting",
+        "Input validation",
+        "Authorization via Cognito"
+      ],
+      "scalability_considerations": [
+        "Managed scaling to handle request bursts",
+        "Integration with CloudWatch metrics"
+      ]
+    },
+    {
+      "id": "COMP-004",
+      "name": "User Account Service",
+      "component_type": "service",
+      "purpose": "Manage customer registration, authentication, profile updates, and password recovery.",
+      "description": "Stateless service handling account CRUD operations, issuing JWTs, and persisting user data in its own DynamoDB table.",
+      "inputs": [
+        "Account API calls from API Gateway",
+        "Authentication tokens"
+      ],
+      "outputs": [
+        "User data responses",
+        "Authentication tokens"
+      ],
+      "dependencies": [
+        "Data Store"
+      ],
+      "related_feature_ids": [
+        "FEAT-002"
+      ],
+      "related_adr_ids": [
+        "ADR-001",
+        "ADR-002",
+        "ADR-003"
+      ],
+      "technology_choices": [
+        "AWS Fargate",
+        "Node.js / TypeScript",
+        "DynamoDB (User table)"
+      ],
+      "security_considerations": [
+        "Password hashing (bcrypt)",
+        "Secure token storage"
+      ],
+      "scalability_considerations": [
+        "Stateless containers enable horizontal scaling",
+        "DynamoDB auto‑scales reads/writes"
+      ]
+    },
+    {
+      "id": "COMP-005",
+      "name": "Product Catalog Service",
+      "component_type": "service",
+      "purpose": "Provide product information, categories, and availability data to the front‑end.",
+      "description": "Stateless service exposing product browse APIs; reads product data from its DynamoDB table and writes inventory updates.",
+      "inputs": [
+        "Product browse requests from API Gateway"
+      ],
+      "outputs": [
+        "Product data responses"
+      ],
+      "dependencies": [
+        "Data Store",
+        "Cache"
+      ],
+      "related_feature_ids": [
+        "FEAT-001"
+      ],
+      "related_adr_ids": [
+        "ADR-001",
+        "ADR-002"
+      ],
+      "technology_choices": [
+        "AWS Fargate",
+        "Java / Spring Boot",
+        "DynamoDB (Product table)"
+      ],
+      "security_considerations": [
+        "Input validation on query parameters"
+      ],
+      "scalability_considerations": [
+        "Read‑heavy workload benefits from Redis cache",
+        "DynamoDB provisioned throughput"
+      ]
+    },
+    {
+      "id": "COMP-006",
+      "name": "Search Service",
+      "component_type": "service",
+      "purpose": "Execute full‑text product searches and filter queries.",
+      "description": "Stateless service that forwards search queries to the OpenSearch cluster and returns ranked results.",
+      "inputs": [
+        "Search queries from API Gateway"
+      ],
+      "outputs": [
+        "Search result sets"
+      ],
+      "dependencies": [
+        "Search Index"
+      ],
+      "related_feature_ids": [
+        "FEAT-001"
+      ],
+      "related_adr_ids": [
+        "ADR-001",
+        "ADR-003",
+        "ADR-004"
+      ],
+      "technology_choices": [
+        "AWS Fargate",
+        "Python / FastAPI",
+        "Amazon OpenSearch Service"
+      ],
+      "security_considerations": [
+        "Sanitize query strings to prevent injection"
+      ],
+      "scalability_considerations": [
+        "OpenSearch cluster scales horizontally",
+        "Stateless service can be autoscaled"
+      ]
+    },
+    {
+      "id": "COMP-007",
+      "name": "Cart Service",
+      "component_type": "service",
+      "purpose": "Maintain a persistent shopping cart per customer across sessions.",
+      "description": "Stateless service that stores cart state in DynamoDB; supports add, update, remove, and retrieval operations.",
+      "inputs": [
+        "Cart manipulation requests from API Gateway"
+      ],
+      "outputs": [
+        "Cart state responses"
+      ],
+      "dependencies": [
+        "Data Store"
+      ],
+      "related_feature_ids": [
+        "FEAT-003"
+      ],
+      "related_adr_ids": [
+        "ADR-001",
+        "ADR-002"
+      ],
+      "technology_choices": [
+        "AWS Fargate",
+        "Go",
+        "DynamoDB (Cart table)"
+      ],
+      "security_considerations": [
+        "Validate product IDs against Product Catalog Service"
+      ],
+      "scalability_considerations": [
+        "Low‑latency reads/writes via DynamoDB"
+      ]
+    },
+    {
+      "id": "COMP-008",
+      "name": "Order Service",
+      "component_type": "service",
+      "purpose": "Create, persist, and manage customer orders and provide order history.",
+      "description": "Stateless service that records orders, reserves inventory, emits OrderCreated events, and serves order‑history queries for customers.",
+      "inputs": [
+        "Checkout requests from API Gateway",
+        "InventoryReserved events from Event Bus",
+        "Order history requests from API Gateway"
+      ],
+      "outputs": [
+        "Order confirmation responses",
+        "OrderCreated events",
+        "Order history data"
+      ],
+      "dependencies": [
+        "Data Store",
+        "Event Bus",
+        "Inventory Service"
+      ],
+      "related_feature_ids": [
+        "FEAT-004",
+        "FEAT-007",
+        "FEAT-008",
+        "FEAT-009",
+        "FEAT-010",
+        "FEAT-011"
+      ],
+      "related_adr_ids": [
+        "ADR-001",
+        "ADR-002",
+        "ADR-003",
+        "ADR-004"
+      ],
+      "technology_choices": [
+        "AWS Fargate",
+        "Java / Quarkus",
+        "DynamoDB (Order table)"
+      ],
+      "security_considerations": [
+        "Validate payment status before confirming order"
+      ],
+      "scalability_considerations": [
+        "Event‑driven order processing decouples load spikes",
+        "Auto‑scaling of containers"
+      ]
+    },
+    {
+      "id": "COMP-009",
+      "name": "Payment Service",
+      "component_type": "service",
+      "purpose": "Process customer payments securely and report outcomes.",
+      "description": "Stateless service that integrates with external payment providers, records transaction results, and publishes PaymentProcessed events.",
+      "inputs": [
+        "Payment requests from API Gateway",
+        "OrderCreated events (optional for pre‑authorization)"
+      ],
+      "outputs": [
+        "Payment success/failure responses",
+        "PaymentProcessed events"
+      ],
+      "dependencies": [
+        "Data Store",
+        "Event Bus"
+      ],
+      "related_feature_ids": [
+        "FEAT-005"
+      ],
+      "related_adr_ids": [
+        "ADR-001",
+        "ADR-002",
+        "ADR-003"
+      ],
+      "technology_choices": [
+        "AWS Fargate",
+        "Node.js",
+        "PCI‑DSS compliant third‑party gateway"
+      ],
+      "security_considerations": [
+        "Never store raw card data",
+        "TLS encryption for all external calls"
+      ],
+      "scalability_considerations": [
+        "Asynchronous event publishing avoids blocking checkout flow"
+      ]
+    },
+    {
+      "id": "COMP-010",
+      "name": "Inventory Service",
+      "component_type": "service",
+      "purpose": "Track stock levels and enforce product availability constraints.",
+      "description": "Stateless service that updates inventory counts, prevents overselling, and emits InventoryReserved events.",
+      "inputs": [
+        "Inventory check requests from API Gateway",
+        "OrderCreated events from Event Bus"
+      ],
+      "outputs": [
+        "Availability responses",
+        "InventoryReserved events"
+      ],
+      "dependencies": [
+        "Data Store",
+        "Event Bus"
+      ],
+      "related_feature_ids": [
+        "FEAT-006",
+        "FEAT-008",
+        "FEAT-009"
+      ],
+      "related_adr_ids": [
+        "ADR-001",
+        "ADR-002",
+        "ADR-003",
+        "ADR-004"
+      ],
+      "technology_choices": [
+        "AWS Fargate",
+        "Python",
+        "DynamoDB (Inventory table)"
+      ],
+      "security_considerations": [
+        "Validate order quantities against available stock"
+      ],
+      "scalability_considerations": [
+        "Event‑driven updates reduce contention",
+        "DynamoDB scales for high write throughput"
+      ]
+    },
+    {
+      "id": "COMP-011",
+      "name": "Notification Service",
+      "component_type": "service",
+      "purpose": "Send email/SMS notifications for order confirmations, payment receipts, and shipment updates.",
+      "description": "Consumes events from the Event Bus and triggers outbound messages via Amazon SES and SNS.",
+      "inputs": [
+        "OrderCreated events",
+        "PaymentProcessed events"
+      ],
+      "outputs": [
+        "Email/SMS messages to customers"
+      ],
+      "dependencies": [
+        "External Email Service (Amazon SES)",
+        "External SMS Service (Amazon SNS)"
+      ],
+      "related_feature_ids": [
+        "FEAT-004",
+        "FEAT-005"
+      ],
+      "related_adr_ids": [
+        "ADR-003"
+      ],
+      "technology_choices": [
+        "AWS Lambda",
+        "Node.js",
+        "Amazon SES",
+        "Amazon SNS"
+      ],
+      "security_considerations": [
+        "Ensure email content does not expose sensitive data"
+      ],
+      "scalability_considerations": [
+        "Lambda scales automatically with event volume"
+      ]
+    },
+    {
+      "id": "COMP-012",
+      "name": "Event Bus",
+      "component_type": "queue",
+      "purpose": "Provide asynchronous, decoupled communication between services.",
+      "description": "Implemented with Amazon SNS topics and SQS queues; supports at‑least‑once delivery and fan‑out to multiple consumers.",
+      "inputs": [
+        "OrderCreated events from Order Service",
+        "InventoryReserved events from Inventory Service",
+        "PaymentProcessed events from Payment Service"
+      ],
+      "outputs": [
+        "Events delivered to Notification Service and other interested services"
+      ],
+      "dependencies": [
+        "Notification Service"
+      ],
+      "related_feature_ids": [
+        "FEAT-008",
+        "FEAT-009",
+        "FEAT-011"
+      ],
+      "related_adr_ids": [
+        "ADR-003"
+      ],
+      "technology_choices": [
+        "Amazon SNS",
+        "Amazon SQS"
+      ],
+      "security_considerations": [
+        "IAM policies restrict publish/subscribe permissions"
+      ],
+      "scalability_considerations": [
+        "Managed service scales automatically with message volume"
+      ]
+    },
+    {
+      "id": "COMP-013",
+      "name": "Data Store",
+      "component_type": "database",
+      "purpose": "Persist domain data for all services using DynamoDB.",
+      "description": "A set of DynamoDB tables, each owned by a single service, providing low‑latency, highly available key‑value storage.",
+      "inputs": [
+        "Read/write requests from all services"
+      ],
+      "outputs": [
+        "Data responses to services"
+      ],
+      "dependencies": [],
+      "related_feature_ids": [
+        "FEAT-001",
+        "FEAT-002",
+        "FEAT-003",
+        "FEAT-004",
+        "FEAT-005",
+        "FEAT-006",
+        "FEAT-008",
+        "FEAT-009",
+        "FEAT-010",
+        "FEAT-011"
+      ],
+      "related_adr_ids": [
+        "ADR-002",
+        "ADR-004"
+      ],
+      "technology_choices": [
+        "Amazon DynamoDB"
+      ],
+      "security_considerations": [
+        "Encryption at rest",
+        "Fine‑grained IAM access per table"
+      ],
+      "scalability_considerations": [
+        "On‑demand capacity mode for unpredictable traffic",
+        "Global secondary indexes for query patterns"
+      ]
+    },
+    {
+      "id": "COMP-014",
+      "name": "Cache",
+      "component_type": "database",
+      "purpose": "Accelerate read‑heavy product data and reduce DynamoDB load.",
+      "description": "Redis cluster (ElastiCache) used for caching product listings and session data.",
+      "inputs": [
+        "Cache get/set requests from API Gateway and services"
+      ],
+      "outputs": [
+        "Cached data responses"
+      ],
+      "dependencies": [
+        "Data Store"
+      ],
+      "related_feature_ids": [
+        "FEAT-001",
+        "FEAT-010"
+      ],
+      "related_adr_ids": [
+        "ADR-004"
+      ],
+      "technology_choices": [
+        "Amazon ElastiCache for Redis"
+      ],
+      "security_considerations": [
+        "In‑transit encryption",
+        "VPC isolation"
+      ],
+      "scalability_considerations": [
+        "Cluster scaling with read replicas"
+      ]
+    },
+    {
+      "id": "COMP-015",
+      "name": "Search Index",
+      "component_type": "database",
+      "purpose": "Store searchable product documents for full‑text queries.",
+      "description": "OpenSearch domain containing indexed product data, refreshed from the Product Catalog Service.",
+      "inputs": [
+        "Indexing updates from Product Catalog Service"
+      ],
+      "outputs": [
+        "Search result documents to Search Service"
+      ],
+      "dependencies": [],
+      "related_feature_ids": [
+        "FEAT-001"
+      ],
+      "related_adr_ids": [
+        "ADR-002",
+        "ADR-004"
+      ],
+      "technology_choices": [
+        "Amazon OpenSearch Service"
+      ],
+      "security_considerations": [
+        "Domain access policies",
+        "TLS encryption"
+      ],
+      "scalability_considerations": [
+        "Horizontal shard scaling",
+        "Replica nodes for high availability"
+      ]
+    },
+    {
+      "id": "COMP-016",
+      "name": "Email Service",
+      "component_type": "external",
+      "purpose": "Send transactional email notifications (order confirmations, receipts).",
+      "description": "Managed Amazon SES service used by the Notification Service to deliver email messages.",
+      "inputs": [
+        "Email message payloads from Notification Service"
+      ],
+      "outputs": [
+        "Delivered email messages to customers"
+      ],
+      "dependencies": [],
+      "related_feature_ids": [
+        "FEAT-004",
+        "FEAT-005"
+      ],
+      "related_adr_ids": [
+        "ADR-003"
+      ],
+      "technology_choices": [
+        "Amazon Simple Email Service (SES)"
+      ],
+      "security_considerations": [
+        "DKIM and SPF for email authenticity",
+        "Encryption in transit"
+      ],
+      "scalability_considerations": [
+        "Pay‑as‑you‑go pricing scales with volume",
+        "Managed service handles high throughput"
+      ]
+    },
+    {
+      "id": "COMP-017",
+      "name": "SMS Service",
+      "component_type": "external",
+      "purpose": "Send transactional SMS notifications (order updates, alerts).",
+      "description": "Managed Amazon SNS SMS capability used by the Notification Service to deliver short message alerts.",
+      "inputs": [
+        "SMS message payloads from Notification Service"
+      ],
+      "outputs": [
+        "Delivered SMS messages to customers"
+      ],
+      "dependencies": [],
+      "related_feature_ids": [
+        "FEAT-004",
+        "FEAT-005"
+      ],
+      "related_adr_ids": [
+        "ADR-003"
+      ],
+      "technology_choices": [
+        "Amazon Simple Notification Service (SNS) SMS"
+      ],
+      "security_considerations": [
+        "IAM policies restrict SMS publishing",
+        "Message content compliance"
+      ],
+      "scalability_considerations": [
+        "Managed service scales automatically with message volume"
+      ]
+    }
+  ],
+  "review": {
+    "rubric_version": "3.0",
+    "overall_status": "fail",
+    "rubric_scores": {
+      "all_artifacts_present": 2,
+      "constraint_coverage": 2,
+      "traceability": 2,
+      "adr_presence": 2,
+      "source_integrity": 2,
+      "kb_evidence_grounding": 1,
+      "repo_grounding": true,
+      "flaw_detection": true,
+      "adr_soundness": false,
+      "best_practice_grounding": false,
+      "refinement_readiness": true
+    },
+    "judgment_reasons": {
+      "repo_grounding": "Not applicable because this is a greenfield project with no repository; repository_status is 'not_provided_greenfield' and no repository representation is available.",
+      "flaw_detection": "The Blueprint and component definitions cover every functional requirement (FEAT-001 – FEAT-007) and all non‑functional requirements (FEAT-008 – FEAT-011). Constraints such as AWS cloud, cost‑efficiency, 50,000 concurrent users, and high availability are explicitly addressed in the constraints list and design choices.",
+      "adr_soundness": "ADR-005 ('Use serverless and managed services to optimize cost') has no evidence_ids, so its rationale is not backed by any retrieved knowledge despite the deterministic check flagging this gap.",
+      "best_practice_grounding": "ADR-005 lacks any evidence citation, leaving its recommendation unsupported; all other ADRs cite relevant evidence, but the missing citation constitutes a best‑practice grounding failure.",
+      "refinement_readiness": "The identified problems (missing evidence for ADR-005) are concrete and include clear corrective actions, enabling the architect to start a refinement pass without ambiguity."
+    },
+    "issues": [
+      {
+        "id": "DET-1",
+        "severity": "high",
+        "category": "evidence",
+        "finding": "ADR(s) claim no traceable curated-KB literature support: ADR-005.",
+        "evidence": "adrs_without_kb_evidence=['ADR-005']; decision topics with qualifying evidence available this run: ['service decomposition and boundaries', 'data ownership and persistence strategy', 'integration style: synchronous vs asynchronous communication', 'scaling and availability strategy']",
+        "suggested_fix": "For each listed ADR: cite a retrieved evidence_id from <evidence_catalog> if one genuinely supports that specific decision (see <decision_topics> for what was retrieved per topic); if nothing retrieved is actually relevant to it, that is a knowledge-base coverage gap for this decision — say so in the ADR's rationale rather than citing an unrelated ID merely to satisfy this check.",
+        "requires_refinement": true,
+        "non_refinable": false
+      },
+      {
+        "id": "LLM-1",
+        "severity": "high",
+        "category": "adr",
+        "finding": "One or more ADR rationales or trade-offs are not sound.",
+        "evidence": "ADR-005 ('Use serverless and managed services to optimize cost') has no evidence_ids, so its rationale is not backed by any retrieved knowledge despite the deterministic check flagging this gap.",
+        "suggested_fix": "Add appropriate evidence IDs from the evidence catalog (e.g., KB-E003, KB-E006, KB-E010) that discuss cost‑efficient managed services, or explicitly note in the ADR that no evidence is available.",
+        "requires_refinement": true,
+        "non_refinable": false
+      },
+      {
+        "id": "LLM-2",
+        "severity": "medium",
+        "category": "evidence",
+        "finding": "Recommendations are not adequately grounded in supplied evidence.",
+        "evidence": "ADR-005 lacks any evidence citation, leaving its recommendation unsupported; all other ADRs cite relevant evidence, but the missing citation constitutes a best‑practice grounding failure.",
+        "suggested_fix": "Provide evidence IDs for ADR-005 from the evidence catalog that substantiate the cost‑efficiency decision, or amend the ADR to acknowledge the evidence gap.",
+        "requires_refinement": true,
+        "non_refinable": false
+      }
+    ],
+    "requires_refinement": true,
+    "refinement_instruction": "The review found 3 issue(s). Address them in priority order.\n\n1. [high] ADR(s) claim no traceable curated-KB literature support: ADR-005.\n   Evidence: adrs_without_kb_evidence=['ADR-005']; decision topics with qualifying evidence available this run: ['service decomposition and boundaries', 'data ownership and persistence strategy', 'integration...\n   Fix: For each listed ADR: cite a retrieved evidence_id from <evidence_catalog> if one genuinely supports that specific decision (see <decision_topics> for what was retrieved per topic); if nothing retrieved is actually relevant to it, that is a...\n2. [high] One or more ADR rationales or trade-offs are not sound.\n   Evidence: ADR-005 ('Use serverless and managed services to optimize cost') has no evidence_ids, so its rationale is not backed by any retrieved knowledge despite the deterministic check flagging this gap.\n   Fix: Add appropriate evidence IDs from the evidence catalog (e.g., KB-E003, KB-E006, KB-E010) that discuss cost‑efficient managed services, or explicitly note in the ADR that no evidence is available.\n3. [medium] Recommendations are not adequately grounded in supplied evidence.\n   Fix: Provide evidence IDs for ADR-005 from the evidence catalog that substantiate the cost‑efficiency decision, or amend the ADR to acknowledge the evidence gap.",
+    "not_applicable": [
+      "repo_grounding"
+    ]
+  },
+  "clarifying_questions": [],
+  "clarification_answers": {
+    "What current problem or limitation are you trying to fix?": "We want to build a new e-commerce platform from scratch that can support future growth and high peak traffic",
+    "What are the core capabilities the system must provide?": "Browse and search products Manage customer accounts Manage shopping carts Place and process orders Handle payments Manage inventory and product availability View order status and histo",
+    "What scale, availability, or performance targets does this need to meet?": "Support up to 50,000 concurrent users during peak campaigns Maintain high availability during peak periods Keep customer-facing interactions responsive Allow the system to scale as demand grows"
+  },
+  "vetoed_assumptions": [],
+  "advisory_turns": [],
+  "user_feedback": [],
+  "accepted_at": "",
+  "waiver": null,
+  "retrieved_knowledge": [
+    {
+      "content": "Microservices architecture has emerged as a compelling alternative, offering the promise of enhanced scalability, improved fault tolerance, and greater development agility [1]. By decomposing monolithic applications into smaller, independently deployable services, organizations can achieve better resource utilization, faster deployment cycles, and improved system resilience.\n\nEvent-driven architecture (EDA) patterns have gained particular attention in the context of microservices migration, especially for e-commerce systems where business processes are inherently event-oriented. Customer actions such as placing orders, updating profiles, or processing payments naturally translate to domain events that can drive system behavior [5]. The asynchronous nature of event-driven communication provides better decoupling between services, enhanced fault tolerance, and improved scalability compared to synchronous request-response patterns [4].",
+      "source": "Rag Database/box2_domain/ecommerce_migration_event_driven_bulus.md",
+      "page": 0,
+      "box": 2,
+      "distance": 0.4811849892139435,
+      "evidence_id": "KB-E001"
+    },
+    {
+      "content": "**b. High Load Scenarios:** Asynchronous patterns (message queues) demonstrate superior throughput and availability [4].\n\n**c. Availability:** Event-driven architectures provide better fault tolerance and system availability under stress [4].\n\nThese findings suggest that e-commerce systems should employ hybrid approaches, using synchronous communication for real-time user interactions and asynchronous patterns for backend processing and inter-service communication.",
+      "source": "Rag Database/box2_domain/ecommerce_migration_event_driven_bulus.md",
+      "page": 0,
+      "box": 2,
+      "distance": 0.4336385130882263,
+      "evidence_id": "KB-E002"
+    },
+    {
+      "content": "**Solution mechanics:** The application is designed to be **stateless** — per AWS, it \"does not need knowledge of previous interactions and does not store session information\" locally on disk or in memory between requests. All session/user state is offloaded to an external, resilient, multi-zone store (e.g., Amazon ElastiCache/Redis, DynamoDB, or a database); anything that can be is passed in request parameters, headers, or tokens instead of stored server-side. Because no request depends on server-local state, **any** available instance can serve **any** request, so you scale out (add interchangeable instances — \"scale-out\") behind a load balancer, and instances can be replaced or terminated at will without availability impact. This enables autoscaling (add/remove instances on demand, distributed across Availability Zones for reliability) and serverless compute (AWS Lambda, Fargate) where any compute resource services any request.",
+      "source": "Rag Database/box1_patterns/architecture_patterns_v2.md",
+      "page": 0,
+      "box": 1,
+      "distance": 0.489764928817749,
+      "evidence_id": "KB-E003"
+    },
+    {
+      "content": "The reviewed studies reveal several distinct approaches to monolith decomposition, each with specific advantages for e-commerce contexts.\n\n**a. Domain-Driven Design (DDD) Approaches:** Multiple studies emphasize Domain-Driven Design as a foundational approach for identifying service boundaries in e-commerce systems. Abgaz et al. [1] identify DDD as a critical component of their Monolith to Microservices Decomposition Framework (M2MDF), noting its effectiveness in creating business-aligned service boundaries. Kaloudis [6] reinforces this approach, demonstrating how DDD enables better service cohesion and reduced coupling. In e-commerce contexts, natural domain boundaries often align with business capabilities, such as customer management, product catalog, order processing, payment handling, and inventory management.",
+      "source": "Rag Database/box2_domain/ecommerce_migration_event_driven_bulus.md",
+      "page": 0,
+      "box": 2,
+      "distance": 0.5105839371681213,
+      "evidence_id": "KB-E004"
+    },
+    {
+      "content": "With a domain-driven microservices approach, each service uses the database that fits its data characteristics. Each microservice owns its private data store. This design prevents unintentional coupling between services and supports independent updates and deployments without coordinating changes across the system.\n\n## Architecture — Data flow",
+      "source": "Rag Database/box2_domain/ecommerce_polyglot_persistence_microsoft.md",
+      "page": 0,
+      "box": 2,
+      "distance": 0.5349937081336975,
+      "evidence_id": "KB-E005"
+    },
+    {
+      "content": "Web applications often have demanding requirements to ensure a consistent, secure, and \nreliable user experience. Workloads which need to scale to thousands or millions of users require \nprovisioning infrastructure for peak loads or sophisticated auto-scaling mechanisms, when \navailable. On-premises workloads require signiﬁcant capital expenditures and long lead times for \ncapacity provisioning.\nWeb application 20",
+      "source": "Rag Database/box1_patterns/wellarchitected-serverless-applications-lens.pdf",
+      "page": 24,
+      "box": 1,
+      "distance": 0.5140385627746582,
+      "evidence_id": "KB-E006"
+    },
+    {
+      "content": "## 2.2 Monolithic and Microservices Architectures Comparison *(printed p. 478)*\n\nIn the e-commerce landscape, choosing between microservices and traditional monolithic architectures requires careful consideration of various factors. Monolithic architectures, characterized by their single, tightly coupled codebase. However, when e-commerce systems increase in size, they frequently face scalability and maintenance issues. Microservices provide an alternative approach by decomposing monolithic applications into smaller, self-contained services [6]. This decomposition results in fine-grained services, each focusing on a specific business capability. Scalability is one of the most major advantages of microservices. E-commerce platforms often experience fluctuating traffic patterns, especially during promotions or seasonal events. Microservices enable organisations to scale individual services, ensuring that resources are deployed efficiently to manage workload properly.",
+      "source": "Rag Database/box2_domain/ecommerce_microservices_challenges_ibrahim_luong.md",
+      "page": 0,
+      "box": 2,
+      "distance": 0.5168914198875427,
+      "evidence_id": "KB-E007"
+    },
+    {
+      "content": "NoSQL databases have been designed to favor scalability, performance, and availability over the \nconsistency of relational databases. One important element of NoSQL databases is that they \ntypically don’t enforce a strict schema. Data is distributed over partitions that can be scaled \nhorizontally and is retrieved using partition keys.\nBecause individual microservices are designed to do one thing well, they typically have a simpliﬁed \ndata model that might be well suited to NoSQL persistence. It is important to understand \nthat NoSQL databases have diﬀerent access patterns than relational databases. For example, \nit's not possible to join tables. If this is necessary, the logic has to be implemented in the \napplication. You can use Amazon DynamoDB to create a database table that can store and \nretrieve any amount of data and serve any level of request traﬃc. DynamoDB delivers single-\ndigit millisecond performance, however, there are certain use cases that require response times in",
+      "source": "Rag Database/box1_patterns/microservices-on-aws.pdf",
+      "page": 10,
+      "box": 1,
+      "distance": 0.5484281778335571,
+      "evidence_id": "KB-E008"
+    },
+    {
+      "content": "**c. Event-Driven Communication:** Asynchronous event-driven patterns prove superior for e-commerce workloads, providing better scalability under high load conditions and improved fault tolerance [4][5]. The natural event-oriented nature of e-commerce business processes aligns well with event-driven architectures.\n\n**d. Comprehensive Tooling:** Organizations benefit significantly from automated decomposition tools like Mono2Micro [10], which provide objective analysis of service boundaries and reduce subjective architectural decisions.\n\n## DISCUSSION — 2. Performance Considerations *(printed p. 16)*\n\nThe performance analysis reveals nuanced trade-offs between synchronous and asynchronous communication patterns:\n\n**a. Low Load Scenarios:** Synchronous patterns (gRPC, REST) provide better performance with lower latency [4].\n\n**b. High Load Scenarios:** Asynchronous patterns (message queues) demonstrate superior throughput and availability [4].",
+      "source": "Rag Database/box2_domain/ecommerce_migration_event_driven_bulus.md",
+      "page": 0,
+      "box": 2,
+      "distance": 0.5184453725814819,
+      "evidence_id": "KB-E009"
+    },
+    {
+      "content": "## Scaling for traffic surges and catalog growth *(PDF p. 11)*\n\nE-commerce platforms face unpredictable traffic surges and growing product catalogs.\n\nThe article describes two broad scaling approaches:\n\n- **Vertical scaling:** increase the resources available to existing data nodes.\n- **Horizontal scaling:** add more data nodes so indexing and search work can be distributed across more cluster capacity.\n\nFor traffic growth or increasing data volume, horizontal scaling can distribute load across nodes. Temporary additional replicas can also increase read throughput during high-traffic periods without requiring permanent capacity at the same level.\n\n## Monitoring search quality and capacity *(PDF pp. 11-12)*\n\nSearch infrastructure should be monitored using workload and performance indicators rather than sized once and left unchanged.",
+      "source": "Rag Database/box2_domain/ecommerce_search_opensearch_aws.md",
+      "page": 0,
+      "box": 2,
+      "distance": 0.5333665609359741,
+      "evidence_id": "KB-E010"
+    }
+  ],
+  "decision_topics": [
+    {
+      "id": "TOPIC-1",
+      "topic": "service decomposition and boundaries",
+      "query": "service decomposition and boundaries We want to build a new e-commerce platform from scratch that can support future growth and high peak traffic. Build a new e-commerce platform that can support future growth and high peak traffic.",
+      "evidence_ids": [
+        "KB-E001",
+        "KB-E004",
+        "KB-E007"
+      ]
+    },
+    {
+      "id": "TOPIC-2",
+      "topic": "data ownership and persistence strategy",
+      "query": "data ownership and persistence strategy We want to build a new e-commerce platform from scratch that can support future growth and high peak traffic. Build a new e-commerce platform that can support future growth and high peak traffic.",
+      "evidence_ids": [
+        "KB-E001",
+        "KB-E005",
+        "KB-E008"
+      ]
+    },
+    {
+      "id": "TOPIC-3",
+      "topic": "integration style: synchronous vs asynchronous communication",
+      "query": "integration style: synchronous vs asynchronous communication We want to build a new e-commerce platform from scratch that can support future growth and high peak traffic. Build a new e-commerce platform that can support future growth and high peak traffic.",
+      "evidence_ids": [
+        "KB-E002",
+        "KB-E001",
+        "KB-E009"
+      ]
+    },
+    {
+      "id": "TOPIC-4",
+      "topic": "scaling and availability strategy",
+      "query": "scaling and availability strategy We want to build a new e-commerce platform from scratch that can support future growth and high peak traffic. Build a new e-commerce platform that can support future growth and high peak traffic.",
+      "evidence_ids": [
+        "KB-E003",
+        "KB-E006",
+        "KB-E010"
+      ]
+    }
+  ],
+  "features": [
+    {
+      "id": "FEAT-001",
+      "name": "Product browsing and search",
+      "description": "Customers can discover products by browsing categories and searching with keywords, applying filters, and viewing paginated results.",
+      "scenario": "A customer enters a keyword and selects filter options; the system returns a list of matching products within a reasonable time and allows navigation through result pages.",
+      "related_requirement_ids": [
+        "FR-001"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "Search returns results that match the entered keywords and selected filters.",
+        "Product list is displayed without errors and supports pagination.",
+        "Response time is perceived as acceptable by users under normal load."
+      ]
+    },
+    {
+      "id": "FEAT-002",
+      "name": "Customer account management",
+      "description": "Customers can create, authenticate, and maintain their personal accounts, including profile updates and password recovery.",
+      "scenario": "A new user registers, verifies email, logs in, updates their address, and successfully resets their password using the recovery flow.",
+      "related_requirement_ids": [
+        "FR-002"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "Account creation completes and a verification email is sent.",
+        "Login succeeds with correct credentials and fails with incorrect ones.",
+        "Profile changes are persisted and visible on subsequent logins.",
+        "Password reset email is delivered and allows the user to set a new password."
+      ]
+    },
+    {
+      "id": "FEAT-003",
+      "name": "Shopping cart management",
+      "description": "Customers can add, modify, and remove items in a persistent shopping cart across sessions.",
+      "scenario": "A logged‑in customer adds three different products, changes the quantity of one, removes another, then logs out and later returns to find the cart unchanged.",
+      "related_requirement_ids": [
+        "FR-003"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "Items added appear in the cart with correct quantities.",
+        "Quantity updates are reflected immediately.",
+        "Removed items no longer appear in the cart.",
+        "Cart contents persist after logout and subsequent login."
+      ]
+    },
+    {
+      "id": "FEAT-004",
+      "name": "Order placement and processing",
+      "description": "Customers can complete checkout, creating an order that is recorded and acknowledged.",
+      "scenario": "A customer proceeds from cart to checkout, confirms shipping details, and submits the order; the system generates an order record and sends a confirmation email.",
+      "related_requirement_ids": [
+        "FR-004"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "Order is created with correct line items and totals.",
+        "Inventory is reserved for the ordered items.",
+        "A confirmation email containing order details is sent to the customer.",
+        "Order appears in the customer's order history."
+      ]
+    },
+    {
+      "id": "FEAT-005",
+      "name": "Payment handling",
+      "description": "The platform securely processes customer payments and reflects payment outcomes on orders.",
+      "scenario": "During checkout, a customer enters valid payment information; the transaction is processed successfully and the order status changes to Paid. A declined payment results in an appropriate error message.",
+      "related_requirement_ids": [
+        "FR-005"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "Successful payment updates the order status to Paid and triggers a receipt email.",
+        "Declined or failed payment returns a clear error message without creating a charged order.",
+        "Sensitive payment data is never stored in plain text."
+      ]
+    },
+    {
+      "id": "FEAT-006",
+      "name": "Inventory and availability management",
+      "description": "Staff can manage stock levels, and the system reflects product availability to customers, preventing overselling.",
+      "scenario": "An inventory manager updates the stock count for a product; the product page immediately shows the new availability, and attempts to purchase beyond available stock are blocked.",
+      "related_requirement_ids": [
+        "FR-006"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "Stock level changes are reflected on product detail pages in real time.",
+        "When inventory reaches zero, the product is shown as out‑of‑stock and cannot be added to the cart.",
+        "Order processing decrements inventory accurately."
+      ]
+    },
+    {
+      "id": "FEAT-007",
+      "name": "Order status and history view",
+      "description": "Customers can view a list of their past orders and the current status of each order.",
+      "scenario": "A logged‑in customer navigates to the 'My Orders' page, sees a list of previous purchases with dates, totals, and status indicators such as 'Shipped' or 'Delivered'.",
+      "related_requirement_ids": [
+        "FR-007"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "All orders belonging to the customer are displayed in reverse chronological order.",
+        "Each order shows accurate status information matching the backend state.",
+        "Clicking an order reveals detailed line items and shipping information."
+      ]
+    },
+    {
+      "id": "FEAT-008",
+      "name": "Peak concurrency support",
+      "description": "The platform can sustain the required number of simultaneous users during high‑traffic campaigns.",
+      "scenario": "During a simulated peak campaign, 50,000 concurrent virtual users browse products, add items to carts, and place orders without service degradation.",
+      "related_requirement_ids": [
+        "NFR-001"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "All core user flows (browse, cart, checkout) remain functional with 50,000 concurrent users.",
+        "Error rates stay within acceptable limits and no critical failures occur.",
+        "System resources scale to meet the load without manual intervention."
+      ]
+    },
+    {
+      "id": "FEAT-009",
+      "name": "High availability during peaks",
+      "description": "The system remains reachable and operational throughout peak traffic periods.",
+      "scenario": "While the platform experiences peak load, health‑check endpoints continuously report healthy status and no user reports an inability to access the site.",
+      "related_requirement_ids": [
+        "NFR-002"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "All services report healthy status for the duration of the peak load test.",
+        "No downtime or loss of connectivity is observed by simulated users.",
+        "Failover mechanisms activate automatically if a component becomes unhealthy."
+      ]
+    },
+    {
+      "id": "FEAT-010",
+      "name": "Responsive customer‑facing interactions",
+      "description": "User‑visible operations respond quickly enough to be perceived as responsive under normal and peak conditions.",
+      "scenario": "Customers perform typical actions (search, view product, add to cart) during both regular traffic and peak load; they do not experience noticeable lag or timeouts.",
+      "related_requirement_ids": [
+        "NFR-003"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "User actions complete without timeouts or error pages.",
+        "Feedback from usability testing indicates interactions feel responsive.",
+        "No UI element remains in a loading state for an extended period."
+      ]
+    },
+    {
+      "id": "FEAT-011",
+      "name": "Elastic scalability",
+      "description": "The platform can automatically expand capacity as demand grows, without service interruption.",
+      "scenario": "Traffic gradually increases from baseline to well beyond typical levels; the system automatically provisions additional compute and storage resources, and continues serving requests seamlessly.",
+      "related_requirement_ids": [
+        "NFR-004"
+      ],
+      "priority": "must",
+      "acceptance_criteria": [
+        "Scaling events are triggered automatically based on load metrics.",
+        "New resources are added without causing request failures or noticeable latency spikes.",
+        "After scaling, the system continues to meet functional and performance expectations."
+      ]
+    }
+  ],
+  "repo_deep_dives": [],
+  "run_id": "20260828T141205Z-3a0086f8",
+  "stage": "designing",
+  "pending_decision": null,
+  "user_rounds": 0,
+  "require_context_approval": true,
+  "optional_context_resolved_version": 1,
+  "history": [
+    {
+      "agent": "repo_ingestor",
+      "stage_in": "created",
+      "stage_out": "ingesting",
+      "note": "no repo URL in request — greenfield run, nothing to ingest",
+      "timestamp": "2026-08-28T14:12:05.309607+00:00",
+      "model": "",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0,
+      "thinking_level": ""
+    },
+    {
+      "agent": "clarifier",
+      "stage_in": "ingesting",
+      "stage_out": "awaiting_input",
+      "note": "missing 2 critical fact(s); asked 2",
+      "timestamp": "2026-08-28T14:12:10.742904+00:00",
+      "model": "gemini-3.1-flash-lite",
+      "input_tokens": 1018,
+      "output_tokens": 316,
+      "cost_usd": 0.0007285,
+      "thinking_level": ""
+    },
+    {
+      "agent": "clarifier",
+      "stage_in": "awaiting_input",
+      "stage_out": "awaiting_input",
+      "note": "missing 1 critical fact(s); asked 1",
+      "timestamp": "2026-08-28T14:12:41.459989+00:00",
+      "model": "gemini-3.1-flash-lite",
+      "input_tokens": 1109,
+      "output_tokens": 424,
+      "cost_usd": 0.00091325,
+      "thinking_level": ""
+    },
+    {
+      "agent": "clarifier",
+      "stage_in": "awaiting_input",
+      "stage_out": "awaiting_input",
+      "note": "context locked; 3 optional question(s) pending before approval",
+      "timestamp": "2026-08-28T14:13:08.039889+00:00",
+      "model": "gemini-3.1-flash-lite",
+      "input_tokens": 1164,
+      "output_tokens": 418,
+      "cost_usd": 0.000918,
+      "thinking_level": ""
+    },
+    {
+      "agent": "researcher",
+      "stage_in": "clarifying",
+      "stage_out": "researching",
+      "note": "planned 4 decision topic(s); retrieved 10 curated-KB evidence item(s)",
+      "timestamp": "2026-08-28T14:15:34.911429+00:00",
+      "model": "",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0,
+      "thinking_level": ""
+    },
+    {
+      "agent": "architect",
+      "stage_in": "researching",
+      "stage_out": "designing",
+      "note": "derived 11 feature(s); generated blueprint, 4 ADR(s), and 15 component(s); removed 8 unresolvable ADR source reference(s): KB-E004; KB-E001; KB-E005; KB-E008; …",
+      "timestamp": "2026-08-28T14:18:23.694445+00:00",
+      "model": "OpenAI GPT OSS 120b KI:Inferenz.nrw",
+      "input_tokens": 11681,
+      "output_tokens": 13019,
+      "cost_usd": 0.0,
+      "thinking_level": ""
+    },
+    {
+      "agent": "reviewer",
+      "stage_in": "designing",
+      "stage_out": "refining",
+      "note": "fail; 5 issue(s)",
+      "timestamp": "2026-08-28T14:18:43.745201+00:00",
+      "model": "OpenAI GPT OSS 120b KI:Inferenz.nrw",
+      "input_tokens": 13114,
+      "output_tokens": 1479,
+      "cost_usd": 0.0,
+      "thinking_level": ""
+    },
+    {
+      "agent": "refine_gate",
+      "stage_in": "refining",
+      "stage_out": "refining",
+      "note": "refine 1/3 → architect; round 1 is the new best",
+      "timestamp": "2026-08-28T14:18:43.761152+00:00",
+      "model": "",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0,
+      "thinking_level": ""
+    },
+    {
+      "agent": "architect",
+      "stage_in": "refining",
+      "stage_out": "designing",
+      "note": "reused 11 feature(s); generated blueprint, 5 ADR(s), and 17 component(s)",
+      "timestamp": "2026-08-28T14:20:29.148071+00:00",
+      "model": "OpenAI GPT OSS 120b KI:Inferenz.nrw",
+      "input_tokens": 17160,
+      "output_tokens": 8704,
+      "cost_usd": 0.0,
+      "thinking_level": ""
+    },
+    {
+      "agent": "reviewer",
+      "stage_in": "designing",
+      "stage_out": "refining",
+      "note": "fail; 3 issue(s)",
+      "timestamp": "2026-08-28T14:20:53.363954+00:00",
+      "model": "OpenAI GPT OSS 120b KI:Inferenz.nrw",
+      "input_tokens": 13669,
+      "output_tokens": 1453,
+      "cost_usd": 0.0,
+      "thinking_level": ""
+    },
+    {
+      "agent": "refine_gate",
+      "stage_in": "refining",
+      "stage_out": "refining",
+      "note": "refine 2/3 → architect; round 2 is the new best",
+      "timestamp": "2026-08-28T14:20:53.394390+00:00",
+      "model": "",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0,
+      "thinking_level": ""
+    },
+    {
+      "agent": "architect",
+      "stage_in": "refining",
+      "stage_out": "designing",
+      "note": "reused 11 feature(s); generated blueprint, 5 ADR(s), and 17 component(s)",
+      "timestamp": "2026-08-28T14:22:08.813471+00:00",
+      "model": "OpenAI GPT OSS 120b KI:Inferenz.nrw",
+      "input_tokens": 17986,
+      "output_tokens": 8010,
+      "cost_usd": 0.0,
+      "thinking_level": ""
+    }
+  ],
+  "retry_counts": {},
+  "refine_iterations": 2,
+  "ask_rounds": 2,
+  "stopped_on_cap": false,
+  "best_design": {
+    "round": 2,
+    "features": [
+      {
+        "id": "FEAT-001",
+        "name": "Product browsing and search",
+        "description": "Customers can discover products by browsing categories and searching with keywords, applying filters, and viewing paginated results.",
+        "scenario": "A customer enters a keyword and selects filter options; the system returns a list of matching products within a reasonable time and allows navigation through result pages.",
+        "related_requirement_ids": [
+          "FR-001"
+        ],
+        "priority": "must",
+        "acceptance_criteria": [
+          "Search returns results that match the entered keywords and selected filters.",
+          "Product list is displayed without errors and supports pagination.",
+          "Response time is perceived as acceptable by users under normal load."
+        ]
+      },
+      {
+        "id": "FEAT-002",
+        "name": "Customer account management",
+        "description": "Customers can create, authenticate, and maintain their personal accounts, including profile updates and password recovery.",
+        "scenario": "A new user registers, verifies email, logs in, updates their address, and successfully resets their password using the recovery flow.",
+        "related_requirement_ids": [
+          "FR-002"
+        ],
+        "priority": "must",
+        "acceptance_criteria": [
+          "Account creation completes and a verification email is sent.",
+          "Login succeeds with correct credentials and fails with incorrect ones.",
+          "Profile changes are persisted and visible on subsequent logins.",
+          "Password reset email is delivered and allows the user to set a new password."
+        ]
+      },
+      {
+        "id": "FEAT-003",
+        "name": "Shopping cart management",
+        "description": "Customers can add, modify, and remove items in a persistent shopping cart across sessions.",
+        "scenario": "A logged‑in customer adds three different products, changes the quantity of one, removes another, then logs out and later returns to find the cart unchanged.",
+        "related_requirement_ids": [
+          "FR-003"
+        ],
+        "priority": "must",
+        "acceptance_criteria": [
+          "Items added appear in the cart with correct quantities.",
+          "Quantity updates are reflected immediately.",
+          "Removed items no longer appear in the cart.",
+          "Cart contents persist after logout and subsequent login."
+        ]
+      },
+      {
+        "id": "FEAT-004",
+        "name": "Order placement and processing",
+        "description": "Customers can complete checkout, creating an order that is recorded and acknowledged.",
+        "scenario": "A customer proceeds from cart to checkout, confirms shipping details, and submits the order; the system generates an order record and sends a confirmation email.",
+        "related_requirement_ids": [
+          "FR-004"
+        ],
+        "priority": "must",
+        "acceptance_criteria": [
+          "Order is created with correct line items and totals.",
+          "Inventory is reserved for the ordered items.",
+          "A confirmation email containing order details is sent to the customer.",
+          "Order appears in the customer's order history."
+        ]
+      },
+      {
+        "id": "FEAT-005",
+        "name": "Payment handling",
+        "description": "The platform securely processes customer payments and reflects payment outcomes on orders.",
+        "scenario": "During checkout, a customer enters valid payment information; the transaction is processed successfully and the order status changes to Paid. A declined payment results in an appropriate error message.",
+        "related_requirement_ids": [
+          "FR-005"
+        ],
+        "priority": "must",
+        "acceptance_criteria": [
+          "Successful payment updates the order status to Paid and triggers a receipt email.",
+          "Declined or failed payment returns a clear error message without creating a charged order.",
+          "Sensitive payment data is never stored in plain text."
+        ]
+      },
+      {
+        "id": "FEAT-006",
+        "name": "Inventory and availability management",
+        "description": "Staff can manage stock levels, and the system reflects product availability to customers, preventing overselling.",
+        "scenario": "An inventory manager updates the stock count for a product; the product page immediately shows the new availability, and attempts to purchase beyond available stock are blocked.",
+        "related_requirement_ids": [
+          "FR-006"
+        ],
+        "priority": "must",
+        "acceptance_criteria": [
+          "Stock level changes are reflected on product detail pages in real time.",
+          "When inventory reaches zero, the product is shown as out‑of‑stock and cannot be added to the cart.",
+          "Order processing decrements inventory accurately."
+        ]
+      },
+      {
+        "id": "FEAT-007",
+        "name": "Order status and history view",
+        "description": "Customers can view a list of their past orders and the current status of each order.",
+        "scenario": "A logged‑in customer navigates to the 'My Orders' page, sees a list of previous purchases with dates, totals, and status indicators such as 'Shipped' or 'Delivered'.",
+        "related_requirement_ids": [
+          "FR-007"
+        ],
+        "priority": "must",
+        "acceptance_criteria": [
+          "All orders belonging to the customer are displayed in reverse chronological order.",
+          "Each order shows accurate status information matching the backend state.",
+          "Clicking an order reveals detailed line items and shipping information."
+        ]
+      },
+      {
+        "id": "FEAT-008",
+        "name": "Peak concurrency support",
+        "description": "The platform can sustain the required number of simultaneous users during high‑traffic campaigns.",
+        "scenario": "During a simulated peak campaign, 50,000 concurrent virtual users browse products, add items to carts, and place orders without service degradation.",
+        "related_requirement_ids": [
+          "NFR-001"
+        ],
+        "priority": "must",
+        "acceptance_criteria": [
+          "All core user flows (browse, cart, checkout) remain functional with 50,000 concurrent users.",
+          "Error rates stay within acceptable limits and no critical failures occur.",
+          "System resources scale to meet the load without manual intervention."
+        ]
+      },
+      {
+        "id": "FEAT-009",
+        "name": "High availability during peaks",
+        "description": "The system remains reachable and operational throughout peak traffic periods.",
+        "scenario": "While the platform experiences peak load, health‑check endpoints continuously report healthy status and no user reports an inability to access the site.",
+        "related_requirement_ids": [
+          "NFR-002"
+        ],
+        "priority": "must",
+        "acceptance_criteria": [
+          "All services report healthy status for the duration of the peak load test.",
+          "No downtime or loss of connectivity is observed by simulated users.",
+          "Failover mechanisms activate automatically if a component becomes unhealthy."
+        ]
+      },
+      {
+        "id": "FEAT-010",
+        "name": "Responsive customer‑facing interactions",
+        "description": "User‑visible operations respond quickly enough to be perceived as responsive under normal and peak conditions.",
+        "scenario": "Customers perform typical actions (search, view product, add to cart) during both regular traffic and peak load; they do not experience noticeable lag or timeouts.",
+        "related_requirement_ids": [
+          "NFR-003"
+        ],
+        "priority": "must",
+        "acceptance_criteria": [
+          "User actions complete without timeouts or error pages.",
+          "Feedback from usability testing indicates interactions feel responsive.",
+          "No UI element remains in a loading state for an extended period."
+        ]
+      },
+      {
+        "id": "FEAT-011",
+        "name": "Elastic scalability",
+        "description": "The platform can automatically expand capacity as demand grows, without service interruption.",
+        "scenario": "Traffic gradually increases from baseline to well beyond typical levels; the system automatically provisions additional compute and storage resources, and continues serving requests seamlessly.",
+        "related_requirement_ids": [
+          "NFR-004"
+        ],
+        "priority": "must",
+        "acceptance_criteria": [
+          "Scaling events are triggered automatically based on load metrics.",
+          "New resources are added without causing request failures or noticeable latency spikes.",
+          "After scaling, the system continues to meet functional and performance expectations."
+        ]
+      }
+    ],
+    "blueprint": {
+      "blueprint_id": "BP-001",
+      "project_name": "KIConnect Greenfield",
+      "selected_pattern": "Hybrid Event-Driven Microservices on AWS",
+      "rationale": "Combines domain‑driven service boundaries with asynchronous event‑driven communication to meet high concurrency, scalability, and availability requirements while keeping user‑facing interactions low‑latency via synchronous APIs. Managed AWS services and serverless compute are used to control costs in the absence of a fixed budget.",
+      "stakeholder_view": "Customers browse, search, add items to carts, and place orders; they expect fast, reliable experiences even during peak campaigns. Staff manage product catalogs, inventory, and order fulfillment; finance processes payments. The platform must support up to 50,000 concurrent users, stay highly available during traffic spikes, and scale automatically while keeping operational costs reasonable.",
+      "technical_view": "Stateless services are containerized on AWS Fargate behind an Application Load Balancer. API Gateway exposes REST/GraphQL endpoints for the web UI. Internal workflows use an SNS/SQS Event Bus for asynchronous communication. Each service owns a DynamoDB table; the Search Service uses Amazon OpenSearch; Redis (ElastiCache) caches hot product data. Email and SMS notifications are sent via managed Amazon SES and SNS services. All components are managed services that auto‑scale and provide multi‑AZ resilience.",
+      "components": [
+        "Frontend UI",
+        "Load Balancer",
+        "API Gateway",
+        "User Account Service",
+        "Product Catalog Service",
+        "Search Service",
+        "Cart Service",
+        "Order Service",
+        "Payment Service",
+        "Inventory Service",
+        "Notification Service",
+        "Event Bus",
+        "Data Store",
+        "Cache",
+        "Search Index",
+        "Email Service",
+        "SMS Service"
+      ],
+      "data_flows": [
+        "Frontend UI → Load Balancer: HTTP traffic from browsers",
+        "Load Balancer → API Gateway: Forward HTTP requests",
+        "API Gateway → User Account Service: Account CRUD API calls",
+        "API Gateway → Product Catalog Service: Product browse API calls",
+        "API Gateway → Search Service: Search query API calls",
+        "API Gateway → Cart Service: Cart manipulation API calls",
+        "API Gateway → Order Service: Checkout request API call",
+        "API Gateway → Payment Service: Payment processing API call",
+        "API Gateway → Inventory Service: Inventory availability check API call",
+        "API Gateway → Order Service: Order history request API call",
+        "User Account Service → Data Store: Read/write user data",
+        "Product Catalog Service → Data Store: Read product data",
+        "Search Service → Search Index: Query OpenSearch index",
+        "Cart Service → Data Store: Persist cart state",
+        "Order Service → Data Store: Persist order data",
+        "Payment Service → Data Store: Persist payment transaction",
+        "Inventory Service → Data Store: Update stock levels",
+        "Order Service → Event Bus: Publish OrderCreated event",
+        "Inventory Service → Event Bus: Publish InventoryReserved event",
+        "Payment Service → Event Bus: Publish PaymentProcessed event",
+        "Event Bus → Notification Service: Deliver order and payment events",
+        "Notification Service → Email Service: Send confirmation emails",
+        "Notification Service → SMS Service: Send SMS notifications",
+        "Data Store → Cache: Populate cache entries",
+        "API Gateway → Cache: Retrieve cached product data"
+      ],
+      "addressed_feature_ids": [
+        "FEAT-001",
+        "FEAT-002",
+        "FEAT-003",
+        "FEAT-004",
+        "FEAT-005",
+        "FEAT-006",
+        "FEAT-007",
+        "FEAT-008",
+        "FEAT-009",
+        "FEAT-010",
+        "FEAT-011"
+      ],
+      "constraints_addressed": [
+        "AWS cloud",
+        "Cost efficiency (use of managed services, serverless compute, and autoscaling to keep spend proportional to load)",
+        "Scalability to 50,000 concurrent users",
+        "High availability during peak periods"
+      ],
+      "assumptions": [
+        "All AWS managed services are available in the selected region.",
+        "Stateless services can be containerized on Fargate.",
+        "Eventual consistency is acceptable for inventory updates after order placement."
+      ],
+      "open_risks": [
+        "Increased operational complexity due to many microservices and event pipelines.",
+        "Potential cost overruns if autoscaling thresholds are not tuned.",
+        "Eventual consistency may cause short‑lived stock‑out anomalies."
+      ],
+      "migration_steps": [],
+      "version": "1.0",
+      "revision_note": "Added cost‑efficiency rationale, introduced Email and SMS Service components, added Order History flow, extended Order Service to support FEAT-007, and created ADR-005 for budget constraint."
+    },
+    "adrs": [
+      {
+        "id": "ADR-001",
+        "title": "ADR-001: Adopt Domain-Driven Design bounded contexts for service boundaries",
+        "status": "accepted",
+        "context": "Need to define clear service boundaries for scalability, maintainability, and independent deployment.",
+        "decision": "Decompose the system into services aligned with DDD bounded contexts: User Account, Product Catalog, Search, Cart, Order, Payment, Inventory, Notification.",
+        "rationale": "DDD aligns services with business capabilities, reduces coupling, and supports independent scaling as required for peak traffic.",
+        "alternatives_considered": [
+          "Monolithic application",
+          "Large coarse‑grained services"
+        ],
+        "positive_consequences": [
+          "Clear ownership",
+          "Independent scaling",
+          "Team autonomy"
+        ],
+        "negative_consequences": [
+          "Increased operational complexity",
+          "Need for inter‑service communication"
+        ],
+        "related_feature_ids": [
+          "FEAT-001",
+          "FEAT-002",
+          "FEAT-003",
+          "FEAT-004",
+          "FEAT-005",
+          "FEAT-006",
+          "FEAT-007",
+          "FEAT-008",
+          "FEAT-009",
+          "FEAT-010",
+          "FEAT-011"
+        ],
+        "related_component_names": [
+          "User Account Service",
+          "Product Catalog Service",
+          "Search Service",
+          "Cart Service",
+          "Order Service",
+          "Payment Service",
+          "Inventory Service",
+          "Notification Service"
+        ],
+        "source_references": [],
+        "evidence_ids": [
+          "KB-E004",
+          "KB-E001"
+        ],
+        "related_decision_topic_ids": [
+          "TOPIC-1"
+        ]
+      },
+      {
+        "id": "ADR-002",
+        "title": "ADR-002: Use service‑owned polyglot persistence with DynamoDB and OpenSearch",
+        "status": "accepted",
+        "context": "Each service requires its own data store that matches its access patterns and scalability needs.",
+        "decision": "Each microservice owns a private DynamoDB table; the Search Service uses Amazon OpenSearch for full‑text search.",
+        "rationale": "Service‑owned stores prevent accidental coupling and enable independent schema evolution; DynamoDB provides horizontal scalability, while OpenSearch satisfies search requirements.",
+        "alternatives_considered": [
+          "Single shared relational database",
+          "All services using the same NoSQL store"
+        ],
+        "positive_consequences": [
+          "Independent data model evolution",
+          "Optimized storage per domain",
+          "Reduced cross‑service data coupling"
+        ],
+        "negative_consequences": [
+          "Increased number of managed databases",
+          "Potential data duplication"
+        ],
+        "related_feature_ids": [
+          "FEAT-001",
+          "FEAT-002",
+          "FEAT-003",
+          "FEAT-004",
+          "FEAT-005",
+          "FEAT-006",
+          "FEAT-008",
+          "FEAT-009",
+          "FEAT-010",
+          "FEAT-011"
+        ],
+        "related_component_names": [
+          "Data Store",
+          "Search Index",
+          "User Account Service",
+          "Product Catalog Service",
+          "Cart Service",
+          "Order Service",
+          "Payment Service",
+          "Inventory Service"
+        ],
+        "source_references": [],
+        "evidence_ids": [
+          "KB-E005",
+          "KB-E008"
+        ],
+        "related_decision_topic_ids": [
+          "TOPIC-2"
+        ]
+      },
+      {
+        "id": "ADR-003",
+        "title": "ADR-003: Hybrid integration style – synchronous API for front‑end, asynchronous events for internal processes",
+        "status": "accepted",
+        "context": "User‑facing interactions need low latency, while internal workflows benefit from decoupling and scalability.",
+        "decision": "Expose REST/GraphQL endpoints via API Gateway for all external calls; use SNS/SQS Event Bus for order, inventory, and payment events between services.",
+        "rationale": "Synchronous APIs give immediate feedback to customers; asynchronous events improve throughput and fault tolerance for background processing.",
+        "alternatives_considered": [
+          "Fully synchronous request‑response across all services",
+          "Fully asynchronous event‑driven architecture"
+        ],
+        "positive_consequences": [
+          "Responsive UI",
+          "Scalable backend processing",
+          "Improved fault isolation"
+        ],
+        "negative_consequences": [
+          "Added complexity of managing both sync and async paths",
+          "Need for eventual consistency handling"
+        ],
+        "related_feature_ids": [
+          "FEAT-001",
+          "FEAT-004",
+          "FEAT-005",
+          "FEAT-008",
+          "FEAT-009",
+          "FEAT-010",
+          "FEAT-011"
+        ],
+        "related_component_names": [
+          "API Gateway",
+          "Event Bus",
+          "Order Service",
+          "Inventory Service",
+          "Payment Service",
+          "Notification Service"
+        ],
+        "source_references": [],
+        "evidence_ids": [
+          "KB-E002",
+          "KB-E009"
+        ],
+        "related_decision_topic_ids": [
+          "TOPIC-3"
+        ]
+      },
+      {
+        "id": "ADR-004",
+        "title": "ADR-004: Stateless services with AWS autoscaling and managed data stores for high availability",
+        "status": "accepted",
+        "context": "The platform must handle large traffic spikes without manual capacity planning.",
+        "decision": "Deploy services as stateless containers on AWS Fargate behind an Application Load Balancer; rely on DynamoDB, ElastiCache, and OpenSearch which provide built‑in autoscaling and multi‑AZ replication.",
+        "rationale": "Stateless compute enables rapid horizontal scaling; managed data stores remove operational burden and guarantee high availability.",
+        "alternatives_considered": [
+          "Self‑managed EC2 instances with manual scaling",
+          "Monolithic deployment on a single VM"
+        ],
+        "positive_consequences": [
+          "Automatic scaling to meet demand",
+          "Reduced operational overhead",
+          "Resilience to AZ failures"
+        ],
+        "negative_consequences": [
+          "Higher per‑request cost of managed services",
+          "Less control over underlying infrastructure"
+        ],
+        "related_feature_ids": [
+          "FEAT-008",
+          "FEAT-009",
+          "FEAT-010",
+          "FEAT-011"
+        ],
+        "related_component_names": [
+          "Load Balancer",
+          "API Gateway",
+          "Data Store",
+          "Cache",
+          "Search Index"
+        ],
+        "source_references": [],
+        "evidence_ids": [
+          "KB-E003",
+          "KB-E006"
+        ],
+        "related_decision_topic_ids": [
+          "TOPIC-4"
+        ]
+      },
+      {
+        "id": "ADR-005",
+        "title": "ADR-005: Use serverless and managed services to optimize cost",
+        "status": "accepted",
+        "context": "No fixed monetary budget is defined; cost efficiency must be a primary design driver.",
+        "decision": "Leverage AWS managed services (Fargate, DynamoDB, ElastiCache, OpenSearch, SNS/SQS, SES) and serverless compute (Lambda) to ensure that capacity and spend scale proportionally with load, avoiding over‑provisioning.",
+        "rationale": "Managed services provide pay‑as‑you‑go pricing, automatic scaling, and reduced operational labor, aligning spend with actual usage and satisfying the budget constraint.",
+        "alternatives_considered": [
+          "Self‑managed EC2 fleet with manual scaling",
+          "Provisioned capacity on traditional relational databases"
+        ],
+        "positive_consequences": [
+          "Cost aligns with traffic volume",
+          "Lower operational staffing costs",
+          "Built‑in scaling and high availability"
+        ],
+        "negative_consequences": [
+          "Potentially higher per‑unit cost at very low utilization",
+          "Vendor lock‑in to AWS managed services"
+        ],
+        "related_feature_ids": [
+          "FEAT-001",
+          "FEAT-002",
+          "FEAT-003",
+          "FEAT-004",
+          "FEAT-005",
+          "FEAT-006",
+          "FEAT-007",
+          "FEAT-008",
+          "FEAT-009",
+          "FEAT-010",
+          "FEAT-011"
+        ],
+        "related_component_names": [
+          "User Account Service",
+          "Product Catalog Service",
+          "Search Service",
+          "Cart Service",
+          "Order Service",
+          "Payment Service",
+          "Inventory Service",
+          "Notification Service",
+          "Data Store",
+          "Cache",
+          "Search Index",
+          "Email Service",
+          "SMS Service"
+        ],
+        "source_references": [],
+        "evidence_ids": [],
+        "related_decision_topic_ids": [
+          "TOPIC-4"
+        ]
+      }
+    ],
+    "components": [
+      {
+        "id": "COMP-001",
+        "name": "Frontend UI",
+        "component_type": "UI",
+        "purpose": "Customer‑facing web application for browsing, searching, cart management, and checkout.",
+        "description": "A React single‑page application delivered via CDN, interacting with the backend through the API Gateway.",
+        "inputs": [
+          "User HTTP requests (browsing, search, cart actions, checkout, order history)"
+        ],
+        "outputs": [
+          "HTML/JSON responses",
+          "Client‑side events"
+        ],
+        "dependencies": [
+          "API Gateway",
+          "Load Balancer",
+          "Cache"
+        ],
+        "related_feature_ids": [
+          "FEAT-001",
+          "FEAT-010"
+        ],
+        "related_adr_ids": [
+          "ADR-003",
+          "ADR-004"
+        ],
+        "technology_choices": [
+          "React",
+          "AWS CloudFront",
+          "HTTPS"
+        ],
+        "security_considerations": [
+          "Content Security Policy",
+          "XSS protection"
+        ],
+        "scalability_considerations": [
+          "Static assets cached at edge locations",
+          "Stateless front‑end scales automatically"
+        ]
+      },
+      {
+        "id": "COMP-002",
+        "name": "Load Balancer",
+        "component_type": "service",
+        "purpose": "Distribute incoming HTTP traffic across API Gateway instances and provide health‑checking.",
+        "description": "AWS Application Load Balancer operating in multiple AZs, terminating TLS and forwarding requests to the API Gateway.",
+        "inputs": [
+          "HTTP requests from Frontend UI"
+        ],
+        "outputs": [
+          "Forwarded HTTP requests to API Gateway"
+        ],
+        "dependencies": [
+          "API Gateway"
+        ],
+        "related_feature_ids": [
+          "FEAT-008",
+          "FEAT-009",
+          "FEAT-010",
+          "FEAT-011"
+        ],
+        "related_adr_ids": [
+          "ADR-004"
+        ],
+        "technology_choices": [
+          "AWS Application Load Balancer"
+        ],
+        "security_considerations": [
+          "TLS termination",
+          "WAF integration"
+        ],
+        "scalability_considerations": [
+          "Automatic scaling of load balancer capacity",
+          "Multi‑AZ redundancy"
+        ]
+      },
+      {
+        "id": "COMP-003",
+        "name": "API Gateway",
+        "component_type": "API",
+        "purpose": "Expose synchronous REST/GraphQL endpoints for all front‑end interactions.",
+        "description": "AWS API Gateway routes HTTP requests to the appropriate backend services and handles request validation, throttling, and authentication.",
+        "inputs": [
+          "HTTP requests from Load Balancer"
+        ],
+        "outputs": [
+          "HTTP responses to Frontend UI",
+          "Service‑specific requests to backend services"
+        ],
+        "dependencies": [
+          "User Account Service",
+          "Product Catalog Service",
+          "Search Service",
+          "Cart Service",
+          "Order Service",
+          "Payment Service",
+          "Inventory Service",
+          "Cache"
+        ],
+        "related_feature_ids": [
+          "FEAT-001",
+          "FEAT-002",
+          "FEAT-003",
+          "FEAT-004",
+          "FEAT-005",
+          "FEAT-006",
+          "FEAT-008",
+          "FEAT-009",
+          "FEAT-010",
+          "FEAT-011"
+        ],
+        "related_adr_ids": [
+          "ADR-003",
+          "ADR-004"
+        ],
+        "technology_choices": [
+          "AWS API Gateway",
+          "JWT authentication"
+        ],
+        "security_considerations": [
+          "Rate limiting",
+          "Input validation",
+          "Authorization via Cognito"
+        ],
+        "scalability_considerations": [
+          "Managed scaling to handle request bursts",
+          "Integration with CloudWatch metrics"
+        ]
+      },
+      {
+        "id": "COMP-004",
+        "name": "User Account Service",
+        "component_type": "service",
+        "purpose": "Manage customer registration, authentication, profile updates, and password recovery.",
+        "description": "Stateless service handling account CRUD operations, issuing JWTs, and persisting user data in its own DynamoDB table.",
+        "inputs": [
+          "Account API calls from API Gateway",
+          "Authentication tokens"
+        ],
+        "outputs": [
+          "User data responses",
+          "Authentication tokens"
+        ],
+        "dependencies": [
+          "Data Store"
+        ],
+        "related_feature_ids": [
+          "FEAT-002"
+        ],
+        "related_adr_ids": [
+          "ADR-001",
+          "ADR-002",
+          "ADR-003"
+        ],
+        "technology_choices": [
+          "AWS Fargate",
+          "Node.js / TypeScript",
+          "DynamoDB (User table)"
+        ],
+        "security_considerations": [
+          "Password hashing (bcrypt)",
+          "Secure token storage"
+        ],
+        "scalability_considerations": [
+          "Stateless containers enable horizontal scaling",
+          "DynamoDB auto‑scales reads/writes"
+        ]
+      },
+      {
+        "id": "COMP-005",
+        "name": "Product Catalog Service",
+        "component_type": "service",
+        "purpose": "Provide product information, categories, and availability data to the front‑end.",
+        "description": "Stateless service exposing product browse APIs; reads product data from its DynamoDB table and writes inventory updates.",
+        "inputs": [
+          "Product browse requests from API Gateway"
+        ],
+        "outputs": [
+          "Product data responses"
+        ],
+        "dependencies": [
+          "Data Store",
+          "Cache"
+        ],
+        "related_feature_ids": [
+          "FEAT-001"
+        ],
+        "related_adr_ids": [
+          "ADR-001",
+          "ADR-002"
+        ],
+        "technology_choices": [
+          "AWS Fargate",
+          "Java / Spring Boot",
+          "DynamoDB (Product table)"
+        ],
+        "security_considerations": [
+          "Input validation on query parameters"
+        ],
+        "scalability_considerations": [
+          "Read‑heavy workload benefits from Redis cache",
+          "DynamoDB provisioned throughput"
+        ]
+      },
+      {
+        "id": "COMP-006",
+        "name": "Search Service",
+        "component_type": "service",
+        "purpose": "Execute full‑text product searches and filter queries.",
+        "description": "Stateless service that forwards search queries to the OpenSearch cluster and returns ranked results.",
+        "inputs": [
+          "Search queries from API Gateway"
+        ],
+        "outputs": [
+          "Search result sets"
+        ],
+        "dependencies": [
+          "Search Index"
+        ],
+        "related_feature_ids": [
+          "FEAT-001"
+        ],
+        "related_adr_ids": [
+          "ADR-001",
+          "ADR-003",
+          "ADR-004"
+        ],
+        "technology_choices": [
+          "AWS Fargate",
+          "Python / FastAPI",
+          "Amazon OpenSearch Service"
+        ],
+        "security_considerations": [
+          "Sanitize query strings to prevent injection"
+        ],
+        "scalability_considerations": [
+          "OpenSearch cluster scales horizontally",
+          "Stateless service can be autoscaled"
+        ]
+      },
+      {
+        "id": "COMP-007",
+        "name": "Cart Service",
+        "component_type": "service",
+        "purpose": "Maintain a persistent shopping cart per customer across sessions.",
+        "description": "Stateless service that stores cart state in DynamoDB; supports add, update, remove, and retrieval operations.",
+        "inputs": [
+          "Cart manipulation requests from API Gateway"
+        ],
+        "outputs": [
+          "Cart state responses"
+        ],
+        "dependencies": [
+          "Data Store"
+        ],
+        "related_feature_ids": [
+          "FEAT-003"
+        ],
+        "related_adr_ids": [
+          "ADR-001",
+          "ADR-002"
+        ],
+        "technology_choices": [
+          "AWS Fargate",
+          "Go",
+          "DynamoDB (Cart table)"
+        ],
+        "security_considerations": [
+          "Validate product IDs against Product Catalog Service"
+        ],
+        "scalability_considerations": [
+          "Low‑latency reads/writes via DynamoDB"
+        ]
+      },
+      {
+        "id": "COMP-008",
+        "name": "Order Service",
+        "component_type": "service",
+        "purpose": "Create, persist, and manage customer orders and provide order history.",
+        "description": "Stateless service that records orders, reserves inventory, emits OrderCreated events, and serves order‑history queries for customers.",
+        "inputs": [
+          "Checkout requests from API Gateway",
+          "InventoryReserved events from Event Bus",
+          "Order history requests from API Gateway"
+        ],
+        "outputs": [
+          "Order confirmation responses",
+          "OrderCreated events",
+          "Order history data"
+        ],
+        "dependencies": [
+          "Data Store",
+          "Event Bus",
+          "Inventory Service"
+        ],
+        "related_feature_ids": [
+          "FEAT-004",
+          "FEAT-007",
+          "FEAT-008",
+          "FEAT-009",
+          "FEAT-010",
+          "FEAT-011"
+        ],
+        "related_adr_ids": [
+          "ADR-001",
+          "ADR-002",
+          "ADR-003",
+          "ADR-004"
+        ],
+        "technology_choices": [
+          "AWS Fargate",
+          "Java / Quarkus",
+          "DynamoDB (Order table)"
+        ],
+        "security_considerations": [
+          "Validate payment status before confirming order"
+        ],
+        "scalability_considerations": [
+          "Event‑driven order processing decouples load spikes",
+          "Auto‑scaling of containers"
+        ]
+      },
+      {
+        "id": "COMP-009",
+        "name": "Payment Service",
+        "component_type": "service",
+        "purpose": "Process customer payments securely and report outcomes.",
+        "description": "Stateless service that integrates with external payment providers, records transaction results, and publishes PaymentProcessed events.",
+        "inputs": [
+          "Payment requests from API Gateway",
+          "OrderCreated events (optional for pre‑authorization)"
+        ],
+        "outputs": [
+          "Payment success/failure responses",
+          "PaymentProcessed events"
+        ],
+        "dependencies": [
+          "Data Store",
+          "Event Bus"
+        ],
+        "related_feature_ids": [
+          "FEAT-005"
+        ],
+        "related_adr_ids": [
+          "ADR-001",
+          "ADR-002",
+          "ADR-003"
+        ],
+        "technology_choices": [
+          "AWS Fargate",
+          "Node.js",
+          "PCI‑DSS compliant third‑party gateway"
+        ],
+        "security_considerations": [
+          "Never store raw card data",
+          "TLS encryption for all external calls"
+        ],
+        "scalability_considerations": [
+          "Asynchronous event publishing avoids blocking checkout flow"
+        ]
+      },
+      {
+        "id": "COMP-010",
+        "name": "Inventory Service",
+        "component_type": "service",
+        "purpose": "Track stock levels and enforce product availability constraints.",
+        "description": "Stateless service that updates inventory counts, prevents overselling, and emits InventoryReserved events.",
+        "inputs": [
+          "Inventory check requests from API Gateway",
+          "OrderCreated events from Event Bus"
+        ],
+        "outputs": [
+          "Availability responses",
+          "InventoryReserved events"
+        ],
+        "dependencies": [
+          "Data Store",
+          "Event Bus"
+        ],
+        "related_feature_ids": [
+          "FEAT-006",
+          "FEAT-008",
+          "FEAT-009"
+        ],
+        "related_adr_ids": [
+          "ADR-001",
+          "ADR-002",
+          "ADR-003",
+          "ADR-004"
+        ],
+        "technology_choices": [
+          "AWS Fargate",
+          "Python",
+          "DynamoDB (Inventory table)"
+        ],
+        "security_considerations": [
+          "Validate order quantities against available stock"
+        ],
+        "scalability_considerations": [
+          "Event‑driven updates reduce contention",
+          "DynamoDB scales for high write throughput"
+        ]
+      },
+      {
+        "id": "COMP-011",
+        "name": "Notification Service",
+        "component_type": "service",
+        "purpose": "Send email/SMS notifications for order confirmations, payment receipts, and shipment updates.",
+        "description": "Consumes events from the Event Bus and triggers outbound messages via Amazon SES and SNS.",
+        "inputs": [
+          "OrderCreated events",
+          "PaymentProcessed events"
+        ],
+        "outputs": [
+          "Email/SMS messages to customers"
+        ],
+        "dependencies": [
+          "External Email Service (Amazon SES)",
+          "External SMS Service (Amazon SNS)"
+        ],
+        "related_feature_ids": [
+          "FEAT-004",
+          "FEAT-005"
+        ],
+        "related_adr_ids": [
+          "ADR-003"
+        ],
+        "technology_choices": [
+          "AWS Lambda",
+          "Node.js",
+          "Amazon SES",
+          "Amazon SNS"
+        ],
+        "security_considerations": [
+          "Ensure email content does not expose sensitive data"
+        ],
+        "scalability_considerations": [
+          "Lambda scales automatically with event volume"
+        ]
+      },
+      {
+        "id": "COMP-012",
+        "name": "Event Bus",
+        "component_type": "queue",
+        "purpose": "Provide asynchronous, decoupled communication between services.",
+        "description": "Implemented with Amazon SNS topics and SQS queues; supports at‑least‑once delivery and fan‑out to multiple consumers.",
+        "inputs": [
+          "OrderCreated events from Order Service",
+          "InventoryReserved events from Inventory Service",
+          "PaymentProcessed events from Payment Service"
+        ],
+        "outputs": [
+          "Events delivered to Notification Service and other interested services"
+        ],
+        "dependencies": [
+          "Notification Service"
+        ],
+        "related_feature_ids": [
+          "FEAT-008",
+          "FEAT-009",
+          "FEAT-011"
+        ],
+        "related_adr_ids": [
+          "ADR-003"
+        ],
+        "technology_choices": [
+          "Amazon SNS",
+          "Amazon SQS"
+        ],
+        "security_considerations": [
+          "IAM policies restrict publish/subscribe permissions"
+        ],
+        "scalability_considerations": [
+          "Managed service scales automatically with message volume"
+        ]
+      },
+      {
+        "id": "COMP-013",
+        "name": "Data Store",
+        "component_type": "database",
+        "purpose": "Persist domain data for all services using DynamoDB.",
+        "description": "A set of DynamoDB tables, each owned by a single service, providing low‑latency, highly available key‑value storage.",
+        "inputs": [
+          "Read/write requests from all services"
+        ],
+        "outputs": [
+          "Data responses to services"
+        ],
+        "dependencies": [],
+        "related_feature_ids": [
+          "FEAT-001",
+          "FEAT-002",
+          "FEAT-003",
+          "FEAT-004",
+          "FEAT-005",
+          "FEAT-006",
+          "FEAT-008",
+          "FEAT-009",
+          "FEAT-010",
+          "FEAT-011"
+        ],
+        "related_adr_ids": [
+          "ADR-002",
+          "ADR-004"
+        ],
+        "technology_choices": [
+          "Amazon DynamoDB"
+        ],
+        "security_considerations": [
+          "Encryption at rest",
+          "Fine‑grained IAM access per table"
+        ],
+        "scalability_considerations": [
+          "On‑demand capacity mode for unpredictable traffic",
+          "Global secondary indexes for query patterns"
+        ]
+      },
+      {
+        "id": "COMP-014",
+        "name": "Cache",
+        "component_type": "database",
+        "purpose": "Accelerate read‑heavy product data and reduce DynamoDB load.",
+        "description": "Redis cluster (ElastiCache) used for caching product listings and session data.",
+        "inputs": [
+          "Cache get/set requests from API Gateway and services"
+        ],
+        "outputs": [
+          "Cached data responses"
+        ],
+        "dependencies": [
+          "Data Store"
+        ],
+        "related_feature_ids": [
+          "FEAT-001",
+          "FEAT-010"
+        ],
+        "related_adr_ids": [
+          "ADR-004"
+        ],
+        "technology_choices": [
+          "Amazon ElastiCache for Redis"
+        ],
+        "security_considerations": [
+          "In‑transit encryption",
+          "VPC isolation"
+        ],
+        "scalability_considerations": [
+          "Cluster scaling with read replicas"
+        ]
+      },
+      {
+        "id": "COMP-015",
+        "name": "Search Index",
+        "component_type": "database",
+        "purpose": "Store searchable product documents for full‑text queries.",
+        "description": "OpenSearch domain containing indexed product data, refreshed from the Product Catalog Service.",
+        "inputs": [
+          "Indexing updates from Product Catalog Service"
+        ],
+        "outputs": [
+          "Search result documents to Search Service"
+        ],
+        "dependencies": [],
+        "related_feature_ids": [
+          "FEAT-001"
+        ],
+        "related_adr_ids": [
+          "ADR-002",
+          "ADR-004"
+        ],
+        "technology_choices": [
+          "Amazon OpenSearch Service"
+        ],
+        "security_considerations": [
+          "Domain access policies",
+          "TLS encryption"
+        ],
+        "scalability_considerations": [
+          "Horizontal shard scaling",
+          "Replica nodes for high availability"
+        ]
+      },
+      {
+        "id": "COMP-016",
+        "name": "Email Service",
+        "component_type": "external",
+        "purpose": "Send transactional email notifications (order confirmations, receipts).",
+        "description": "Managed Amazon SES service used by the Notification Service to deliver email messages.",
+        "inputs": [
+          "Email message payloads from Notification Service"
+        ],
+        "outputs": [
+          "Delivered email messages to customers"
+        ],
+        "dependencies": [],
+        "related_feature_ids": [
+          "FEAT-004",
+          "FEAT-005"
+        ],
+        "related_adr_ids": [
+          "ADR-003"
+        ],
+        "technology_choices": [
+          "Amazon Simple Email Service (SES)"
+        ],
+        "security_considerations": [
+          "DKIM and SPF for email authenticity",
+          "Encryption in transit"
+        ],
+        "scalability_considerations": [
+          "Pay‑as‑you‑go pricing scales with volume",
+          "Managed service handles high throughput"
+        ]
+      },
+      {
+        "id": "COMP-017",
+        "name": "SMS Service",
+        "component_type": "external",
+        "purpose": "Send transactional SMS notifications (order updates, alerts).",
+        "description": "Managed Amazon SNS SMS capability used by the Notification Service to deliver short message alerts.",
+        "inputs": [
+          "SMS message payloads from Notification Service"
+        ],
+        "outputs": [
+          "Delivered SMS messages to customers"
+        ],
+        "dependencies": [],
+        "related_feature_ids": [
+          "FEAT-004",
+          "FEAT-005"
+        ],
+        "related_adr_ids": [
+          "ADR-003"
+        ],
+        "technology_choices": [
+          "Amazon Simple Notification Service (SNS) SMS"
+        ],
+        "security_considerations": [
+          "IAM policies restrict SMS publishing",
+          "Message content compliance"
+        ],
+        "scalability_considerations": [
+          "Managed service scales automatically with message volume"
+        ]
+      }
+    ],
+    "review": {
+      "rubric_version": "3.0",
+      "overall_status": "fail",
+      "rubric_scores": {
+        "all_artifacts_present": 2,
+        "constraint_coverage": 2,
+        "traceability": 2,
+        "adr_presence": 2,
+        "source_integrity": 2,
+        "kb_evidence_grounding": 1,
+        "repo_grounding": true,
+        "flaw_detection": true,
+        "adr_soundness": false,
+        "best_practice_grounding": false,
+        "refinement_readiness": true
+      },
+      "judgment_reasons": {
+        "repo_grounding": "Not applicable because this is a greenfield project with no repository; repository_status is 'not_provided_greenfield' and no repository representation is available.",
+        "flaw_detection": "The Blueprint and component definitions cover every functional requirement (FEAT-001 – FEAT-007) and all non‑functional requirements (FEAT-008 – FEAT-011). Constraints such as AWS cloud, cost‑efficiency, 50,000 concurrent users, and high availability are explicitly addressed in the constraints list and design choices.",
+        "adr_soundness": "ADR-005 ('Use serverless and managed services to optimize cost') has no evidence_ids, so its rationale is not backed by any retrieved knowledge despite the deterministic check flagging this gap.",
+        "best_practice_grounding": "ADR-005 lacks any evidence citation, leaving its recommendation unsupported; all other ADRs cite relevant evidence, but the missing citation constitutes a best‑practice grounding failure.",
+        "refinement_readiness": "The identified problems (missing evidence for ADR-005) are concrete and include clear corrective actions, enabling the architect to start a refinement pass without ambiguity."
+      },
+      "issues": [
+        {
+          "id": "DET-1",
+          "severity": "high",
+          "category": "evidence",
+          "finding": "ADR(s) claim no traceable curated-KB literature support: ADR-005.",
+          "evidence": "adrs_without_kb_evidence=['ADR-005']; decision topics with qualifying evidence available this run: ['service decomposition and boundaries', 'data ownership and persistence strategy', 'integration style: synchronous vs asynchronous communication', 'scaling and availability strategy']",
+          "suggested_fix": "For each listed ADR: cite a retrieved evidence_id from <evidence_catalog> if one genuinely supports that specific decision (see <decision_topics> for what was retrieved per topic); if nothing retrieved is actually relevant to it, that is a knowledge-base coverage gap for this decision — say so in the ADR's rationale rather than citing an unrelated ID merely to satisfy this check.",
+          "requires_refinement": true,
+          "non_refinable": false
+        },
+        {
+          "id": "LLM-1",
+          "severity": "high",
+          "category": "adr",
+          "finding": "One or more ADR rationales or trade-offs are not sound.",
+          "evidence": "ADR-005 ('Use serverless and managed services to optimize cost') has no evidence_ids, so its rationale is not backed by any retrieved knowledge despite the deterministic check flagging this gap.",
+          "suggested_fix": "Add appropriate evidence IDs from the evidence catalog (e.g., KB-E003, KB-E006, KB-E010) that discuss cost‑efficient managed services, or explicitly note in the ADR that no evidence is available.",
+          "requires_refinement": true,
+          "non_refinable": false
+        },
+        {
+          "id": "LLM-2",
+          "severity": "medium",
+          "category": "evidence",
+          "finding": "Recommendations are not adequately grounded in supplied evidence.",
+          "evidence": "ADR-005 lacks any evidence citation, leaving its recommendation unsupported; all other ADRs cite relevant evidence, but the missing citation constitutes a best‑practice grounding failure.",
+          "suggested_fix": "Provide evidence IDs for ADR-005 from the evidence catalog that substantiate the cost‑efficiency decision, or amend the ADR to acknowledge the evidence gap.",
+          "requires_refinement": true,
+          "non_refinable": false
+        }
+      ],
+      "requires_refinement": true,
+      "refinement_instruction": "The review found 3 issue(s). Address them in priority order.\n\n1. [high] ADR(s) claim no traceable curated-KB literature support: ADR-005.\n   Evidence: adrs_without_kb_evidence=['ADR-005']; decision topics with qualifying evidence available this run: ['service decomposition and boundaries', 'data ownership and persistence strategy', 'integration...\n   Fix: For each listed ADR: cite a retrieved evidence_id from <evidence_catalog> if one genuinely supports that specific decision (see <decision_topics> for what was retrieved per topic); if nothing retrieved is actually relevant to it, that is a...\n2. [high] One or more ADR rationales or trade-offs are not sound.\n   Evidence: ADR-005 ('Use serverless and managed services to optimize cost') has no evidence_ids, so its rationale is not backed by any retrieved knowledge despite the deterministic check flagging this gap.\n   Fix: Add appropriate evidence IDs from the evidence catalog (e.g., KB-E003, KB-E006, KB-E010) that discuss cost‑efficient managed services, or explicitly note in the ADR that no evidence is available.\n3. [medium] Recommendations are not adequately grounded in supplied evidence.\n   Fix: Provide evidence IDs for ADR-005 from the evidence catalog that substantiate the cost‑efficiency decision, or amend the ADR to acknowledge the evidence gap.",
+      "not_applicable": [
+        "repo_grounding"
+      ]
+    }
+  },
+  "selected_round": 0,
+  "input_tokens": 76901,
+  "output_tokens": 33823,
+  "errors": []
+}
