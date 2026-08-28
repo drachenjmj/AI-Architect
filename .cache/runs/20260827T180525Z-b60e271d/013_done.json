@@ -295,7 +295,7 @@
     }
   },
   "context_record": {
-    "project_name": "ecommerce-monolith-modernization",
+    "project_name": "Demo Video Run",
     "business_goal": "Modernize the existing e-commerce monolith for improved scalability and maintainability while allowing incremental evolution.",
     "problem_statement": "The existing monolithic architecture suffers from scalability and maintainability issues, particularly under peak traffic loads.",
     "users": [
@@ -332,7 +332,7 @@
   "context_history": [],
   "blueprint": {
     "blueprint_id": "BP-001",
-    "project_name": "ecommerce-monolith-modernization",
+    "project_name": "Demo Video Run",
     "selected_pattern": "Strangler Fig – Incremental Service Extraction with Event-Driven Architecture",
     "rationale": "The Strangler Fig pattern enables incremental extraction of bounded contexts from the existing Django monolith into independently deployable services while preserving existing functionality. Combining synchronous REST for user‑facing interactions with asynchronous event‑driven communication between services satisfies the need for higher scalability and fault isolation without a big‑bang rewrite. Managed AWS services (API Gateway, Fargate, RDS, SQS) provide operational benefits and align with the cloud preference.",
     "stakeholder_view": "Customers and administrators interact with a responsive React web UI. The UI calls the API Gateway, which routes requests to the appropriate backend service (Product, User, Order, Payment, Review). The system must handle traffic spikes, stay highly available, and allow new features to be added without downtime. Administrators gain the ability to evolve each domain independently, improving maintainability and time‑to‑market.",
@@ -1738,7 +1738,7 @@
     ],
     "blueprint": {
       "blueprint_id": "BP-001",
-      "project_name": "ecommerce-monolith-modernization",
+      "project_name": "Demo Video Run",
       "selected_pattern": "Strangler Fig – Incremental Service Extraction with Event-Driven Architecture",
       "rationale": "The Strangler Fig pattern enables incremental extraction of bounded contexts from the existing Django monolith into independently deployable services while preserving existing functionality. Combining synchronous REST for user‑facing interactions with asynchronous event‑driven communication between services satisfies the need for higher scalability and fault isolation without a big‑bang rewrite. Managed AWS services (API Gateway, Fargate, RDS, SQS) provide operational benefits and align with the cloud preference.",
       "stakeholder_view": "Customers and administrators interact with a responsive React web UI. The UI calls the API Gateway, which routes requests to the appropriate backend service (Product, User, Order, Payment, Review). The system must handle traffic spikes, stay highly available, and allow new features to be added without downtime. Administrators gain the ability to evolve each domain independently, improving maintainability and time‑to‑market.",
