@@ -380,10 +380,22 @@ _NEW_RUN_LABEL = "➕ Start a new run"
 
 
 def _run_label(summary) -> str:
-    """One picker line: when it was last touched, where it stopped, what it was about."""
+    """Show project name and run date in the run picker."""
+    from pipeline.persistence import load_state
+
+    state = load_state(summary.run_id)
+    record = state.context_record
+
+    project = (
+        (record.project_name if record is not None else "")
+        or (state.blueprint.project_name if state.blueprint is not None else "")
+        or summary.raw_prompt_excerpt
+        or summary.run_id
+    ).strip()
+
     when = summary.updated_at.replace("T", " ").removesuffix("+00:00").strip()
-    where = summary.stage.replace("_", " ").capitalize()
-    return f"{when} · {where} · {summary.raw_prompt_excerpt}"
+
+    return f"{project} · {when}"
 
 
 def _resume_picker() -> None:
