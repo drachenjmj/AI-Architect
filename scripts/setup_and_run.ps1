@@ -121,7 +121,7 @@ if (-not (Test-Path $VenvPython)) {
 # incomplete venv), install requirements.txt. Same try-import-then-install
 # shape as scripts/rebuild_rag.ps1 - see its comment for why stderr from
 # this native python.exe call is deliberately left un-redirected.
-& $VenvPython -c "import streamlit, langgraph, chromadb, google.genai, dotenv, requests" | Out-Null
+& $VenvPython -c "import streamlit, langgraph, chromadb, google.genai, dotenv, requests, fpdf" | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Installing pinned dependencies from requirements.txt ..."
     & $VenvPython -m pip install -r (Join-Path $RepoRoot "requirements.txt")
