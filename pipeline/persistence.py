@@ -67,6 +67,12 @@ _DEFAULT_RUNS_DIR = Path(__file__).resolve().parent.parent / ".cache" / "runs"
 # the stage is there so a human can read the trail without opening anything.
 _CHECKPOINT_RE = re.compile(r"^(\d+)_([a-z_]+)\.json$")
 
+# `20260828T123928Z-9445e65e` — the prefix `_new_run_id` (state.py) stamps on
+# every run. Parsing it back out is what makes the picker's date/time survive
+# `git clone`/copy/zip, where every tracked checkpoint file gets the same
+# filesystem mtime regardless of when the run actually happened.
+_RUN_ID_STAMP_RE = re.compile(r"^(\d{8}T\d{6}Z)-")
+
 _EXCERPT_CHARS = 100
 
 
@@ -198,6 +204,31 @@ def load_state(run_id: str) -> ArchitectState:
         raise CheckpointError(f"Checkpoint {path} is unreadable or corrupt: {exc}") from exc
 
 
+def _run_timestamp(run_id: str, checkpoint_path: Path) -> str:
+    """The picker's date/time for one run: stable, not filesystem-derived.
+
+    Preferred source is the UTC creation stamp already embedded in `run_id`
+    (see `_new_run_id` in state.py) — it survives clone/copy/zip, unlike a
+    checkpoint file's mtime, which a fresh clone resets for every tracked
+    file at once. Falls back to the checkpoint's mtime for a run_id that
+    predates this stamp or was never machine-generated, so an old/nonstandard
+    directory name degrades gracefully instead of being dropped from the list.
+    """
+    match = _RUN_ID_STAMP_RE.match(run_id)
+    if match:
+        try:
+            return (
+                datetime.strptime(match.group(1), "%Y%m%dT%H%M%SZ")
+                .replace(tzinfo=timezone.utc)
+                .isoformat(timespec="seconds")
+            )
+        except ValueError:
+            pass
+    return datetime.fromtimestamp(
+        checkpoint_path.stat().st_mtime, tz=timezone.utc
+    ).isoformat(timespec="seconds")
+
+
 def list_runs() -> list[RunSummary]:
     """Summarise every resumable run, newest first — the resume picker's data.
 
@@ -231,9 +262,7 @@ def list_runs() -> list[RunSummary]:
                 str(context_record.get("project_name") or "").strip()
                 or str(blueprint.get("project_name") or "").strip()
             )
-            updated_at = datetime.fromtimestamp(
-                path.stat().st_mtime, tz=timezone.utc
-            ).isoformat(timespec="seconds")
+            updated_at = _run_timestamp(directory.name, path)
         except Exception as exc:  # noqa: BLE001 — one bad file, not a bad list
             log.warning("skipping unreadable checkpoint %s: %s", path, exc)
             continue

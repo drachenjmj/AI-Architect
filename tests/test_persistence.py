@@ -26,6 +26,7 @@ import json
 import os
 import shutil
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -36,6 +37,7 @@ from pipeline.agents import clarifier as clar
 from pipeline.agents import reviewer as rev
 from pipeline.persistence import (
     CheckpointError,
+    _run_timestamp,
     checkpoint,
     list_runs,
     load_state,
@@ -555,3 +557,99 @@ def test_checkpoint_without_revision_note_still_loads():
 
     assert loaded.blueprint.revision_note == ""
     assert loaded.blueprint.stakeholder_view == "A view."
+
+
+# ---------------------------------------------------------------------------
+# 7. Stable run timestamps — the picker's date/time must come from the run_id,
+# not the checkpoint file's filesystem mtime, so a fresh `git clone` (which
+# writes every tracked file at once) does not collapse distinct historical
+# runs onto one visible timestamp.
+# ---------------------------------------------------------------------------
+
+
+def test_run_timestamp_helper_parses_stable_stamp_from_run_id(tmp_path):
+    """The run_id's own UTC stamp wins, regardless of the file's mtime."""
+    checkpoint_path = tmp_path / "001_created.json"
+    checkpoint_path.write_text("{}", encoding="utf-8")
+    os.utime(checkpoint_path, (0, 0))  # an mtime that must be ignored here
+
+    assert (
+        _run_timestamp("20260828T123928Z-9445e65e", checkpoint_path)
+        == "2026-08-28T12:39:28+00:00"
+    )
+    assert (
+        _run_timestamp("20260827T180525Z-b60e271d", checkpoint_path)
+        == "2026-08-27T18:05:25+00:00"
+    )
+
+
+def test_run_timestamp_helper_falls_back_for_malformed_run_id(tmp_path):
+    """A run_id with no stamp, or a shape match that isn't a real date, must
+    fall back to the checkpoint's mtime rather than raising or dropping the run."""
+    checkpoint_path = tmp_path / "001_created.json"
+    checkpoint_path.write_text("{}", encoding="utf-8")
+    fixed_mtime = 1_700_000_000
+    os.utime(checkpoint_path, (fixed_mtime, fixed_mtime))
+    expected = datetime.fromtimestamp(fixed_mtime, tz=timezone.utc).isoformat(
+        timespec="seconds"
+    )
+
+    assert _run_timestamp("not-a-timestamped-run-id", checkpoint_path) == expected
+    # Matches the `\d{8}T\d{6}Z-` shape but month 13 makes it an invalid date.
+    assert _run_timestamp("20261301T999999Z-deadbeef", checkpoint_path) == expected
+
+
+def test_list_runs_timestamp_survives_checkpoint_mtime_changes():
+    """Changing the checkpoint file's mtime must not move the displayed
+    timestamp for a standard run_id — it is no longer the source of truth."""
+    _isolate("mtime_independent")
+    state = _rich_state()
+    state.run_id = "20260827T180525Z-b60e271d"
+    path = save_state(state)
+
+    before = list_runs()[0].updated_at
+    os.utime(path, (1_700_000_000, 1_700_000_000))
+    after = list_runs()[0].updated_at
+
+    assert before == after == "2026-08-27T18:05:25+00:00"
+
+
+def test_list_runs_falls_back_to_mtime_for_legacy_run_id():
+    """An old/nonstandard run directory name must still be listed — just with
+    the previous (mtime-derived) timestamp — never dropped from the picker."""
+    _isolate("legacy_run_id")
+    state = _rich_state()
+    state.run_id = "legacy-run-without-a-timestamp-prefix"
+    path = save_state(state)
+
+    fixed_mtime = 1_700_000_000
+    os.utime(path, (fixed_mtime, fixed_mtime))
+    expected = datetime.fromtimestamp(fixed_mtime, tz=timezone.utc).isoformat(
+        timespec="seconds"
+    )
+
+    (summary,) = list_runs()
+    assert summary.run_id == "legacy-run-without-a-timestamp-prefix"
+    assert summary.updated_at == expected
+
+
+def test_list_runs_orders_by_run_id_timestamp_when_mtimes_collide():
+    """The exact bug scenario: a fresh clone writes every tracked checkpoint
+    file with (near-)identical mtimes, but distinct historical runs must still
+    sort newest-first by their own stable creation time."""
+    _isolate("order_by_stable_timestamp")
+    ids_oldest_to_newest = [
+        "20260101T000000Z-aaaaaaaa",
+        "20260615T120000Z-bbbbbbbb",
+        "20260827T180525Z-cccccccc",
+        "20260828T123928Z-dddddddd",
+    ]
+    clone_mtime = 1_800_000_000  # identical for every file, as a real clone would leave them
+    for run_id in ids_oldest_to_newest:
+        state = _rich_state()
+        state.run_id = run_id
+        path = save_state(state)
+        os.utime(path, (clone_mtime, clone_mtime))
+
+    ordered = [summary.run_id for summary in list_runs()]
+    assert ordered == list(reversed(ids_oldest_to_newest))
